@@ -1,0 +1,28 @@
+# Render Blueprint: Express API (Dashboard → New → Blueprint → pick this repo)
+# Free plan: sleeps after 15 min without traffic (~1 min wake-up), no Shell, 750 instance hours/month.
+services:
+  - type: web
+    name: fbr-billing-api
+    runtime: node
+    region: singapore        # closest Render region to Pakistan
+    plan: free
+    # Migrations run during the build (works on the free plan; no pre-deploy step needed)
+    buildCommand: npm ci && npm run build && npm run db:deploy
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL     # Supabase transaction pooler, port 6543, ?pgbouncer=true
+        sync: false
+      - key: DIRECT_URL       # Supabase session pooler, port 5432 (used by migrations)
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY   # 64 hex chars from `npm run gen:keys`. Never change once tokens are saved.
+        sync: false
+      - key: FBR_PROXY_URL    # static-IP proxy (docs/static-ip-proxy.md). Required for FBR calls from Render.
+        sync: false
+      - key: FBR_MOCK
+        value: "false"

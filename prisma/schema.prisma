@@ -1,0 +1,177 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  SUPER_ADMIN
+  CLIENT_USER
+}
+
+enum FbrEnv {
+  SANDBOX
+  PRODUCTION
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SUBMITTING // a submission is in flight (acts as a lock against double submits)
+  SUBMITTED
+  FAILED     // FBR definitely did not record it; safe to retry
+  UNCERTAIN  // connection broke after posting; FBR may have recorded it — check IRIS before resubmitting
+  CANCELLED  // was filed, then cancelled in IRIS (recorded here so reports leave it out)
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  role      Role     @default(CLIENT_USER)
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Tenant {
+  id                 String    @id @default(uuid())
+  companyName        String
+  // Seller block of every DI invoice
+  sellerNtnCnic      String    @default("")
+  sellerBusinessName String    @default("")
+  sellerProvince     String    @default("")
+  sellerAddress      String    @default("")
+  // Sales tax registration no. — printed on invoices (STA s.23); not part of the DI API payload
+  sellerStrn         String    @default("")
+  // PRAL security token, AES-256-GCM encrypted (src/crypto.js)
+  fbrTokenEnc        String?
+  fbrEnv             FbrEnv    @default(SANDBOX)
+  // Further-tax % for unregistered buyers (4% confirmed by the CA)
+  furtherTaxRate     Decimal   @default(4) @db.Decimal(5, 2)
+  invoiceSeq         Int       @default(0)
+  users              User[]
+  invoices           Invoice[]
+  products           Product[]
+  buyers             Buyer[]
+  createdAt          DateTime  @default(now())
+}
+
+model Invoice {
+  id                    String        @id @default(uuid())
+  tenantId              String
+  tenant                Tenant        @relation(fields: [tenantId], references: [id])
+  localNo               Int
+  fbrInvoiceNumber      String?       @unique
+  status                InvoiceStatus @default(DRAFT)
+  fbrEnv                FbrEnv
+  invoiceType           String        @default("Sale Invoice")
+  invoiceDate           String        // YYYY-MM-DD (Asia/Karachi), exactly as sent to FBR
+  invoiceRefNo          String        @default("")
+  // Debit notes: why it was issued (FBR error codes 0027/0028 require a reason; "Others" needs remarks)
+  reason                String        @default("")
+  reasonRemarks         String        @default("")
+  scenarioId            String?
+  buyerNtnCnic          String        @default("")
+  buyerBusinessName     String
+  buyerProvince         String
+  buyerAddress          String
+  buyerRegistrationType String
+  // Unregistered + end consumer (walk-in): no further tax. FBR only knows Registered/Unregistered.
+  endConsumer           Boolean       @default(false)
+  totalExclST           Decimal       @db.Decimal(14, 2)
+  totalST               Decimal       @db.Decimal(14, 2)
+  totalFurtherTax       Decimal       @db.Decimal(14, 2)
+  totalAmount           Decimal       @db.Decimal(14, 2)
+  fbrRequest            Json?
+  fbrResponse           Json?
+  errorMessage          String?
+  submittedAt           DateTime?
+  // Idempotency: one id per form submission, so a resent request never creates a second invoice
+  clientRequestId       String?
+  submitAttempts        Int           @default(0)
+  lastAttemptAt         DateTime?
+  cancelledAt           DateTime?
+  cancelNote            String        @default("") // what was done in IRIS / Commissioner approval reference
+  items                 InvoiceItem[]
+  createdAt             DateTime      @default(now())
+
+  @@unique([tenantId, localNo])
+  @@unique([tenantId, clientRequestId])
+  @@index([tenantId, createdAt])
+}
+
+// Saved items: pick by name on the invoice form to fill HS code, UOM, rate, sale type, price
+model Product {
+  id              String   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  name            String
+  hsCode          String
+  uoM             String
+  rate            String
+  saleType        String
+  unitPrice       Decimal? @db.Decimal(14, 2)
+  sroScheduleNo   String   @default("")
+  sroItemSerialNo String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, name])
+}
+
+// Saved customers. ntnCnic is null for unregistered buyers without a number.
+model Buyer {
+  id               String   @id @default(uuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  businessName     String
+  ntnCnic          String?
+  registrationType String   @default("Unregistered")
+  province         String   @default("")
+  address          String   @default("")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([tenantId, ntnCnic])
+  @@index([tenantId, businessName])
+}
+
+// HS / PCT codes for item lookup. Seeded from the 2017 PCT schedule (data/hs-codes-pct-2017.json),
+// then overwritten from FBR's live itemdesccode list (source = "FBR") once a tenant has a working token.
+model HsCode {
+  code        String   @id // "0101.2100"
+  description String
+  source      String   @default("PCT-2017")
+  updatedAt   DateTime @updatedAt
+}
+
+model InvoiceItem {
+  id                              String  @id @default(uuid())
+  invoiceId                       String
+  invoice                         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  sNo                             Int
+  hsCode                          String
+  productDescription              String
+  rate                            String  // e.g. "18%", as FBR's ratE_DESC
+  uoM                             String
+  quantity                        Decimal @db.Decimal(14, 4)
+  unitPrice                       Decimal @db.Decimal(14, 2)
+  valueSalesExcludingST           Decimal @db.Decimal(14, 2)
+  fixedNotifiedValueOrRetailPrice Decimal @default(0) @db.Decimal(14, 2)
+  salesTaxApplicable              Decimal @db.Decimal(14, 2)
+  salesTaxWithheldAtSource        Decimal @default(0) @db.Decimal(14, 2)
+  extraTax                        Decimal @default(0) @db.Decimal(14, 2)
+  furtherTax                      Decimal @default(0) @db.Decimal(14, 2)
+  fedPayable                      Decimal @default(0) @db.Decimal(14, 2)
+  discount                        Decimal @default(0) @db.Decimal(14, 2)
+  totalValues                     Decimal @db.Decimal(14, 2)
+  saleType                        String
+  sroScheduleNo                   String  @default("")
+  sroItemSerialNo                 String  @default("")
+
+  @@index([invoiceId])
+}

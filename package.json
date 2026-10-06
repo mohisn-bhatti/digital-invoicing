@@ -1,0 +1,32 @@
+{
+  "name": "fbr-saas-billing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-tenant FBR Digital Invoicing (PRAL DI API v1.12) billing app",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "db:local": "docker compose up -d",
+    "build": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "supabase:deploy": "node scripts/supabase-deploy.js",
+    "seed": "node prisma/seed.js",
+    "gen:keys": "node -e \"const c=require('crypto');console.log('JWT_SECRET='+c.randomBytes(48).toString('hex'));console.log('ENCRYPTION_KEY='+c.randomBytes(32).toString('hex'))\"",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.0",
+    "axios": "^1.12.0",
+    "bcryptjs": "^3.0.2",
+    "dotenv": "^17.2.0",
+    "express": "^5.1.0",
+    "https-proxy-agent": "^7.0.6",
+    "jsonwebtoken": "^9.0.2",
+    "prisma": "^6.19.0"
+  }
+}
