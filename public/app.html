@@ -10,14 +10,25 @@
   input, select { border: 1px solid #cbd5e1; border-radius: .375rem; padding: .4rem .55rem; width: 100%; font-size: .875rem; background: #fff; }
   input:focus, select:focus { outline: 2px solid #059669; outline-offset: -1px; }
   label > span { display: block; font-size: .75rem; color: #475569; margin-bottom: .15rem; }
+  body.cashier .save-product { display: none; }
   #receipt { width: 80mm; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #000; }
   #receipt .qr { padding: 0.12in; background: #fff; } /* quiet zone so scanners can find the code */
   #receipt .qr img, #receipt .qr canvas { width: 1in !important; height: 1in !important; }
+  #invoiceA4 { width: 190mm; font-family: Arial, Helvetica, sans-serif; font-size: 10.5px; color: #000; background: #fff; }
+  #invoiceA4 table { border-collapse: collapse; width: 100%; }
+  #invoiceA4 th, #invoiceA4 td { border: 1px solid #555; padding: 4px 5px; vertical-align: top; }
+  #invoiceA4 th { background: #f1f5f9; font-weight: bold; text-align: left; }
+  #invoiceA4 .num { text-align: right; white-space: nowrap; }
+  #invoiceA4 .qrA4 img, #invoiceA4 .qrA4 canvas { width: 1in !important; height: 1in !important; }
+  /* @page size is set by printInvoice() (80mm roll or A4) */
   @media print {
-    @page { size: 80mm auto; margin: 3mm; }
     body * { visibility: hidden; }
-    #receipt, #receipt * { visibility: visible; }
-    #receipt { position: absolute; left: 0; top: 0; }
+    body:not(.print-a4) #receipt, body:not(.print-a4) #receipt * { visibility: visible; }
+    body:not(.print-a4) #receipt { position: absolute; left: 0; top: 0; }
+    body.print-a4 #invoiceA4, body.print-a4 #invoiceA4 * { visibility: visible; }
+    body.print-a4 #invoiceA4 { position: absolute; left: 0; top: 0; }
+    body.print-a4 #invoiceA4 thead { display: table-header-group; } /* repeat the item header on every page */
+    body.print-a4 #invoiceA4 tr { break-inside: avoid; }
   }
 </style>
 </head>
@@ -50,7 +61,8 @@
     <div class="border-t border-white/10 p-4 text-xs">
       <div class="font-semibold text-white truncate" id="companyName"></div>
       <div class="text-slate-400 truncate" id="userLine"></div>
-      <button onclick="logout()" class="mt-3 w-full border border-white/20 rounded px-3 py-1.5 hover:bg-white/10">Log out</button>
+      <button id="pwLink" onclick="openPw(false)" class="mt-3 w-full border border-white/20 rounded px-3 py-1.5 hover:bg-white/10">Change password</button>
+      <button onclick="logout()" class="mt-2 w-full border border-white/20 rounded px-3 py-1.5 hover:bg-white/10">Log out</button>
     </div>
   </aside>
 
@@ -145,6 +157,22 @@
       </div>
     </form>
     </section>
+    <section id="mpUsers">
+  <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
+    <h2 class="font-semibold">Users <span class="text-xs font-normal text-slate-500">— Owner: everything + users · Accountant: invoicing, debit notes, import, products, buyers · Cashier: create &amp; print invoices only</span></h2>
+    <form id="aUserForm" class="grid sm:grid-cols-5 gap-2 items-end bg-slate-50 border rounded p-3">
+      <label><span>Name</span><input name="name" maxlength="100"></label>
+      <label><span>Email</span><input name="email" type="email" required autocomplete="off"></label>
+      <label><span>Temporary password</span><input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+      <label><span>Role</span><select name="tenantRole"><option value="CASHIER">Cashier</option><option value="ACCOUNTANT">Accountant</option><option value="OWNER">Owner</option></select></label>
+      <button class="bg-emerald-700 text-white rounded px-3 py-2">Add user</button>
+    </form>
+    <div class="overflow-x-auto"><table class="w-full">
+      <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">User</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead>
+      <tbody id="aUserRows"></tbody></table></div>
+    <p class="text-xs text-slate-500">New users and reset passwords must be changed by the user at their next login.</p>
+  </div>
+    </section>
     <section>
       <h3 class="font-semibold mb-2">Go-live checklist <span id="mpObSummary" class="ml-2 text-xs font-normal"></span></h3>
       <div id="mpChecklist" class="text-sm"></div>
@@ -162,7 +190,15 @@
       <button type="button" onclick="downloadAnnexC()" class="bg-emerald-700 text-white rounded px-3 py-1.5">Download Excel (CSV)</button>
     </div>
     <div id="acSummary" class="text-sm"></div>
-  
+    </div>
+    <div class="bg-white rounded-xl shadow p-5 space-y-3">
+      <h2 class="font-semibold">Annex-H1 stock statement <span class="text-xs font-normal text-slate-500">— HS-code-wise opening, purchases, supplies and closing stock for the client and month chosen above</span></h2>
+      <div class="flex flex-wrap items-end gap-3 text-sm">
+        <button type="button" onclick="previewAnnexH()" class="bg-slate-800 text-white rounded px-3 py-1.5">Show</button>
+        <button type="button" onclick="downloadAnnexH()" class="bg-emerald-700 text-white rounded px-3 py-1.5">Download Excel (CSV)</button>
+        <span class="text-xs text-slate-500">Supplies come from invoices filed with FBR; purchases, imports, opening stock and adjustments from the client's Stock page.</span>
+      </div>
+      <div id="ahSummary" class="text-sm overflow-x-auto"></div>
     </div>
   </div>
   <div data-page="a-activity" class="page hidden space-y-6">
@@ -347,6 +383,53 @@
           <tbody id="productRows"></tbody></table>
       </div>
   </div>
+  <div data-page="c-stock" class="page hidden space-y-6">
+    <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
+      <h2 class="font-semibold">Add stock entry <span class="text-xs font-normal text-slate-500">— sales are taken automatically from invoices filed with FBR</span></h2>
+      <form id="stockForm" class="grid sm:grid-cols-4 gap-2 items-end">
+        <label><span>Type</span><select name="entryType">
+          <option value="PURCHASE">Purchase (local)</option><option value="IMPORT">Import (GD)</option><option value="OPENING">Opening balance</option>
+          <option value="ADJUSTMENT_IN">Adjustment + (surplus)</option><option value="ADJUSTMENT_OUT">Adjustment − (damage / shortage)</option></select></label>
+        <label><span>Date</span><input name="entryDate" type="date" required></label>
+        <label><span>HS code</span><input name="hsCode" class="st-hs" required autocomplete="off" placeholder="Type code or product"></label>
+        <label><span>Description</span><input name="description" maxlength="200" autocomplete="off"></label>
+        <label><span>Quantity</span><input name="quantity" type="number" step="0.0001" min="0" required></label>
+        <label><span>UOM</span><input name="uoM" list="uomList" required value="Numbers, pieces, units"></label>
+        <label><span>Value excl. tax (Rs)</span><input name="value" type="number" step="0.01" min="0" value="0"></label>
+        <label><span>Supplier invoice / GD no.</span><input name="reference" maxlength="100"></label>
+        <label class="sm:col-span-2"><span>Supplier</span><input name="partyName" maxlength="150"></label>
+        <label><span>Notes</span><input name="notes" maxlength="500"></label>
+        <button class="bg-emerald-700 text-white rounded px-3 py-2">Save entry</button>
+      </form>
+    </div>
+    <div class="bg-white rounded-xl shadow p-5 space-y-2 text-sm overflow-x-auto">
+      <h2 class="font-semibold">Stock in hand <span class="text-xs font-normal text-slate-500">— today</span></h2>
+      <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">HS code</th><th>Description</th><th>UOM</th><th class="text-right">In hand</th><th class="text-right">Value (avg. cost)</th></tr></thead>
+        <tbody id="stockRows"></tbody></table>
+    </div>
+    <div class="bg-white rounded-xl shadow p-5 space-y-2 text-sm overflow-x-auto">
+      <div class="flex flex-wrap items-end justify-between gap-2"><h2 class="font-semibold">Entries</h2>
+        <label><span>Search</span><input id="stQ" placeholder="HS code, supplier, reference" autocomplete="off"></label></div>
+      <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Date</th><th>Type</th><th>HS code</th><th>Description</th><th class="text-right">Qty</th><th>UOM</th><th class="text-right">Value</th><th>Supplier / ref</th><th></th></tr></thead>
+        <tbody id="stockEntryRows"></tbody></table>
+    </div>
+  </div>
+  <div data-page="c-users" class="page hidden space-y-6">
+  <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
+    <h2 class="font-semibold">Users <span class="text-xs font-normal text-slate-500">— Owner: everything + users · Accountant: invoicing, debit notes, import, products, buyers · Cashier: create &amp; print invoices only</span></h2>
+    <form id="cUserForm" class="grid sm:grid-cols-5 gap-2 items-end bg-slate-50 border rounded p-3">
+      <label><span>Name</span><input name="name" maxlength="100"></label>
+      <label><span>Email</span><input name="email" type="email" required autocomplete="off"></label>
+      <label><span>Temporary password</span><input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+      <label><span>Role</span><select name="tenantRole"><option value="CASHIER">Cashier</option><option value="ACCOUNTANT">Accountant</option><option value="OWNER">Owner</option></select></label>
+      <button class="bg-emerald-700 text-white rounded px-3 py-2">Add user</button>
+    </form>
+    <div class="overflow-x-auto"><table class="w-full">
+      <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">User</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead>
+      <tbody id="cUserRows"></tbody></table></div>
+    <p class="text-xs text-slate-500">New users and reset passwords must be changed by the user at their next login.</p>
+  </div>
+  </div>
   <div data-page="c-buyers" class="page hidden space-y-6">
       <div class="bg-white rounded-xl shadow p-5 overflow-x-auto text-sm">
         <h3 class="font-medium mb-2">Buyers <span class="text-xs font-normal text-slate-500">— add here; buyers with an NTN/CNIC are also saved automatically when an invoice is filed</span></h3>
@@ -372,18 +455,37 @@
   </div>
 </div>
 
+<!-- Change password (also forced after a reset / first login) -->
+<div id="pwModal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4">
+  <form id="pwForm" class="bg-white rounded-xl shadow-xl p-6 mt-16 w-full max-w-sm space-y-3">
+    <h2 class="font-semibold text-lg">Change password</h2>
+    <p id="pwNote" class="hidden text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">Please set your own password before continuing.</p>
+    <label><span>Current password</span><input name="currentPassword" type="password" required autocomplete="current-password"></label>
+    <label><span>New password <span class="text-slate-400">(8+ characters, letters and a number)</span></span><input name="newPassword" type="password" required minlength="8" autocomplete="new-password"></label>
+    <label><span>Repeat new password</span><input name="repeat" type="password" required minlength="8" autocomplete="new-password"></label>
+    <div class="flex gap-2 pt-1">
+      <button class="flex-1 bg-emerald-700 text-white rounded py-2 font-medium">Save password</button>
+      <button type="button" id="pwCancel" onclick="closePw()" class="border rounded px-4">Cancel</button>
+    </div>
+  </form>
+</div>
+
 <!-- Receipt popup (after filing, or View from Sales Invoices) -->
 <div id="receiptModal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-start justify-center overflow-y-auto p-4" onclick="if (event.target === this) closeReceipt()">
   <div class="bg-white rounded-xl shadow-xl p-5 mt-10 space-y-3">
-    <div class="flex items-center justify-between gap-6">
-      <h2 class="font-semibold">Receipt</h2>
+    <div class="flex flex-wrap items-center justify-between gap-4">
+      <h2 class="font-semibold">Invoice</h2>
+      <div class="inline-flex rounded-lg border overflow-hidden text-sm" id="fmtToggle">
+        <button type="button" data-fmt="thermal" onclick="setPrintFormat('thermal')" class="px-3 py-1">Thermal 80mm</button>
+        <button type="button" data-fmt="a4" onclick="setPrintFormat('a4')" class="px-3 py-1 border-l">A4 tax invoice</button>
+      </div>
       <div class="flex gap-2">
-        <button id="printBtn" onclick="window.print()" class="hidden text-sm bg-slate-800 text-white rounded px-3 py-1">Print</button>
+        <button id="printBtn" onclick="printInvoice()" class="hidden text-sm bg-slate-800 text-white rounded px-3 py-1">Print</button>
         <button onclick="closeReceipt()" class="text-sm border rounded px-3 py-1">Close</button>
       </div>
     </div>
     <div id="receiptEmpty" class="hidden"></div>
-    <div class="flex justify-center"><div id="receipt" class="hidden"></div></div>
+    <div class="flex justify-center overflow-x-auto"><div id="receipt" class="hidden"></div><div id="invoiceA4" class="hidden border shadow-sm p-[8mm]"></div></div>
   </div>
 </div>
 
@@ -416,7 +518,7 @@ async function api(path, opts = {}) {
 }
 
 function saveSession() {
-  try { localStorage.setItem('fbrSession', JSON.stringify({ token: S.token, role: S.role, company: S.company, adminSession: S.adminSession || null })); } catch {}
+  try { localStorage.setItem('fbrSession', JSON.stringify({ token: S.token, role: S.role, company: S.company, tenantRole: S.tenantRole || null, name: S.name || '', adminSession: S.adminSession || null })); } catch {}
 }
 function logout() {
   if (S.token) fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + S.token } }).catch(() => {});
@@ -437,6 +539,7 @@ const ICON = {
   chart: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
   clock: 'M12 7v5l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
   mail: 'M4 6h16v12H4zM4 6l8 7 8-7',
+  layers: 'M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5M3 17l9 5 9-5',
   cog: 'M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z',
 };
 const NAV = {
@@ -444,9 +547,11 @@ const NAV = {
     { id: 'c-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
     { id: 'c-new', label: 'New Invoice', icon: 'plus', crumb: 'Sales' },
     { id: 'c-invoices', label: 'Sales Invoices', icon: 'list', crumb: 'Sales' },
-    { id: 'c-import', label: 'Bulk Import', icon: 'upload', crumb: 'Sales' },
-    { id: 'c-products', label: 'Products', icon: 'box', crumb: 'Masters' },
-    { id: 'c-buyers', label: 'Buyers', icon: 'users', crumb: 'Masters' },
+    { id: 'c-import', label: 'Bulk Import', icon: 'upload', crumb: 'Sales', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'c-products', label: 'Products', icon: 'box', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'c-buyers', label: 'Buyers', icon: 'users', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'c-stock', label: 'Stock', icon: 'layers', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'c-users', label: 'Users', icon: 'cog', crumb: 'Account', roles: ['OWNER'] },
   ],
   admin: [
     { id: 'a-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
@@ -460,11 +565,12 @@ const NAV = {
 const HIDDEN_PAGES = { 'a-client': { label: 'Manage client', crumb: 'Clients', parent: 'a-clients' } };
 const PAGE_ENTER = {
   'c-dashboard': () => loadDashboard(), 'c-invoices': () => loadInvoices(), 'c-import': () => loadBatches(),
-  'c-products': () => loadSaved(), 'c-buyers': () => loadSaved(),
+  'c-products': () => loadSaved(), 'c-buyers': () => loadSaved(), 'c-users': () => loadUsers('c'), 'c-stock': () => loadStock(),
   'a-dashboard': () => loadAdminDash(), 'a-clients': () => loadClients(), 'a-reports': () => fillReportClients(),
   'a-activity': () => loadAudit('a'), 'a-leads': () => loadLeads(), 'a-system': () => loadSystem(),
 };
-const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : NAV.client;
+const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : NAV.client.filter(n => !n.roles || n.roles.includes(S.tenantRole || 'OWNER'));
+const canManage = () => ['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER'); // cashier can't
 function renderNav() {
   $('#nav').innerHTML = navList().map(n => `<a href="#/${n.id}" data-nav="${n.id}" class="flex items-center gap-3 mx-3 my-0.5 px-3 py-2 rounded-lg hover:bg-white/10">
     <svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[n.icon]}"/></svg>${esc(n.label)}</a>`).join('');
@@ -504,7 +610,8 @@ function show() {
   if (!S.token) return $('#loginView').classList.remove('hidden');
   $('#shell').classList.remove('hidden');
   $('#companyName').textContent = S.company;
-  $('#userLine').textContent = S.adminSession ? 'Admin workspace' : (S.role === 'SUPER_ADMIN' ? 'Super admin' : 'Client');
+  $('#userLine').textContent = S.adminSession ? 'Admin workspace' : (S.role === 'SUPER_ADMIN' ? 'Super admin' : `${S.name || ''} · ${(S.tenantRole || 'OWNER').toLowerCase()}`);
+  $('#pwLink').classList.toggle('hidden', Boolean(S.adminSession));
   $('#wsBanner').classList.toggle('hidden', !S.adminSession);
   $('#wsName').textContent = S.company;
   renderNav();
@@ -517,8 +624,9 @@ $('#loginForm').addEventListener('submit', async e => {
   const f = new FormData(e.target);
   try {
     const d = await api('/api/auth/login', { method: 'POST', body: { email: f.get('email'), password: f.get('password') } });
-    Object.assign(S, { token: d.token, role: d.role, company: d.companyName });
+    Object.assign(S, { token: d.token, role: d.role, company: d.companyName, tenantRole: d.tenantRole, name: d.name });
     saveSession(); e.target.reset(); show();
+    if (d.mustChangePassword) openPw(true);
   } catch (err) { toast(err.message); }
 });
 
@@ -560,6 +668,145 @@ function checklistHtml(ob, clickable) {
     : '<span class="text-xs text-slate-500">Set business nature and sector (as in IRIS) to see which scenarios FBR will ask for.</span>';
   return `<ul class="space-y-1 text-sm">${steps}</ul>
     <div class="mt-3"><div class="text-xs text-slate-500 mb-1">Sandbox scenarios${clickable ? ' — click one to fill the invoice form with it' : ''}:</div>${chips}</div>`;
+}
+
+/* ---------- Stock ---------- */
+const ST_LABEL = { PURCHASE: 'Purchase', IMPORT: 'Import', OPENING: 'Opening', ADJUSTMENT_IN: 'Adjustment +', ADJUSTMENT_OUT: 'Adjustment −' };
+const qty = v => Number(v).toLocaleString('en-PK', { maximumFractionDigits: 4 });
+async function loadStock() {
+  setupStock();
+  try {
+    const [sum, entries] = await Promise.all([api('/api/stock/summary'), api('/api/stock/entries' + ($('#stQ').value ? '?q=' + encodeURIComponent($('#stQ').value) : ''))]);
+    $('#stockRows').innerHTML = sum.map(r => `<tr class="border-b last:border-0"><td class="py-1 font-mono">${esc(r.hsCode)}</td><td>${esc(r.description)}</td><td>${esc(r.uoM)}</td>
+      <td class="text-right ${r.negative ? 'text-red-700 font-semibold' : ''}">${qty(r.closingQty)}${r.negative ? ' ⚠' : ''}</td><td class="text-right">${money(r.closingValue)}</td></tr>`).join('')
+      || '<tr><td colspan="5" class="py-2 text-slate-500">No stock yet — add opening balances and purchases above.</td></tr>';
+    if (sum.some(r => r.negative)) $('#stockRows').insertAdjacentHTML('beforeend', '<tr><td colspan="5" class="pt-2 text-xs text-red-700">⚠ More sold than received — add the missing opening stock or purchases.</td></tr>');
+    $('#stockEntryRows').innerHTML = entries.map(e => `<tr class="border-b last:border-0 align-top"><td class="py-1 whitespace-nowrap">${esc(e.entryDate)}</td><td>${ST_LABEL[e.entryType]}</td>
+      <td class="font-mono">${esc(e.hsCode)}</td><td>${esc(e.description)}</td><td class="text-right">${qty(e.quantity)}</td><td>${esc(e.uoM)}</td><td class="text-right">${money(e.value)}</td>
+      <td class="text-xs">${esc(e.partyName)}${e.reference ? `<div class="text-slate-500">${esc(e.reference)}</div>` : ''}</td>
+      <td class="text-right"><button class="text-red-600 text-xs" onclick="deleteStock('${e.id}')">Delete</button></td></tr>`).join('')
+      || '<tr><td colspan="9" class="py-2 text-slate-500">No entries.</td></tr>';
+  } catch (err) { toast(err.message); }
+}
+async function deleteStock(id) {
+  if (!confirm('Delete this stock entry? (It stays recorded in the activity log.)')) return;
+  try { await api('/api/stock/entries/' + id, { method: 'DELETE' }); loadStock(); } catch (err) { toast(err.message); }
+}
+function setupStock() {
+  if (S.stockReady) return; S.stockReady = true;
+  const f = $('#stockForm');
+  f.entryDate.value = pkDate();
+  f.hsCode.addEventListener('input', () => {
+    const q = f.hsCode.value.trim(); if (q.length < 2) return;
+    debounced(f.hsCode, async () => {
+      const rows = await api('/api/hs?q=' + encodeURIComponent(q)).catch(() => []);
+      suggest(f.hsCode, rows, r => `<span class="font-mono font-semibold">${esc(r.code)}</span> <div class="text-slate-600">${esc(r.description)}</div>`,
+        r => { f.hsCode.value = r.code; if (!f.description.value.trim()) f.description.value = shortHsDesc(r.description); });
+    });
+  });
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      await api('/api/stock/entries', { method: 'POST', body: Object.fromEntries(new FormData(f)) });
+      toast('Stock entry saved', true);
+      const keep = { entryType: f.entryType.value, entryDate: f.entryDate.value };
+      f.reset(); f.entryType.value = keep.entryType; f.entryDate.value = keep.entryDate;
+      loadStock();
+    } catch (err) { toast(err.message); }
+  });
+  $('#stQ').addEventListener('input', () => debounced($('#stQ'), loadStock));
+}
+
+/* ---------- Annex-H1 (admin) ---------- */
+async function previewAnnexH() {
+  const q = annexParams(); if (!q) return;
+  try {
+    const d = await api(`/api/admin/clients/${$('#acClient').value}/annex-h?` + q);
+    $('#ahSummary').innerHTML = d.rows.length ? `
+      ${d.negative ? `<div class="text-red-700 text-xs mb-2">⚠ ${d.negative} line(s) show more supplied than received — the client needs to add opening stock / purchases.</div>` : ''}
+      <table class="w-full text-xs"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">HS code</th><th>UOM</th><th class="text-right">Opening</th><th class="text-right">Purchased</th><th class="text-right">Adj.</th>
+        <th class="text-right">Taxable supplies</th><th class="text-right">Exempt</th><th class="text-right">Zero-rated</th><th class="text-right">Closing</th></tr></thead>
+      <tbody>${d.rows.map(r => `<tr class="border-b last:border-0"><td class="py-1 font-mono">${esc(r.hsCode)}<div class="text-slate-500 font-sans">${esc(r.description)}</div></td><td>${esc(r.uoM)}</td>
+        <td class="text-right">${qty(r.openingQty)}<div class="text-slate-500">${money(r.openingValue)}</div></td>
+        <td class="text-right">${qty(r.purchasedQty)}<div class="text-slate-500">${money(r.purchasedValue)}</div></td>
+        <td class="text-right">${qty(r.adjustmentQty)}</td>
+        <td class="text-right">${qty(r.taxableQty)}<div class="text-slate-500">${money(r.taxableValue)}</div></td>
+        <td class="text-right">${qty(r.exemptQty)}<div class="text-slate-500">${money(r.exemptValue)}</div></td>
+        <td class="text-right">${qty(r.zeroRatedQty)}<div class="text-slate-500">${money(r.zeroRatedValue)}</div></td>
+        <td class="text-right ${r.negative ? 'text-red-700 font-semibold' : ''}">${qty(r.closingQty)}<div class="text-slate-500">${money(r.closingValue)}</div></td></tr>`).join('')}</tbody></table>`
+      : '<div class="text-slate-500">No stock movements or filed supplies for this month.</div>';
+  } catch (err) { toast(err.message); }
+}
+async function downloadAnnexH() {
+  const q = annexParams(); if (!q) return;
+  try {
+    const res = await fetch(`/api/admin/clients/${$('#acClient').value}/annex-h?format=csv&` + q, { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Download failed');
+    const name = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'annex-h1.csv';
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (err) { toast(err.message); }
+}
+
+/* ---------- Change password ---------- */
+function openPw(forced) {
+  S.pwForced = forced;
+  $('#pwForm').reset();
+  $('#pwNote').classList.toggle('hidden', !forced);
+  $('#pwCancel').classList.toggle('hidden', forced);
+  $('#pwModal').classList.remove('hidden');
+}
+function closePw() { if (!S.pwForced) $('#pwModal').classList.add('hidden'); }
+$('#pwForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  if (f.get('newPassword') !== f.get('repeat')) return toast('The two new passwords are not the same');
+  try {
+    const d = await api('/api/auth/password', { method: 'POST', body: { currentPassword: f.get('currentPassword'), newPassword: f.get('newPassword') } });
+    S.token = d.token; saveSession();
+    S.pwForced = false; $('#pwModal').classList.add('hidden');
+    toast('Password changed. Other devices have been logged out.', true);
+  } catch (err) { toast(err.message); }
+});
+
+/* ---------- Users (prefix c = owner in own account, a = admin in Manage client) ---------- */
+const usersBase = prefix => prefix === 'a' ? `/api/admin/clients/${S.manageId}/users` : '/api/client/users';
+async function loadUsers(prefix) {
+  try {
+    const list = await api(usersBase(prefix));
+    $(`#${prefix}UserRows`).innerHTML = list.map(u => `<tr class="border-b last:border-0 align-top">
+      <td class="py-1.5"><div class="font-medium">${esc(u.name || '—')}</div><div class="text-xs text-slate-500">${esc(u.email)}</div></td>
+      <td><select class="!w-auto !text-xs" onchange="updateUser('${prefix}','${u.id}',{tenantRole:this.value})">
+        ${['OWNER', 'ACCOUNTANT', 'CASHIER'].map(r => `<option value="${r}" ${r === u.tenantRole ? 'selected' : ''}>${r[0] + r.slice(1).toLowerCase()}</option>`).join('')}</select></td>
+      <td class="text-xs">${u.active ? '<span class="text-emerald-700">Active</span>' : '<span class="text-slate-500">Disabled</span>'}${u.locked ? ' · <span class="text-red-700">Locked</span>' : ''}${u.mustChangePassword ? ' · <span class="text-amber-700">must set password</span>' : ''}</td>
+      <td class="text-xs">${u.lastLoginAt ? fmtDate(u.lastLoginAt) : '—'}</td>
+      <td class="text-right whitespace-nowrap text-xs">
+        <button class="text-emerald-700 underline mr-2" onclick="resetUserPw('${prefix}','${u.id}','${esc(u.email)}')">Reset password</button>
+        <button class="${u.active ? 'text-red-600' : 'text-emerald-700'} underline" onclick="updateUser('${prefix}','${u.id}',{active:${!u.active}})">${u.active ? 'Disable' : 'Enable'}</button></td></tr>`).join('')
+      || '<tr><td colspan="5" class="py-2 text-slate-500">No users.</td></tr>';
+  } catch (err) { toast(err.message); }
+}
+async function updateUser(prefix, id, body) {
+  if (body.active === false && !confirm('Disable this user? They are logged out immediately.')) return loadUsers(prefix);
+  try { await api(`${usersBase(prefix)}/${id}`, { method: 'PATCH', body }); toast('User updated', true); }
+  catch (err) { toast(err.message); }
+  loadUsers(prefix);
+}
+async function resetUserPw(prefix, id, email) {
+  const pw = prompt(`New temporary password for ${email} (8+ characters, letters and a number). They must change it at next login:`);
+  if (!pw) return;
+  try { await api(`${usersBase(prefix)}/${id}/reset-password`, { method: 'POST', body: { password: pw } }); toast('Password reset — tell the user the temporary password', true); loadUsers(prefix); }
+  catch (err) { toast(err.message); }
+}
+for (const prefix of ['c', 'a']) {
+  $(`#${prefix}UserForm`).addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      await api(usersBase(prefix), { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      e.target.reset(); toast('User added — they set their own password at first login', true); loadUsers(prefix);
+    } catch (err) { toast(err.message); }
+  });
 }
 
 /* ---------- Admin: website enquiries ---------- */
@@ -643,6 +890,7 @@ async function manageClient(id) {
     setupAnnexC(t);
     $('#acSummary').innerHTML = '';
     loadHsStats();
+    loadUsers('a');
     go('a-client');
   } catch (err) { toast(err.message); }
 }
@@ -663,8 +911,8 @@ function showClientActivity() {
 async function openWorkspace() {
   try {
     const d = await api(`/api/admin/clients/${S.manageId}/workspace`, { method: 'POST' });
-    S.adminSession = { token: S.token, role: S.role, company: S.company };
-    Object.assign(S, { token: d.token, role: 'CLIENT_USER', company: d.companyName });
+    S.adminSession = { token: S.token, role: S.role, company: S.company, tenantRole: S.tenantRole, name: S.name };
+    Object.assign(S, { token: d.token, role: 'CLIENT_USER', company: d.companyName, tenantRole: 'OWNER' });
     clientReady = false;
     saveSession(); show();
   } catch (err) { toast(err.message); }
@@ -742,6 +990,7 @@ async function initClient() {
   try {
     if (!S.meta) S.meta = await api('/api/meta');
     S.settings = await api('/api/client/settings');
+    if (S.settings.tenantRole && S.settings.tenantRole !== S.tenantRole) { S.tenantRole = S.settings.tenantRole; saveSession(); renderNav(); }
     await loadLists();
     if (!clientReady) setupInvoiceForm();
     clientReady = true;
@@ -799,7 +1048,13 @@ function applyEnv() {
   $('#scenarioSel').required = testing;
   applySetupBanner();
 }
+function applyRoleUi() {
+  const opt = [...$('#invoiceType').options].find(o => o.value === 'Debit Note');
+  if (opt) opt.hidden = !canManage();
+  document.body.classList.toggle('cashier', !canManage());
+}
 function applySetupBanner() {
+  applyRoleUi();
   const s = S.settings, ban = $('#setupBanner');
   let msg = '';
   if (!s.ready) msg = '<b>Your account is being set up.</b> Your FBR details are not complete yet — please contact your administrator. You can add products and buyers meanwhile.';
@@ -1517,13 +1772,14 @@ function invoiceActions(i) {
   if (i.status === 'CANCELLED') return `<span class="text-xs text-slate-500" title="${esc(i.cancelNote)}">Cancelled</span>`;
   if (i.status === 'SUBMITTED') return `<div class="flex flex-col items-end gap-1 text-xs">
       <button class="text-emerald-700 text-sm" onclick="openInvoice('${i.id}')">Receipt</button>
-      ${i.invoiceType === 'Sale Invoice' ? `<button class="text-sky-700 underline" onclick="startDebitNote('${i.id}')">Debit note</button>` : ''}
-      <button class="text-slate-600 underline" onclick="cancelInvoice('${i.id}', ${(Date.now() - new Date(i.submittedAt || i.createdAt).getTime()) / 3600000 > S.meta.editWindowHours})">Mark cancelled in IRIS</button>
+      ${canManage() && i.invoiceType === 'Sale Invoice' ? `<button class="text-sky-700 underline" onclick="startDebitNote('${i.id}')">Debit note</button>` : ''}
+      ${canManage() ? `<button class="text-slate-600 underline" onclick="cancelInvoice('${i.id}', ${(Date.now() - new Date(i.submittedAt || i.createdAt).getTime()) / 3600000 > S.meta.editWindowHours})">Mark cancelled in IRIS</button>` : ''}
       ${irisWindow(i)}</div>`;
   if (i.status === 'SUBMITTING') return '<span class="text-sky-700 text-xs">Sending…</span>';
   if (i.status === 'QUEUED') return `<div class="flex flex-col items-end gap-1 text-xs">
       <button class="text-indigo-700 underline" onclick="retryInvoice('${i.id}', this)">Send now</button>
-      <button class="text-slate-600 underline" onclick="unqueueInvoice('${i.id}')">Stop</button></div>`;
+      ${canManage() ? `<button class="text-slate-600 underline" onclick="unqueueInvoice('${i.id}')">Stop</button>` : ''}</div>`;
+  if (i.status === 'UNCERTAIN' && !canManage()) return '<span class="text-xs text-orange-700">Ask the owner/accountant to check IRIS</span>';
   if (i.status === 'UNCERTAIN') return `<div class="flex flex-col items-end gap-1 text-xs">
       <button class="text-emerald-700 underline" onclick="resolveInvoice('${i.id}', this)">Found in IRIS</button>
       <button class="text-orange-700 underline" onclick="retryInvoice('${i.id}', this, true)">Not in IRIS — resubmit</button></div>`;
@@ -1685,9 +1941,113 @@ function renderReceipt(inv, seller) {
     <div style="text-align:center;margin-top:4px;color:#333">Verify this invoice through the FBR Tax Asaan app or SMS at 9966</div>`;
   // QR v2 (25×25) holds the 22-28 char FBR number at error level L; printed at 1×1 inch
   new QRCode($('#qrBox'), { text: inv.fbrInvoiceNumber, width: 96, height: 96, correctLevel: QRCode.CorrectLevel.L });
-  $('#receipt').classList.remove('hidden');
+  renderA4(inv, seller);
   $('#printBtn').classList.remove('hidden');
+  setPrintFormat(printFormat());
   $('#receiptModal').classList.remove('hidden');
+}
+
+// Amount in words, Pakistani style (lakh / crore): 120450.5 → "Rupees One Lakh Twenty Thousand Four Hundred Fifty and Paisa Fifty Only"
+function amountInWords(n) {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const two = x => x < 20 ? ones[x] : tens[Math.floor(x / 10)] + (x % 10 ? ' ' + ones[x % 10] : '');
+  const three = x => (x >= 100 ? ones[Math.floor(x / 100)] + ' Hundred' + (x % 100 ? ' ' : '') : '') + two(x % 100);
+  const words = x => {
+    if (x === 0) return 'Zero';
+    const parts = [];
+    const crore = Math.floor(x / 1e7); x %= 1e7;
+    const lakh = Math.floor(x / 1e5); x %= 1e5;
+    const thousand = Math.floor(x / 1e3); x %= 1e3;
+    if (crore) parts.push(words(crore) + ' Crore');
+    if (lakh) parts.push(two(lakh) + ' Lakh');
+    if (thousand) parts.push(two(thousand) + ' Thousand');
+    if (x) parts.push(three(x));
+    return parts.join(' ');
+  };
+  const total = Math.round(Number(n) * 100), rs = Math.floor(total / 100), ps = total % 100;
+  return `Rupees ${words(rs)}${ps ? ' and Paisa ' + two(ps) : ''} Only`;
+}
+
+// Full-page tax invoice for wholesalers / B2B (STA s.23 particulars, DI number + QR)
+function renderA4(inv, seller) {
+  const n = v => money(v);
+  const anyFt = inv.items.some(i => Number(i.furtherTax)), anyExtra = inv.items.some(i => Number(i.extraTax) || Number(i.fedPayable));
+  $('#invoiceA4').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:2px solid #000;padding-bottom:8px">
+      <div>
+        <div style="font-size:20px;font-weight:bold">${esc(seller.sellerBusinessName)}</div>
+        <div>${esc(seller.sellerAddress)}${seller.sellerProvince ? ', ' + esc(seller.sellerProvince) : ''}</div>
+        <div>NTN/CNIC: <b>${esc(seller.sellerNtnCnic)}</b>${seller.sellerStrn ? ` &nbsp;·&nbsp; STRN: <b>${esc(seller.sellerStrn)}</b>` : ''}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:18px;font-weight:bold;letter-spacing:.5px">${inv.invoiceType === 'Debit Note' ? 'DEBIT NOTE' : 'SALES TAX INVOICE'}</div>
+        <div>Invoice No: <b>${esc(inv.invoiceNo || inv.localNo)}</b></div>
+        <div>Date: <b>${esc(inv.invoiceDate)}</b></div>
+        <div>FBR Invoice No: <b>${esc(inv.fbrInvoiceNumber)}</b></div>
+      </div>
+    </div>
+    ${inv.fbrEnv === 'SANDBOX' ? '<div style="text-align:center;font-weight:bold;margin:6px 0;border:1px dashed #000;padding:3px">SANDBOX TEST — NOT A TAX INVOICE</div>' : ''}
+    <table style="margin-top:10px">
+      <tr><th style="width:18%">Buyer</th><td style="width:32%">${esc(inv.buyerBusinessName)}</td><th style="width:18%">Buyer NTN / CNIC</th><td>${esc(inv.buyerNtnCnic || '—')}</td></tr>
+      <tr><th>Address</th><td>${esc(inv.buyerAddress)}</td><th>Province</th><td>${esc(inv.buyerProvince)}</td></tr>
+      <tr><th>Buyer type</th><td>${inv.endConsumer ? 'End consumer' : esc(inv.buyerRegistrationType)}${inv.buyerNonAtl ? ' (not active / non-ATL)' : ''}</td>
+        <th>${inv.invoiceRefNo ? 'Against invoice' : 'Sale origination'}</th><td>${inv.invoiceRefNo ? esc(inv.invoiceRefNo) + (inv.reason ? ' — ' + esc(inv.reason) : '') : esc(seller.sellerProvince || '—')}</td></tr>
+    </table>
+    <table style="margin-top:10px">
+      <thead><tr><th>#</th><th>HS Code</th><th>Description</th><th class="num">Qty</th><th>UOM</th><th class="num">Unit price</th><th class="num">Value excl. ST</th><th class="num">Rate</th><th class="num">Sales tax</th>
+        ${anyFt ? '<th class="num">Further tax</th>' : ''}${anyExtra ? '<th class="num">Extra / FED</th>' : ''}<th class="num">Total</th></tr></thead>
+      <tbody>${inv.items.map((it, i) => `<tr>
+        <td>${i + 1}</td><td style="white-space:nowrap">${esc(it.hsCode)}</td>
+        <td>${esc(it.productDescription)}${it.sroScheduleNo ? `<div style="color:#444">${esc(it.sroScheduleNo)}${it.sroItemSerialNo ? ', S.No ' + esc(it.sroItemSerialNo) : ''}</div>` : ''}${Number(it.fixedNotifiedValueOrRetailPrice) ? `<div style="color:#444">Retail value ${n(it.fixedNotifiedValueOrRetailPrice)}</div>` : ''}</td>
+        <td class="num">${Number(it.quantity)}</td><td>${esc(it.uoM)}</td><td class="num">${n(it.unitPrice)}</td><td class="num">${n(it.valueSalesExcludingST)}</td>
+        <td class="num">${esc(it.rate)}</td><td class="num">${n(it.salesTaxApplicable)}</td>
+        ${anyFt ? `<td class="num">${n(it.furtherTax)}</td>` : ''}${anyExtra ? `<td class="num">${n(Number(it.extraTax) + Number(it.fedPayable))}</td>` : ''}
+        <td class="num">${n(it.totalValues)}</td></tr>`).join('')}</tbody>
+    </table>
+    <div style="display:flex;justify-content:space-between;gap:16px;margin-top:10px">
+      <div style="flex:1">
+        <div><b>Amount in words:</b> ${amountInWords(inv.totalAmount)}</div>
+        ${inv.offlineMode ? '<div style="margin-top:4px">(Offline mode invoice — filed with FBR after reconnection)</div>' : ''}
+      </div>
+      <table style="width:42%">
+        <tr><th>Value excl. sales tax</th><td class="num">${n(inv.totalExclST)}</td></tr>
+        <tr><th>Sales tax</th><td class="num">${n(inv.totalST)}</td></tr>
+        ${Number(inv.totalFurtherTax) ? `<tr><th>Further tax</th><td class="num">${n(inv.totalFurtherTax)}</td></tr>` : ''}
+        <tr><th style="font-size:12px">Total (Rs)</th><td class="num" style="font-size:12px;font-weight:bold">${n(inv.totalAmount)}</td></tr>
+      </table>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:18px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <img src="/fbr-di-logo.jpg" alt="FBR Digital Invoicing System" style="width:1in;height:auto">
+        <div class="qrA4" id="qrBoxA4" style="padding:.1in;background:#fff"></div>
+        <div>
+          <div style="font-weight:bold">Integrated with FBR</div>
+          ${seller.softwareRegNo ? `<div>Software Reg. No: ${esc(seller.softwareRegNo)}</div>` : ''}
+          <div style="max-width:60mm">Verify this invoice through the FBR Tax Asaan app or SMS at 9966</div>
+        </div>
+      </div>
+      <div style="text-align:center;min-width:55mm">
+        <div style="border-top:1px solid #000;padding-top:3px">Authorised signature</div>
+      </div>
+    </div>`;
+  new QRCode($('#qrBoxA4'), { text: inv.fbrInvoiceNumber, width: 96, height: 96, correctLevel: QRCode.CorrectLevel.L });
+}
+// The chosen format is remembered on this device
+function printFormat() { try { return localStorage.getItem('printFormat') || 'thermal'; } catch { return 'thermal'; } }
+function setPrintFormat(fmt) {
+  try { localStorage.setItem('printFormat', fmt); } catch {}
+  $('#receipt').classList.toggle('hidden', fmt !== 'thermal');
+  $('#invoiceA4').classList.toggle('hidden', fmt !== 'a4');
+  document.querySelectorAll('#fmtToggle [data-fmt]').forEach(b => { const on = b.dataset.fmt === fmt; b.classList.toggle('bg-slate-800', on); b.classList.toggle('text-white', on); });
+}
+function printInvoice() {
+  const a4 = printFormat() === 'a4';
+  document.body.classList.toggle('print-a4', a4);
+  let st = document.getElementById('pageStyle');
+  if (!st) { st = document.createElement('style'); st.id = 'pageStyle'; document.head.appendChild(st); }
+  st.textContent = a4 ? '@page { size: A4; margin: 10mm; }' : '@page { size: 80mm auto; margin: 3mm; }';
+  window.print();
 }
 function closeReceipt() { $('#receiptModal').classList.add('hidden'); }
 

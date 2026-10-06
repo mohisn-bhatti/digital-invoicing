@@ -63,6 +63,33 @@ Valid invoices are queued and filed one by one in the background; *Recent import
 - The same file (same Invoice Ref + date) imported twice is never filed twice.
 - On Render free the background sender pauses while the service sleeps and continues on the next visit.
 
+## Users, roles & login security
+- Each client has users with a role:
+  - **Owner:** everything, plus managing users.
+  - **Accountant:** invoices, debit notes, "cancelled in IRIS", import, products, buyers and stock.
+  - **Cashier:** creates and prints invoices only.
+- Owners manage their staff on the *Users* page. The super admin manages any client's users under *Clients → Manage*.
+- New users and reset passwords must be changed at the next login. Changing a password, changing a role or disabling a
+  user signs that user out everywhere (tokens carry a version that is checked on every request).
+- After 5 wrong passwords an account locks for 15 minutes (an admin or owner reset unlocks it). One connection may fail
+  20 times per 15 minutes. Security headers are sent on every response.
+
+## Printing: thermal or A4
+The invoice popup switches between an **80mm thermal receipt** and an **A4 tax invoice**. The A4 version has a
+letterhead, a buyer block, an item table with HS codes, totals, the amount in words (lakh/crore), the FBR number, the
+QR code and logo, "Integrated with FBR" and a signature line. The chosen format is remembered on each device.
+
+## Stock & Annex-H1
+On the *Stock* page (Owner/Accountant) record opening balances, local purchases, imports (GD) and adjustments.
+Sales come automatically from invoices filed with FBR: taxable, exempt and zero-rated are counted separately, and debit
+notes count as returns. *Reports → Annex-H1* (super admin) gives the HS-code-wise stock statement for a month:
+opening → purchased → adjustments → supplies → closing, with a CSV download. Quantities are exact. Supplies are valued
+at sale value, and opening/closing stock at weighted average cost. **Confirm this valuation with the CA.**
+
+## Backups
+`npm run backup` writes an encrypted dump of Supabase. See [docs/backups.md](docs/backups.md) for restore checks and
+daily scheduling.
+
 ## Activity log (audit)
 Every important action is recorded with user, IP and time:
 - logins, including failed ones

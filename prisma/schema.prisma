@@ -13,6 +13,13 @@ enum Role {
   CLIENT_USER
 }
 
+// Inside a client: Owner manages staff; Accountant does all invoicing work; Cashier only creates and prints invoices
+enum TenantRole {
+  OWNER
+  ACCOUNTANT
+  CASHIER
+}
+
 enum FbrEnv {
   SANDBOX
   PRODUCTION
@@ -29,13 +36,21 @@ enum InvoiceStatus {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  role      Role     @default(CLIENT_USER)
-  tenantId  String?
-  tenant    Tenant?  @relation(fields: [tenantId], references: [id])
-  createdAt DateTime @default(now())
+  id                 String      @id @default(uuid())
+  email              String      @unique
+  name               String      @default("")
+  password           String
+  role               Role        @default(CLIENT_USER)
+  tenantRole         TenantRole  @default(OWNER) // only for CLIENT_USER
+  active             Boolean     @default(true)
+  tokenVersion       Int         @default(0)     // bump to log the user out everywhere (password change / reset / deactivate)
+  mustChangePassword Boolean     @default(false) // set after an admin/owner reset
+  failedLogins       Int         @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  tenantId           String?
+  tenant             Tenant?     @relation(fields: [tenantId], references: [id])
+  createdAt          DateTime    @default(now())
 }
 
 model Tenant {
@@ -68,6 +83,7 @@ model Tenant {
   products           Product[]
   buyers             Buyer[]
   importBatches      ImportBatch[]
+  stockEntries       StockEntry[]
   createdAt          DateTime  @default(now())
 }
 
@@ -250,4 +266,34 @@ model Lead {
   updatedAt    DateTime @updatedAt
 
   @@index([status, createdAt])
+}
+
+// Stock movements other than sales (sales come from filed invoices). Feeds the Annex-H1 stock statement.
+enum StockEntryType {
+  OPENING        // opening balance
+  PURCHASE       // local purchase
+  IMPORT         // imported goods (GD)
+  ADJUSTMENT_IN  // e.g. stock count surplus
+  ADJUSTMENT_OUT // e.g. damage, shortage, own use
+}
+
+model StockEntry {
+  id          String         @id @default(uuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id])
+  entryType   StockEntryType
+  entryDate   String         // YYYY-MM-DD
+  hsCode      String
+  uoM         String
+  description String         @default("")
+  quantity    Decimal        @db.Decimal(18, 4)
+  value       Decimal        @db.Decimal(14, 2) // cost value (excl. sales tax)
+  reference   String         @default("")       // supplier invoice / GD no.
+  partyName   String         @default("")       // supplier
+  notes       String         @default("")
+  createdBy   String         @default("")
+  createdAt   DateTime       @default(now())
+
+  @@index([tenantId, entryDate])
+  @@index([tenantId, hsCode])
 }

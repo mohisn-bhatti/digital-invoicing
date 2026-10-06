@@ -34,6 +34,13 @@ _Last updated: 2026-10-06_
 - Raseed landing page (`/`), contact page (`/contact`) with WhatsApp; enquiries → admin "Website enquiries" (spam honeypot,
   per-IP limit); app moved to `/app`. To do: buy domain (check raseed.pk at PKNIC), set CONTACT_* in .env, real screenshots.
 
+**Before go-live set (done 2026-10-07)**
+- Users and roles (Owner / Accountant / Cashier), change and reset password, forced change at first login
+- Login lockout and IP limit, security headers, tokens revoked on password, role or status change
+- A4 tax invoice print (with amount in words), next to the thermal receipt
+- Encrypted backup and restore scripts, tested end-to-end against both the local DB and Supabase (docs/backups.md)
+- Stock entries and the Annex-H1 stock statement
+
 ## Waiting on others
 - **PRAL / IRIS:** sandbox token, assigned scenarios, IP whitelisting. Then run every scenario, then get the production token.
 - **CA answers** (list sent 2026-10-06):
@@ -58,12 +65,7 @@ _Last updated: 2026-10-06_
 - **FBR dropdowns** for sale type → rate and SRO schedule/items (SaleTypeToRate, SroSchedule, SROItem). Needs the token.
 
 ## Saved for later (needed before going live)
-1. **A4 tax invoice print.** Letterhead, buyer address, item table, QR and logo. Wholesalers use A4, not thermal.
-2. **Users and passwords.** Change password, admin reset, several users per client with roles (Owner, Accountant, Cashier).
-3. **Login security.** Lock out repeated wrong passwords; security headers.
-4. **Products import.** Upload products from Excel/CSV.
-5. **Dashboard.** Sales and tax for today, this week and this month; FAILED and UNCERTAIN counts.
-6. **Backups.** A daily automatic backup of Supabase (FBR requires 6 years of records).
+1. **Products import.** Upload products from Excel/CSV.
 
 ## Before go-live (deployment)
 - An Oracle Cloud Always Free VM proxy for the static IP (docs/static-ip-proxy.md). The user needs to create the Oracle account.
@@ -73,6 +75,6 @@ _Last updated: 2026-10-06_
 - Remove the brother's GitHub account from this Mac when it's no longer needed (`gh auth logout -u mohisn-bhatti`).
 
 ## Later phases
-- **Inventory and purchases.** Opening stock, purchases and imports, closing stock; the Annex-H1 stock statement.
+- **Stock:** CSV import of purchases; refund (Annex-H) specifics for exporters, once the CA confirms who needs them.
 - **Subscription billing** for clients.
 - **Offline POS** for retail counters. This is a separate, larger product.

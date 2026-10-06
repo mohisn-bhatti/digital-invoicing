@@ -1,0 +1,13 @@
+-- CreateEnum
+CREATE TYPE "TenantRole" AS ENUM ('OWNER', 'ACCOUNTANT', 'CASHIER');
+
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "active" BOOLEAN NOT NULL DEFAULT true,
+ADD COLUMN     "failedLogins" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "lastLoginAt" TIMESTAMP(3),
+ADD COLUMN     "lockedUntil" TIMESTAMP(3),
+ADD COLUMN     "mustChangePassword" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "name" TEXT NOT NULL DEFAULT '',
+ADD COLUMN     "tenantRole" "TenantRole" NOT NULL DEFAULT 'OWNER',
+ADD COLUMN     "tokenVersion" INTEGER NOT NULL DEFAULT 0;
+

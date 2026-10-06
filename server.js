@@ -4,7 +4,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { PrismaClient } = require('@prisma/client');
 
-const { authenticateToken, requireRole, requireTenant, signToken, signWorkspaceToken } = require('./src/auth');
+const { createAuth, requireRole, requireTenant, requireTenantRole, signToken, signWorkspaceToken } = require('./src/auth');
 const { encrypt, decrypt, mask } = require('./src/crypto');
 const { calcInvoice } = require('./src/tax');
 const fbr = require('./src/fbr');
@@ -12,6 +12,7 @@ const hs = require('./src/hscodes');
 const annexC = require('./src/annexc');
 const onboarding = require('./src/onboarding');
 const importer = require('./src/importer');
+const stock = require('./src/stock');
 const { createAudit } = require('./src/audit');
 const { BUSINESS_ACTIVITIES, SECTORS } = require('./src/activityScenarios');
 const { SCENARIOS, PROVINCES, UOMS, RATES } = require('./src/scenarios');
@@ -26,11 +27,26 @@ for (const k of ['DATABASE_URL', 'JWT_SECRET', 'ENCRYPTION_KEY']) {
 const app = express();
 const prisma = new PrismaClient();
 const audit = createAudit(prisma);
+const { authenticateToken } = createAuth(prisma);
+const OWNER_OR_ACCOUNTANT = requireTenantRole('OWNER', 'ACCOUNTANT');
 
 // Proxies in front of the app: Render = 1; Vercel rewrite → Render = 2. Needed so req.ip is the visitor's IP.
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 app.use('/api/import', express.json({ limit: '10mb' })); // spreadsheet rows
 app.use(express.json({ limit: '1mb' }));
+
+// Basic security headers (CSP is left out: the pages use the Tailwind CDN, which injects styles at runtime)
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+    res.set({
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'Referrer-Policy': 'same-origin',
+        'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    });
+    if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+});
 
 // Render health check; /api/health is the same, reachable through the Vercel /api rewrite (used to wake a sleeping free instance)
 async function health(req, res) {
@@ -152,23 +168,82 @@ app.post('/api/public/contact', async (req, res) => {
 });
 
 // ---------- Auth ----------
+// Brute-force protection: an account locks for 15 min after 5 wrong passwords; one IP may fail 20 times per 15 min
+const LOCK_AFTER = 5, LOCK_MINUTES = 15, IP_FAIL_LIMIT = 20;
+const ipFails = new Map();
+function ipFailCount(ip) {
+    const now = Date.now(), list = (ipFails.get(ip) || []).filter(t => now - t < LOCK_MINUTES * 60000);
+    ipFails.set(ip, list);
+    if (ipFails.size > 5000) for (const [k, v] of ipFails) if (!v.some(t => now - t < LOCK_MINUTES * 60000)) ipFails.delete(k);
+    return list;
+}
+const minutesLeft = d => Math.max(1, Math.ceil((d.getTime() - Date.now()) / 60000));
+
+function loginPayload(user) {
+    return {
+        token: signToken(user),
+        role: user.role,
+        tenantRole: user.role === 'CLIENT_USER' ? user.tenantRole : null,
+        name: user.name || user.email,
+        mustChangePassword: user.mustChangePassword,
+        companyName: user.tenant ? user.tenant.companyName : 'Super Admin',
+    };
+}
+
 app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) throw new HttpError(400, 'Email and password are required.');
-    const user = await prisma.user.findUnique({ where: { email: String(email).toLowerCase().trim() }, include: { tenant: true } });
+    const mail = String(email).toLowerCase().trim();
+    if (ipFailCount(req.ip).length >= IP_FAIL_LIMIT) throw new HttpError(429, `Too many failed logins from this connection. Try again in ${LOCK_MINUTES} minutes.`);
+    const user = await prisma.user.findUnique({ where: { email: mail }, include: { tenant: true } });
+    if (user?.lockedUntil && user.lockedUntil > new Date()) {
+        throw new HttpError(423, `This account is locked after too many wrong passwords. Try again in ${minutesLeft(user.lockedUntil)} minute(s), or ask your administrator to reset the password.`);
+    }
     if (!user || !(await bcrypt.compare(String(password), user.password))) {
-        await audit({ ip: req.ip }, {
-            tenantId: user?.tenantId ?? null, userEmail: String(email).toLowerCase().trim(),
-            action: 'auth.login_failed', summary: user ? 'Wrong password' : 'Unknown email',
-        });
+        ipFails.get(req.ip).push(Date.now());
+        let summary = user ? 'Wrong password' : 'Unknown email';
+        if (user) {
+            const fails = user.failedLogins + 1;
+            const lock = fails >= LOCK_AFTER;
+            await prisma.user.update({ where: { id: user.id }, data: lock ? { failedLogins: 0, lockedUntil: new Date(Date.now() + LOCK_MINUTES * 60000) } : { failedLogins: fails } });
+            if (lock) summary = `Wrong password — account locked for ${LOCK_MINUTES} minutes after ${LOCK_AFTER} attempts`;
+        }
+        await audit({ ip: req.ip }, { tenantId: user?.tenantId ?? null, userEmail: mail, action: summary.includes('locked') ? 'auth.locked' : 'auth.login_failed', summary });
         throw new HttpError(400, 'Invalid email or password.');
     }
+    if (!user.active) throw new HttpError(403, 'This account has been disabled. Contact your account owner or administrator.');
+    const fresh = await prisma.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() }, include: { tenant: true } });
     await audit({ ip: req.ip, user }, { action: 'auth.login', summary: 'Logged in' });
-    res.json({
-        token: signToken(user),
-        role: user.role,
-        companyName: user.tenant ? user.tenant.companyName : 'Super Admin',
+    res.json(loginPayload(fresh));
+});
+
+// Change own password (logs out every other session; returns a fresh token for this one)
+function checkNewPassword(pw, email) {
+    const p = String(pw || '');
+    if (p.length < 8) throw new HttpError(400, 'Password must be at least 8 characters.');
+    if (p.length > 100) throw new HttpError(400, 'Password is too long.');
+    if (!/[A-Za-z]/.test(p) || !/\d/.test(p)) throw new HttpError(400, 'Use letters and at least one number.');
+    if (email && p.toLowerCase().includes(String(email).split('@')[0].toLowerCase())) throw new HttpError(400, "Password can't contain your email name.");
+    return p;
+}
+app.post('/api/auth/password', authenticateToken, async (req, res) => {
+    if (req.user.impersonatedBy) throw new HttpError(400, 'Change your own password from the admin account, not inside a workspace.');
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, include: { tenant: true } });
+    if (!(await bcrypt.compare(String(req.body?.currentPassword || ''), user.password))) throw new HttpError(400, 'Current password is not correct.');
+    const pw = checkNewPassword(req.body?.newPassword, user.email);
+    if (await bcrypt.compare(pw, user.password)) throw new HttpError(400, 'The new password must be different from the current one.');
+    const updated = await prisma.user.update({
+        where: { id: user.id },
+        data: { password: await bcrypt.hash(pw, 10), tokenVersion: { increment: 1 }, mustChangePassword: false },
+        include: { tenant: true },
     });
+    await audit(req, { action: 'auth.password_change', summary: 'Changed own password (other sessions logged out)' });
+    res.json(loginPayload(updated));
+});
+
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+    const u = await prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, select: { email: true, name: true, role: true, tenantRole: true, mustChangePassword: true } });
+    res.json({ ...u, tenantRole: req.user.impersonatedBy ? 'OWNER' : u.tenantRole, workspace: Boolean(req.user.impersonatedBy) });
 });
 
 app.post('/api/auth/logout', authenticateToken, async (req, res) => {
@@ -236,12 +311,82 @@ app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), as
     const tenant = await prisma.tenant.create({
         data: {
             companyName: String(companyName).trim(),
-            users: { create: { email, password: await bcrypt.hash(String(clientPassword), 10), role: 'CLIENT_USER' } },
+            users: { create: { email, password: await bcrypt.hash(String(clientPassword), 10), role: 'CLIENT_USER', tenantRole: 'OWNER', mustChangePassword: true } },
         },
     });
     await audit(req, { tenantId: tenant.id, action: 'admin.client_create', entityType: 'Tenant', entityId: tenant.id, summary: `Client "${tenant.companyName}" created with login ${email}` });
     res.json({ success: true, tenantId: tenant.id });
 });
+
+// ---------- Users inside a client (Owner manages own staff; super admin manages any client) ----------
+const TENANT_ROLES = ['OWNER', 'ACCOUNTANT', 'CASHIER'];
+const userView = u => ({ id: u.id, email: u.email, name: u.name, tenantRole: u.tenantRole, active: u.active,
+    locked: Boolean(u.lockedUntil && u.lockedUntil > new Date()), mustChangePassword: u.mustChangePassword, lastLoginAt: u.lastLoginAt, createdAt: u.createdAt });
+
+async function tenantUsers(tenantId) {
+    const list = await prisma.user.findMany({ where: { tenantId, role: 'CLIENT_USER' }, orderBy: { createdAt: 'asc' } });
+    return list.map(userView);
+}
+async function addTenantUser(req, tenantId, b) {
+    const email = String(b.email || '').toLowerCase().trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Enter a valid email.');
+    if (!TENANT_ROLES.includes(b.tenantRole)) throw new HttpError(400, 'Choose a role: Owner, Accountant or Cashier.');
+    const pw = checkNewPassword(b.password, email);
+    if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
+    const u = await prisma.user.create({ data: {
+        email, name: String(b.name || '').trim().slice(0, 100), password: await bcrypt.hash(pw, 10),
+        role: 'CLIENT_USER', tenantRole: b.tenantRole, tenantId, mustChangePassword: true, // first login asks for their own password
+    } });
+    await audit(req, { tenantId, action: 'user.create', entityType: 'User', entityId: u.id, summary: `User ${email} added as ${b.tenantRole.toLowerCase()}` });
+    return userView(u);
+}
+async function findTenantUser(tenantId, id) {
+    const u = await prisma.user.findFirst({ where: { id, tenantId, role: 'CLIENT_USER' } });
+    if (!u) throw new HttpError(404, 'User not found.');
+    return u;
+}
+async function activeOwners(tenantId, exceptId) {
+    return prisma.user.count({ where: { tenantId, role: 'CLIENT_USER', tenantRole: 'OWNER', active: true, id: { not: exceptId } } });
+}
+async function updateTenantUser(req, tenantId, id, b) {
+    const u = await findTenantUser(tenantId, id);
+    const data = {};
+    if (b.name !== undefined) data.name = String(b.name).trim().slice(0, 100);
+    if (b.tenantRole !== undefined) {
+        if (!TENANT_ROLES.includes(b.tenantRole)) throw new HttpError(400, 'Unknown role.');
+        data.tenantRole = b.tenantRole;
+    }
+    if (b.active !== undefined) data.active = Boolean(b.active);
+    const losesOwner = u.tenantRole === 'OWNER' && u.active && (data.tenantRole && data.tenantRole !== 'OWNER' || data.active === false);
+    if (losesOwner && !(await activeOwners(tenantId, u.id))) throw new HttpError(400, 'Keep at least one active owner on the account.');
+    if (data.active === false || (data.tenantRole && data.tenantRole !== u.tenantRole)) data.tokenVersion = { increment: 1 }; // sign them out
+    const upd = await prisma.user.update({ where: { id: u.id }, data });
+    const what = [data.tenantRole && `role → ${data.tenantRole.toLowerCase()}`, data.active === false && 'disabled', data.active === true && !u.active && 'enabled', data.name !== undefined && data.name !== u.name && 'name changed'].filter(Boolean);
+    if (what.length) await audit(req, { tenantId, action: 'user.update', entityType: 'User', entityId: u.id, summary: `User ${u.email}: ${what.join(', ')}` });
+    return userView(upd);
+}
+async function resetTenantUserPassword(req, tenantId, id, password) {
+    const u = await findTenantUser(tenantId, id);
+    const pw = checkNewPassword(password, u.email);
+    const upd = await prisma.user.update({ where: { id: u.id }, data: {
+        password: await bcrypt.hash(pw, 10), mustChangePassword: true, tokenVersion: { increment: 1 }, failedLogins: 0, lockedUntil: null,
+    } });
+    await audit(req, { tenantId, action: 'user.password_reset', entityType: 'User', entityId: u.id, summary: `Password reset for ${u.email} (must change at next login; account unlocked)` });
+    return userView(upd);
+}
+const OWNER_ONLY = requireTenantRole('OWNER');
+app.get('/api/client/users', authenticateToken, requireTenant, OWNER_ONLY, async (req, res) => res.json(await tenantUsers(req.user.tenantId)));
+app.post('/api/client/users', authenticateToken, requireTenant, OWNER_ONLY, async (req, res) => res.json(await addTenantUser(req, req.user.tenantId, req.body || {})));
+app.patch('/api/client/users/:uid', authenticateToken, requireTenant, OWNER_ONLY, async (req, res) => res.json(await updateTenantUser(req, req.user.tenantId, req.params.uid, req.body || {})));
+app.post('/api/client/users/:uid/reset-password', authenticateToken, requireTenant, OWNER_ONLY, async (req, res) => res.json(await resetTenantUserPassword(req, req.user.tenantId, req.params.uid, req.body?.password)));
+const ADMIN = requireRole('SUPER_ADMIN');
+app.get('/api/admin/clients/:id/users', authenticateToken, ADMIN, async (req, res) => res.json(await tenantUsers(req.params.id)));
+app.post('/api/admin/clients/:id/users', authenticateToken, ADMIN, async (req, res) => {
+    if (!(await prisma.tenant.findUnique({ where: { id: req.params.id }, select: { id: true } }))) throw new HttpError(404, 'Client not found.');
+    res.json(await addTenantUser(req, req.params.id, req.body || {}));
+});
+app.patch('/api/admin/clients/:id/users/:uid', authenticateToken, ADMIN, async (req, res) => res.json(await updateTenantUser(req, req.params.id, req.params.uid, req.body || {})));
+app.post('/api/admin/clients/:id/users/:uid/reset-password', authenticateToken, ADMIN, async (req, res) => res.json(await resetTenantUserPassword(req, req.params.id, req.params.uid, req.body?.password)));
 
 // Open a client's workspace (e.g. to run the sandbox scenarios). Returns a 2-hour client token for the admin.
 app.post('/api/admin/clients/:id/workspace', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
@@ -278,7 +423,7 @@ app.get('/api/admin/egress-ip', authenticateToken, requireRole('SUPER_ADMIN'), a
 // Read-only for clients; only the super admin changes FBR settings
 app.get('/api/client/settings', authenticateToken, requireTenant, async (req, res) => {
     const t = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId } });
-    res.json({ ...clientTenant(t), workspace: Boolean(req.user.impersonatedBy) });
+    res.json({ ...clientTenant(t), workspace: Boolean(req.user.impersonatedBy), tenantRole: req.user.tenantRole });
 });
 
 app.get('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
@@ -695,6 +840,7 @@ app.post('/api/invoices', authenticateToken, requireTenant, async (req, res) => 
     const existing = await findExisting();
     if (existing) return res.json({ invoice: withStatus(existing), seller: clientTenant(tenant), duplicate: true });
 
+    if (b.invoiceType === 'Debit Note' && req.user.tenantRole === 'CASHIER') throw new HttpError(403, 'Only the owner or accountant can issue debit notes.');
     const data = await prepareInvoice(tenant, b);
 
     let created;
@@ -726,6 +872,7 @@ app.post('/api/invoices/:id/retry', authenticateToken, requireTenant, async (req
     if (status === 'SUBMITTED') throw new HttpError(400, 'Invoice is already submitted to FBR.');
     if (status === 'SUBMITTING') throw new HttpError(409, 'This invoice is being sent to FBR right now. Wait a moment and refresh.');
     const confirmed = req.body?.confirmUncertain === true;
+    if (confirmed && req.user.tenantRole === 'CASHIER') throw new HttpError(403, 'Only the owner or accountant can resubmit an invoice that may already be in IRIS.');
     if (status === 'UNCERTAIN' && !confirmed) {
         throw new HttpError(409, 'FBR may already have this invoice. Check IRIS first; resubmit only if it is not there.');
     }
@@ -742,7 +889,7 @@ app.post('/api/invoices/:id/retry', authenticateToken, requireTenant, async (req
 });
 
 // UNCERTAIN invoice found in IRIS: record the FBR number shown there instead of resubmitting
-app.post('/api/invoices/:id/resolve', authenticateToken, requireTenant, async (req, res) => {
+app.post('/api/invoices/:id/resolve', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const fbrInvoiceNumber = String(req.body?.fbrInvoiceNumber || '').trim().toUpperCase();
     if (!/^\d{7,13}DI\d{8,20}$/.test(fbrInvoiceNumber)) {
         throw new HttpError(400, 'Enter the FBR invoice number exactly as shown in IRIS (e.g. 7000007DI1747119701593).');
@@ -767,7 +914,7 @@ app.post('/api/invoices/:id/resolve', authenticateToken, requireTenant, async (r
 });
 
 // Stop a queued invoice from being sent automatically
-app.post('/api/invoices/:id/unqueue', authenticateToken, requireTenant, async (req, res) => {
+app.post('/api/invoices/:id/unqueue', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const { count } = await prisma.invoice.updateMany({
         where: { id: req.params.id, tenantId: req.user.tenantId, status: 'QUEUED' },
         data: { status: 'FAILED', nextAttemptAt: null, errorMessage: 'Stopped by user before sending to FBR.' },
@@ -843,7 +990,7 @@ if (process.env.QUEUE_DISABLED !== 'true') setInterval(processQueue, QUEUE_INTER
 
 // Record a cancellation done in IRIS (the DI API has no cancel call). Within the IRIS window it's a plain
 // cancel; after it, FBR needs Commissioner approval, so an approval reference is required.
-app.post('/api/invoices/:id/cancel', authenticateToken, requireTenant, async (req, res) => {
+app.post('/api/invoices/:id/cancel', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const note = String(req.body?.note || '').trim().slice(0, 500);
     const inv = await prisma.invoice.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
     if (!inv) throw new HttpError(404, 'Invoice not found.');
@@ -924,20 +1071,20 @@ async function importTenant(req) {
     return tenant;
 }
 
-app.get('/api/import/template', authenticateToken, requireTenant, async (req, res) => {
+app.get('/api/import/template', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId } });
     res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="invoice-import-template.csv"' });
     res.send(importer.templateCsv(tenant.fbrEnv === 'SANDBOX'));
 });
 
-app.post('/api/import/preview', authenticateToken, requireTenant, async (req, res) => {
+app.post('/api/import/preview', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const tenant = await importTenant(req);
     const { results, unknownHeaders } = await evaluateImport(tenant, req.body?.rows);
     res.json(importSummary(results, unknownHeaders));
 });
 
 // Save the valid invoices as QUEUED; the background sender files them with FBR one by one
-app.post('/api/import/commit', authenticateToken, requireTenant, async (req, res) => {
+app.post('/api/import/commit', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const tenant = await importTenant(req);
     const { results, unknownHeaders } = await evaluateImport(tenant, req.body?.rows);
     const summary = importSummary(results, unknownHeaders);
@@ -980,7 +1127,7 @@ app.post('/api/import/commit', authenticateToken, requireTenant, async (req, res
     res.json({ batchId: batch.id, queued, skipped: summary.duplicates + raced, errorsSkipped: summary.errors });
 });
 
-app.get('/api/import/batches', authenticateToken, requireTenant, async (req, res) => {
+app.get('/api/import/batches', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const batches = await prisma.importBatch.findMany({ where: { tenantId: req.user.tenantId }, orderBy: { createdAt: 'desc' }, take: 20 });
     const counts = await prisma.invoice.groupBy({
         by: ['batchId', 'status'], where: { batchId: { in: batches.map(b => b.id) } }, _count: { _all: true },
@@ -991,7 +1138,7 @@ app.get('/api/import/batches', authenticateToken, requireTenant, async (req, res
     })));
 });
 
-app.get('/api/import/batches/:id', authenticateToken, requireTenant, async (req, res) => {
+app.get('/api/import/batches/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const batch = await prisma.importBatch.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
     if (!batch) throw new HttpError(404, 'Import not found.');
     const invoices = await prisma.invoice.findMany({
@@ -1034,6 +1181,69 @@ async function listAudit(where, query, res, req) {
 app.get('/api/admin/audit', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
     const t = String(req.query.tenantId || '');
     await listAudit(t === 'platform' ? { tenantId: null } : t ? { tenantId: t } : {}, req.query, res, req);
+});
+
+// ---------- Stock (purchases, imports, opening, adjustments) → Annex-H1 ----------
+const isYmd = v => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(v || ''))) return false;
+    const [y, m, d] = v.split('-').map(Number), dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+};
+app.get('/api/stock/entries', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
+    const q = req.query, where = { tenantId: req.user.tenantId };
+    if (isYmd(q.from) || isYmd(q.to)) where.entryDate = { ...(isYmd(q.from) && { gte: q.from }), ...(isYmd(q.to) && { lte: q.to }) };
+    const text = String(q.q || '').trim();
+    if (text) where.OR = [{ hsCode: { startsWith: hs.normalizeCode(text) || text } }, { description: { contains: text, mode: 'insensitive' } },
+        { reference: { contains: text, mode: 'insensitive' } }, { partyName: { contains: text, mode: 'insensitive' } }];
+    res.json(await prisma.stockEntry.findMany({ where, orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }], take: 200 }));
+});
+app.post('/api/stock/entries', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
+    const b = req.body || {};
+    if (!stock.ENTRY_TYPES.includes(b.entryType)) throw new HttpError(400, 'Choose the entry type.');
+    if (!isYmd(b.entryDate)) throw new HttpError(400, 'Enter a valid date.');
+    const hsCode = hs.normalizeCode(b.hsCode || '');
+    if (!hs.HS_FORMAT.test(hsCode)) throw new HttpError(400, 'HS code must look like 0101.2100');
+    const uoM = String(b.uoM || '').trim();
+    if (!uoM) throw new HttpError(400, 'UOM is required.');
+    const quantity = Number(String(b.quantity ?? '').replace(/,/g, '')), value = Number(String(b.value ?? '0').replace(/,/g, '') || 0);
+    if (!(quantity > 0)) throw new HttpError(400, 'Quantity must be more than 0.');
+    if (!(value >= 0)) throw new HttpError(400, 'Value must be 0 or more.');
+    const e = await prisma.stockEntry.create({ data: {
+        tenantId: req.user.tenantId, entryType: b.entryType, entryDate: b.entryDate, hsCode, uoM, quantity, value,
+        description: String(b.description || '').trim().slice(0, 200), reference: String(b.reference || '').trim().slice(0, 100),
+        partyName: String(b.partyName || '').trim().slice(0, 150), notes: String(b.notes || '').trim().slice(0, 500), createdBy: req.user.email || '',
+    } });
+    await audit(req, { action: 'stock.create', entityType: 'StockEntry', entityId: e.id, summary: `Stock ${e.entryType.toLowerCase().replace('_', ' ')}: ${Number(e.quantity)} ${e.uoM} of ${e.hsCode}${e.description ? ' (' + e.description + ')' : ''}, Rs ${Number(e.value).toFixed(2)}, ${e.entryDate}${e.reference ? ', ref ' + e.reference : ''}` });
+    res.json(e);
+});
+app.delete('/api/stock/entries/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
+    const e = await prisma.stockEntry.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
+    if (!e) throw new HttpError(404, 'Entry not found.');
+    await prisma.stockEntry.delete({ where: { id: e.id } });
+    await audit(req, { action: 'stock.delete', entityType: 'StockEntry', entityId: e.id, summary: `Stock entry deleted: ${e.entryType.toLowerCase()} ${Number(e.quantity)} ${e.uoM} of ${e.hsCode} (${e.entryDate})`, details: { entry: { ...e, quantity: Number(e.quantity), value: Number(e.value) } } });
+    res.json({ deleted: true });
+});
+// Current stock per HS code / UOM (up to today, current environment's filed sales)
+app.get('/api/stock/summary', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
+    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId }, select: { fbrEnv: true } });
+    const today = todayPKT();
+    res.json(await stock.statement(prisma, req.user.tenantId, { from: today, to: today, fbrEnv: t.fbrEnv }));
+});
+// Annex-H1 stock statement for a month (admin, per client)
+app.get('/api/admin/clients/:id/annex-h', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const range = annexC.monthRange(String(req.query.month || ''));
+    if (!range) throw new HttpError(400, 'Choose a month (YYYY-MM).');
+    const fbrEnv = req.query.env === 'SANDBOX' ? 'SANDBOX' : 'PRODUCTION';
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+    if (!tenant) throw new HttpError(404, 'Client not found.');
+    const rows = await stock.statement(prisma, tenant.id, { ...range, fbrEnv });
+    if (req.query.format === 'csv') {
+        const slug = tenant.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'client';
+        res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="annex-h1-${slug}-${req.query.month}-${fbrEnv.toLowerCase()}.csv"` });
+        await audit(req, { tenantId: tenant.id, action: 'report.annex_h', summary: `Annex-H1 downloaded: ${req.query.month}, ${fbrEnv}, ${rows.length} lines` });
+        return res.send(stock.toCsv(rows));
+    }
+    res.json({ month: req.query.month, fbrEnv, rows, negative: rows.filter(r => r.negative).length });
 });
 
 // ---------- Reports ----------
@@ -1100,7 +1310,7 @@ app.get('/api/products', authenticateToken, requireTenant, async (req, res) => {
 });
 
 // With id: edit that product. Without id: upsert by name, so saving "Yogurt 500g" again updates it.
-app.post('/api/products', authenticateToken, requireTenant, async (req, res) => {
+app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const d = productData(req.body || {});
     const tenantId = req.user.tenantId;
     try {
@@ -1120,7 +1330,7 @@ app.post('/api/products', authenticateToken, requireTenant, async (req, res) => 
     }
 });
 
-app.delete('/api/products/:id', authenticateToken, requireTenant, async (req, res) => {
+app.delete('/api/products/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const prod = await prisma.product.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId }, select: { name: true } });
     const { count } = await prisma.product.deleteMany({ where: { id: req.params.id, tenantId: req.user.tenantId } });
     if (!count) throw new HttpError(404, 'Product not found.');
@@ -1171,7 +1381,7 @@ app.get('/api/buyers', authenticateToken, requireTenant, async (req, res) => {
     }));
 });
 
-app.post('/api/buyers', authenticateToken, requireTenant, async (req, res) => {
+app.post('/api/buyers', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const d = buyerData(req.body || {});
     const tenantId = req.user.tenantId;
     try {
@@ -1191,7 +1401,7 @@ app.post('/api/buyers', authenticateToken, requireTenant, async (req, res) => {
     }
 });
 
-app.delete('/api/buyers/:id', authenticateToken, requireTenant, async (req, res) => {
+app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const buyer = await prisma.buyer.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId }, select: { businessName: true } });
     const { count } = await prisma.buyer.deleteMany({ where: { id: req.params.id, tenantId: req.user.tenantId } });
     if (!count) throw new HttpError(404, 'Buyer not found.');

@@ -14,7 +14,9 @@
     "supabase:deploy": "node scripts/supabase-deploy.js",
     "seed": "node prisma/seed.js",
     "gen:keys": "node -e \"const c=require('crypto');console.log('JWT_SECRET='+c.randomBytes(48).toString('hex'));console.log('ENCRYPTION_KEY='+c.randomBytes(32).toString('hex'))\"",
-    "test": "node --test"
+    "test": "node --test",
+    "backup": "node scripts/backup.js",
+    "backup:restore": "node scripts/restore.js"
   },
   "engines": {
     "node": ">=20"
