@@ -6,3 +6,6 @@ node_modules/
 backups/
 *.sql.gz
 *.sql.gz.enc
+
+# values to paste into Render (contains secrets — never commit)
+render.env
