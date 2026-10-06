@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last updated: 2026-10-06_
+_Last updated: 2026-10-07_ · summary: [GUIDE.md](GUIDE.md)
 
 ## Done
 **Phase 1: filing invoices with FBR**
@@ -68,10 +68,11 @@ _Last updated: 2026-10-06_
 1. **Products import.** Upload products from Excel/CSV.
 
 ## Before go-live (deployment)
+- ✅ Render test deploy is live at https://digital-invoicing.onrender.com (FBR_MOCK on) and uses the Supabase database.
+- ✅ Supabase final push done: 13 migrations, HS codes loaded, test data cleaned out.
 - An Oracle Cloud Always Free VM proxy for the static IP (docs/static-ip-proxy.md). The user needs to create the Oracle account.
-- Render (API) and Vercel (frontend) on free plans.
-- Supabase final push: `npm run supabase:deploy`, then clean out the old test data. Do the cleanup **before** migration 0009
-  runs there: after it, AuditLog rows can't be deleted, only the table dropped.
+- Vercel and a domain: later. Render serves everything for now.
+- Backups: the scripts are ready but **not scheduled**. Turn them on before the first real client (docs/backups.md).
 - Remove the brother's GitHub account from this Mac when it's no longer needed (`gh auth logout -u mohisn-bhatti`).
 
 ## Later phases

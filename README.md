@@ -1,5 +1,7 @@
 # Raseed — FBR Digital Invoicing
 
+**Start here:** [docs/GUIDE.md](docs/GUIDE.md) covers what's done, how to use the app and what's left.
+
 Website: `/` landing page, `/contact` contact form (enquiries appear for the super admin under *Website enquiries*), `/app` the application.
 Set `CONTACT_WHATSAPP`, `CONTACT_PHONE`, `CONTACT_EMAIL`, `CONTACT_CITY` in `.env` to show contact details (empty = hidden).
 
