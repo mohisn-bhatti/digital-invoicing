@@ -1,8 +1,8 @@
-# Render Blueprint: Express API (Dashboard → New → Blueprint → pick this repo)
-# Free plan: sleeps after 15 min without traffic (~1 min wake-up), no Shell, 750 instance hours/month.
+# Render Blueprint (Dashboard → New → Blueprint → pick this repo). One service serves the website (/), the app (/app)
+# and the API. Free plan: sleeps after 15 min without traffic (~1 min wake-up), no Shell, 750 instance hours/month.
 services:
   - type: web
-    name: fbr-billing-api
+    name: raseed
     runtime: node
     region: singapore        # closest Render region to Pakistan
     plan: free
@@ -14,15 +14,28 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
-      - key: DATABASE_URL     # Supabase transaction pooler, port 6543, ?pgbouncer=true
+      - key: DATABASE_URL     # = SUPABASE_DATABASE_URL in your .env (transaction pooler, port 6543, ?pgbouncer=true)
         sync: false
-      - key: DIRECT_URL       # Supabase session pooler, port 5432 (used by migrations)
+      - key: DIRECT_URL       # = SUPABASE_DIRECT_URL in your .env (session pooler, port 5432, used by migrations)
         sync: false
       - key: JWT_SECRET
         generateValue: true
-      - key: ENCRYPTION_KEY   # 64 hex chars from `npm run gen:keys`. Never change once tokens are saved.
+      - key: ENCRYPTION_KEY   # copy EXACTLY from .env (64 hex). Never change once FBR tokens are saved.
         sync: false
-      - key: FBR_PROXY_URL    # static-IP proxy (docs/static-ip-proxy.md). Required for FBR calls from Render.
-        sync: false
+      # Testing phase: nothing is sent to FBR (fake invoice numbers). Set to "false" only when the PRAL token is in
+      # and FBR_PROXY_URL (static IP, docs/static-ip-proxy.md) is set and whitelisted in IRIS.
       - key: FBR_MOCK
-        value: "false"
+        value: "true"
+      - key: FBR_PROXY_URL
+        sync: false
+      # 1 = only Render in front. Use 2 if a Vercel domain later forwards to this service.
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: CONTACT_WHATSAPP # optional, shown on the website (e.g. 923001234567)
+        sync: false
+      - key: CONTACT_EMAIL
+        sync: false
+      - key: CONTACT_PHONE
+        sync: false
+      - key: CONTACT_CITY
+        sync: false

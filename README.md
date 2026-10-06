@@ -148,7 +148,7 @@ Browser ──► Vercel (public/ static)  ──/api/* rewrite──►  Render
 4. **Render** → New → Blueprint → the repo. It reads [render.yaml](render.yaml) (`plan: free`); fill the `sync: false` env vars.
    Use the **same `ENCRYPTION_KEY`** as your local `.env`. Migrations run in the build step.
 5. **Vercel** → New Project → the repo, root directory as-is. [vercel.json](vercel.json) serves `public/` and forwards `/api/*`
-   to Render — edit the `destination` if your Render URL differs from `fbr-billing-api.onrender.com`.
+   to Render — edit the `destination` if your Render URL differs from `raseed.onrender.com`.
 6. **Static IP for FBR** — Render's outbound IPs are shared and change. Free option: an Oracle Cloud Always Free VM proxy,
    see [docs/static-ip-proxy.md](docs/static-ip-proxy.md). Then super admin → **Check** "IP for FBR whitelisting" → put it in IRIS.
 

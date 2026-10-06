@@ -15,7 +15,7 @@
     },
     {
       "source": "/api/:path*",
-      "destination": "https://fbr-billing-api.onrender.com/api/:path*"
+      "destination": "https://raseed.onrender.com/api/:path*"
     }
   ],
   "headers": [
