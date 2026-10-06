@@ -20,6 +20,7 @@ enum FbrEnv {
 
 enum InvoiceStatus {
   DRAFT
+  QUEUED     // waiting for the background sender (FBR was unreachable, or from a bulk import); see nextAttemptAt
   SUBMITTING // a submission is in flight (acts as a lock against double submits)
   SUBMITTED
   FAILED     // FBR definitely did not record it; safe to retry
@@ -53,10 +54,20 @@ model Tenant {
   // Further-tax % for unregistered buyers (4% confirmed by the CA)
   furtherTaxRate     Decimal   @default(4) @db.Decimal(5, 2)
   invoiceSeq         Int       @default(0)
+  // As chosen in IRIS: decides the sandbox scenarios to pass (DI spec §10)
+  businessActivities String[]  @default([])
+  sector             String    @default("")
+  // Internal invoice number printed next to the FBR number, e.g. INV-{YYYY}-{NNNN} → INV-2026-0042
+  invoiceNumberFormat String   @default("INV-{YYYY}-{NNNN}")
+  softwareRegNo      String    @default("") // software registration no. from PRAL/FBR, printed on receipts
+  // Signed authorization (Form STR-13) letting the firm manage this client's FBR token / IRIS
+  authLetterRef      String    @default("")
+  authLetterAt       DateTime?
   users              User[]
   invoices           Invoice[]
   products           Product[]
   buyers             Buyer[]
+  importBatches      ImportBatch[]
   createdAt          DateTime  @default(now())
 }
 
@@ -65,6 +76,7 @@ model Invoice {
   tenantId              String
   tenant                Tenant        @relation(fields: [tenantId], references: [id])
   localNo               Int
+  invoiceNo             String        @default("") // formatted internal number (see Tenant.invoiceNumberFormat)
   fbrInvoiceNumber      String?       @unique
   status                InvoiceStatus @default(DRAFT)
   fbrEnv                FbrEnv
@@ -82,6 +94,8 @@ model Invoice {
   buyerRegistrationType String
   // Unregistered + end consumer (walk-in): no further tax. FBR only knows Registered/Unregistered.
   endConsumer           Boolean       @default(false)
+  // Registered buyer found not active (non-ATL): further tax applies like an unregistered buyer (STA s.3(1A))
+  buyerNonAtl           Boolean       @default(false)
   totalExclST           Decimal       @db.Decimal(14, 2)
   totalST               Decimal       @db.Decimal(14, 2)
   totalFurtherTax       Decimal       @db.Decimal(14, 2)
@@ -94,6 +108,13 @@ model Invoice {
   clientRequestId       String?
   submitAttempts        Int           @default(0)
   lastAttemptAt         DateTime?
+  nextAttemptAt         DateTime?     // QUEUED: don't send before this (retry backoff)
+  // Rule 150XC: issued while FBR/internet was down; must reach FBR within 24h of the outage
+  offlineMode           Boolean       @default(false)
+  offlineSince          DateTime?
+  batchId               String?
+  batch                 ImportBatch?  @relation(fields: [batchId], references: [id])
+  importRef             String        @default("") // the client's own invoice number from the import file
   cancelledAt           DateTime?
   cancelNote            String        @default("") // what was done in IRIS / Commissioner approval reference
   items                 InvoiceItem[]
@@ -101,6 +122,22 @@ model Invoice {
 
   @@unique([tenantId, localNo])
   @@unique([tenantId, clientRequestId])
+  @@index([tenantId, createdAt])
+  @@index([status, nextAttemptAt])
+  @@index([batchId])
+}
+
+// One uploaded Excel/CSV file
+model ImportBatch {
+  id           String    @id @default(uuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  fileName     String
+  invoiceCount Int
+  skipped      Int       @default(0) // invoices already imported earlier (same ref + date)
+  invoices     Invoice[]
+  createdAt    DateTime  @default(now())
+
   @@index([tenantId, createdAt])
 }
 
@@ -159,7 +196,7 @@ model InvoiceItem {
   rate                            String  // e.g. "18%", as FBR's ratE_DESC
   uoM                             String
   quantity                        Decimal @db.Decimal(14, 4)
-  unitPrice                       Decimal @db.Decimal(14, 2)
+  unitPrice                       Decimal @db.Decimal(18, 6) // imports may derive it from the line value
   valueSalesExcludingST           Decimal @db.Decimal(14, 2)
   fixedNotifiedValueOrRetailPrice Decimal @default(0) @db.Decimal(14, 2)
   salesTaxApplicable              Decimal @db.Decimal(14, 2)
@@ -174,4 +211,43 @@ model InvoiceItem {
   sroItemSerialNo                 String  @default("")
 
   @@index([invoiceId])
+}
+
+// Append-only record of who did what (FBR requires 6-year retention). The migration adds a trigger
+// that rejects UPDATE / DELETE / TRUNCATE, so entries can't be altered or removed through the app or SQL.
+model AuditLog {
+  id         String   @id @default(uuid())
+  tenantId   String?  // null = platform-level (super admin) action
+  userId     String?  // null = system (background sender)
+  userEmail  String   @default("system")
+  action     String   // e.g. invoice.create, settings.update, auth.login_failed
+  entityType String?
+  entityId   String?
+  summary    String
+  details    Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([action])
+}
+
+// Contact-form enquiries from the public website (admin only)
+model Lead {
+  id           String   @id @default(uuid())
+  name         String
+  phone        String
+  email        String   @default("")
+  businessName String   @default("")
+  city         String   @default("")
+  businessType String   @default("")
+  interest     String   @default("") // single invoices / bulk import / both
+  message      String   @default("")
+  status       String   @default("NEW") // NEW, CONTACTED, CLIENT, CLOSED
+  notes        String   @default("")
+  ip           String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status, createdAt])
 }

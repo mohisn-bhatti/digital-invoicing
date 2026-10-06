@@ -1,4 +1,7 @@
-# FBR Digital Invoicing — billing app (Phase 1)
+# Raseed — FBR Digital Invoicing
+
+Website: `/` landing page, `/contact` contact form (enquiries appear for the super admin under *Website enquiries*), `/app` the application.
+Set `CONTACT_WHATSAPP`, `CONTACT_PHONE`, `CONTACT_EMAIL`, `CONTACT_CITY` in `.env` to show contact details (empty = hidden).
 
 Multi-tenant web app that files invoices with FBR through the **PRAL Digital Invoicing (DI) API v1.12**
 (spec: [docs/FBR-DI-API-Technical-Spec-v1.12.pdf](docs/FBR-DI-API-Technical-Spec-v1.12.pdf)).
@@ -12,7 +15,7 @@ npm run gen:keys            # paste JWT_SECRET and ENCRYPTION_KEY into .env
 npm run db:local            # local Postgres in Docker (localhost:54329) — development uses this
 npm run db:deploy           # create tables from prisma/migrations
 npm run seed                # super admin + first tenant user + HS codes
-npm run dev                 # http://localhost:3000
+npm run dev                 # http://localhost:3000 (website) · http://localhost:3000/app (app)
 npm test                    # tax engine + FBR response handling
 ```
 Supabase is only updated when you decide: put its URLs in `SUPABASE_DATABASE_URL` / `SUPABASE_DIRECT_URL` and run
@@ -20,12 +23,22 @@ Supabase is only updated when you decide: put its URLs in `SUPABASE_DATABASE_URL
 
 Keep `FBR_MOCK=true` until the IP is whitelisted; invoices get a fake FBR number so you can test the UI.
 
+## Who does what
+| Super admin (CA firm) | Client |
+|---|---|
+| Create clients; per client **Manage**: FBR settings (NTN, STRN, token, environment, business nature/sector, further tax %), HS sync | New invoices, receipts, retry / debit note / mark cancelled / "found in IRIS" |
+| Go-live checklist; **sandbox scenario tests via "Open workspace"** (works inside the client screen; logged under the admin) | Bulk import (Excel/CSV) |
+| Annex-C report per client; activity log for all clients | Saved products & buyers |
+
+Clients can't change FBR settings or see the activity log, checklist or Annex-C. While a client is in **Sandbox** the
+client can't file invoices (the screen says it is being tested); invoicing opens when the admin switches it to Production.
+
 ## Going live (per tenant/NTN)
 1. **IRIS → Digital Invoicing → API Integration → PRAL.** Business Nature + Sector decide which sandbox scenarios you must pass (spec §10).
 2. **IP whitelisting** (max 3 IPs): your dev machine's public IP, and the static proxy IP (see [docs/static-ip-proxy.md](docs/static-ip-proxy.md)). Approval ≈ 2 working hours.
-3. Copy the **sandbox token** into *FBR settings* (environment = Sandbox) with seller NTN, name, province, address.
-4. Set `FBR_MOCK=false`. For each assigned scenario, pick it in the **Sandbox scenario** dropdown and submit an invoice that matches it.
-5. When IRIS issues the **production token**, save it, switch the environment to **Production**.
+3. Super admin → client → **Manage** → FBR settings: sandbox token (environment = Sandbox), seller NTN, name, province, address, business nature + sector.
+4. Set `FBR_MOCK=false`. **Open workspace**, and for each assigned scenario (see the checklist) pick it in the **Sandbox scenario** dropdown and submit a matching invoice.
+5. When IRIS issues the **production token**, save it in Manage and switch the environment to **Production** — the client can now invoice.
 
 ## Invoice statuses & duplicate protection
 | Status | Meaning | What you can do |
@@ -33,12 +46,33 @@ Keep `FBR_MOCK=true` until the IP is whitelisted; invoices get a fake FBR number
 | SUBMITTED | Filed; FBR invoice number received | Receipt |
 | FAILED | FBR definitely did **not** record it (validation error, rejected token, nothing sent) | Retry |
 | UNCERTAIN | Connection broke **after** sending — FBR may have it | Check IRIS → "Found in IRIS" (enter its number) or "Not in IRIS — resubmit" |
+| QUEUED | Waiting for the background sender: FBR was unreachable (auto-retry after 30s, 2m, 10m, 30m, 2h, then FAILED) or from a bulk import | "Send now", or "Stop" |
 | SUBMITTING | Being sent right now (acts as a lock) | Wait; shows as UNCERTAIN if stuck > 3 min |
 | CANCELLED | Was filed, then cancelled **in IRIS** and recorded here | Left out of reports |
 
 Each invoice form carries a `clientRequestId`; resending the same form (double-click, network retry) returns the
 existing invoice instead of filing again. Only one submission per invoice can run at a time.
 Test the failure screens with `FBR_MOCK=true FBR_MOCK_RESULT=invalid` or `FBR_MOCK_RESULT=uncertain`.
+
+## Bulk import (Excel / CSV)
+*Bulk import* → **Download template** → fill one row per item (rows with the same *Invoice Ref* form one invoice) →
+choose the file → preview shows every invoice as Ready / Error (with the reason) / Already imported → **Send to FBR**.
+Valid invoices are queued and filed one by one in the background; *Recent imports* shows progress.
+- Up to 1,000 invoices / 5,000 rows per file. Dates: YYYY-MM-DD, DD-MM-YYYY, 31-Aug-2025 or Excel dates.
+- Buyer Type: Registered / Unregistered / End consumer. Rate: 18, 18% or 0.18.
+- The same file (same Invoice Ref + date) imported twice is never filed twice.
+- On Render free the background sender pauses while the service sleeps and continues on the next visit.
+
+## Activity log (audit)
+Every important action is recorded with user, IP and time:
+- logins, including failed ones
+- settings changes (before → after; the FBR token itself is never logged)
+- each invoice: created, filed, queued, failed, uncertain, retried, resolved, cancelled, stopped
+- imports, products and buyers, Annex-C downloads, new clients
+
+Background-sender actions show as `system`. Clients see their own log, and the super admin sees everyone's. Both can filter,
+search and download a CSV. The `AuditLog` table is **append-only**: a database trigger rejects UPDATE, DELETE and TRUNCATE,
+so entries can't be changed through the app or through SQL.
 
 ## Debit notes & cancellation
 - **Debit note:** in *Recent invoices*, "Debit note" on a filed sale invoice prefills the form (reference no., buyer, items).

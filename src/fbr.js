@@ -120,16 +120,18 @@ async function call(http, url, payload) {
 const UNCERTAIN_MSG = 'The connection to FBR broke after the invoice was sent, so FBR may have recorded it. ' +
     'Check IRIS (Digital Invoicing → invoices) before resubmitting, to avoid a duplicate.';
 
-// FBR_MOCK=true fakes FBR. FBR_MOCK_RESULT=invalid|uncertain fakes failures for testing the UI.
+// FBR_MOCK=true fakes FBR. FBR_MOCK_RESULT=invalid|uncertain|transient fakes failures for testing.
 function mockResult(payload) {
     const mode = process.env.FBR_MOCK_RESULT || 'ok';
+    if (mode === 'transient') return { ok: false, uncertain: false, transient: true, error: 'Could not reach FBR (mock outage).', raw: { mock: true, stage: 'validate' } };
     if (mode === 'invalid') return { ok: false, uncertain: false, error: '[0052] Provide proper HS Code (mock)', raw: { mock: true, stage: 'validate' } };
     if (mode === 'uncertain') return { ok: false, uncertain: true, error: `Could not reach FBR (timed out, mock). ${UNCERTAIN_MSG}`, raw: { mock: true, stage: 'post' } };
     const invoiceNumber = `${(payload.sellerNTNCNIC || '0000000').slice(0, 7)}DI${Date.now()}`;
     return { ok: true, invoiceNumber, dated: new Date().toISOString(), raw: { mock: true, invoiceNumber } };
 }
 
-// validate → post. Returns { ok, invoiceNumber?, dated?, error?, uncertain, raw }
+// validate → post. Returns { ok, invoiceNumber?, dated?, error?, uncertain, transient, raw }
+// transient = FBR unreachable/5xx before anything was recorded: safe to retry automatically later.
 async function submit(token, fbrEnv, payload) {
     if (isMock()) return mockResult(payload);
     if (!token) return { ok: false, uncertain: false, error: 'No FBR token saved. Add it in FBR Settings.', raw: null };
@@ -138,7 +140,7 @@ async function submit(token, fbrEnv, payload) {
 
     // Nothing is recorded at FBR by validateinvoicedata, so every failure here is safe to retry
     const v = await call(http, endpoint('validateinvoicedata', fbrEnv), payload);
-    if (!v.ok) return { ok: false, uncertain: false, error: v.error, raw: { stage: 'validate', response: v.raw } };
+    if (!v.ok) return { ok: false, uncertain: false, transient: v.uncertain, error: v.error, raw: { stage: 'validate', response: v.raw } };
     if (!isValid(v.data.validationResponse)) {
         return { ok: false, uncertain: false, error: describeErrors(v.data.validationResponse), raw: { stage: 'validate', response: v.data } };
     }
@@ -179,10 +181,29 @@ async function hsUom(hsCode, token) {
     return list;
 }
 
+// Buyer status (spec §5.11–5.12): STATL = active taxpayer list, Get_Reg_Type = registered or not.
+// Returns { live, registrationType: 'Registered'|'Unregistered'|null, active: true|false|null }
+async function checkBuyer(regNo, date, token) {
+    if (isMock() || !token) return { live: false, registrationType: null, active: null };
+    const http = client(token);
+    const [atl, reg] = await Promise.all([
+        call(http, 'https://gw.fbr.gov.pk/dist/v1/statl', { regno: regNo, date }),
+        call(http, 'https://gw.fbr.gov.pk/dist/v1/Get_Reg_Type', { Registration_No: regNo }),
+    ]);
+    const regType = reg.ok ? String(reg.data.REGISTRATION_TYPE || '').toLowerCase() : '';
+    const atlStatus = atl.ok ? String(atl.data.status || '').toLowerCase().replace(/[^a-z]/g, '') : '';
+    return {
+        live: atl.ok || reg.ok,
+        registrationType: regType === 'registered' ? 'Registered' : regType === 'unregistered' ? 'Unregistered' : null,
+        active: atlStatus === 'active' ? true : atlStatus === 'inactive' ? false : null,
+        error: atl.ok || reg.ok ? undefined : (atl.error || reg.error),
+    };
+}
+
 // The public IP FBR will see (through FBR_PROXY_URL if set) — this is what goes into IRIS whitelisting
 async function egressIp() {
     const res = await axios.get('https://api.ipify.org?format=json', { httpsAgent: proxyAgent, proxy: false, timeout: 10000 });
     return { ip: res.data.ip, viaProxy: Boolean(proxyAgent) };
 }
 
-module.exports = { buildPayload, submit, reference, hsUom, isValid, describeErrors, endpoint, egressIp, _call: call };
+module.exports = { buildPayload, submit, reference, hsUom, checkBuyer, isValid, describeErrors, endpoint, egressIp, _call: call };

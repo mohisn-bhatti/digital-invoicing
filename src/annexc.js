@@ -71,7 +71,7 @@ function rows(invoices, sellerProvince) {
                 furtherTax: Number(it.furtherTax),
                 totalValue: Number(it.totalValues),
                 refInvoiceNo: inv.invoiceRefNo,
-                localInvoiceNo: inv.localNo,
+                localInvoiceNo: inv.invoiceNo || inv.localNo,
             });
         }
     }
@@ -85,8 +85,10 @@ function totals(list) {
     return t;
 }
 
+// Text that starts with = + - @ would run as a formula in Excel: prefix it with '
 const csvCell = v => {
-    const s = v === null || v === undefined ? '' : String(v);
+    let s = v === null || v === undefined ? '' : String(v);
+    if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 

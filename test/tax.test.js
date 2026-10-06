@@ -23,7 +23,7 @@ test('unregistered buyer gets further tax; exempt and 3rd schedule do not', () =
     const ctx = { buyerRegistrationType: 'Unregistered', furtherTaxRate: 4 };
     const { lines, totals } = calcInvoice([
         { ...base, quantity: 1, unitPrice: 1000, rate: '18%' },
-        { ...base, quantity: 1, unitPrice: 100, rate: 'Exempt', saleType: 'Exempt Goods' },
+        { ...base, quantity: 1, unitPrice: 100, rate: 'Exempt', saleType: 'Exempt Goods', sroScheduleNo: '6th Schedule Table I', sroItemSerialNo: '176(i)' },
         { ...base, quantity: 1, unitPrice: 80, rate: '18%', saleType: '3rd Schedule Goods', fixedNotifiedValueOrRetailPrice: 100 },
     ], ctx);
     assert.strictEqual(lines[0].furtherTax, 40);
@@ -129,4 +129,91 @@ test('no further tax on sales to end consumers (CA rule)', () => {
     assert.strictEqual(business.totals.totalFurtherTax, 40);
     assert.strictEqual(consumer.totals.totalFurtherTax, 0);
     assert.strictEqual(consumer.totals.totalAmount, 1180);
+});
+
+test('import: dates, rates', () => {
+    const { parseDate, normRate } = require('../src/importer');
+    assert.strictEqual(parseDate('2025-08-31'), '2025-08-31');
+    assert.strictEqual(parseDate('31-08-2025'), '2025-08-31');
+    assert.strictEqual(parseDate('31/8/2025'), '2025-08-31');
+    assert.strictEqual(parseDate('31-Aug-2025'), '2025-08-31');
+    assert.strictEqual(parseDate('5 September 2025'), '2025-09-05');
+    assert.strictEqual(parseDate('45900'), '2025-08-31');      // Excel serial
+    assert.strictEqual(parseDate('31-02-2025'), null);          // not a real date
+    assert.strictEqual(parseDate('tomorrow'), null);
+    assert.strictEqual(normRate(18), '18%');
+    assert.strictEqual(normRate('0.18'), '18%');
+    assert.strictEqual(normRate('18 %'), '18%');
+    assert.strictEqual(normRate('Exempt'), 'Exempt');
+});
+
+test('import: template parses back, rows group into invoices', () => {
+    const imp = require('../src/importer');
+    // tiny CSV reader for the template (quoted cells, CRLF)
+    const parse = csv => csv.replace(/^﻿/, '').trim().split('\r\n').map(l => [...l.matchAll(/("([^"]|"")*"|[^,]*)(,|$)/g)].map(m => m[1].replace(/^"|"$/g, '').replace(/""/g, '"')).slice(0, -1));
+    const [head, ...data] = parse(imp.templateCsv(true));
+    const rows = data.map(r => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ''])));
+    const g = imp.groupRows(rows);
+    assert.deepStrictEqual(g.errors, []);
+    assert.strictEqual(g.invoices.length, 2);                   // INV-1001 has 2 lines
+    assert.strictEqual(g.invoices[0].body.items.length, 2);
+    assert.strictEqual(g.invoices[0].body.buyerRegistrationType, 'Registered');
+    assert.strictEqual(g.invoices[1].body.endConsumer, true);
+    assert.ok(g.invoices.every(i => !i.errors.length && /^imp-[0-9a-f]{40}$/.test(i.clientRequestId)));
+    assert.strictEqual(imp.requestId('INV-1', '2025-01-01'), imp.requestId('INV-1', '2025-01-01'));
+
+    // other header spellings, missing columns, disagreeing rows, unknown buyer type
+    const alias = imp.groupRows([{ 'Invoice No': 'A1', Date: '01/09/2025', 'HS': '0403.1000', Item: 'Yogurt', 'Sale Type': 'x', Qty: '1,000', Unit: 'KG', Price: 10, 'Tax Rate': 18, Junk: 1 }]);
+    assert.deepStrictEqual(alias.errors, []);
+    assert.strictEqual(alias.invoices[0].body.items[0].quantity, '1000');
+    assert.strictEqual(alias.invoices[0].body.invoiceDate, '2025-09-01');
+    assert.deepStrictEqual(alias.unknownHeaders, ['Junk']);
+    assert.match(imp.groupRows([{ 'Invoice Ref': 'A' }]).errors[0], /Missing column/);
+    const base = { 'Invoice Ref': 'A', 'HS Code': '0403.1000', Description: 'Y', 'Sale Type': 's', Quantity: 1, UOM: 'KG', 'Unit Price': 1, Rate: '18%' };
+    const clash = imp.groupRows([{ ...base, 'Invoice Date': '2025-09-01' }, { ...base, 'Invoice Date': '2025-09-02' }]);
+    assert.match(clash.invoices[0].errors.join(), /disagree on Invoice Date/);
+    const bt = imp.groupRows([{ ...base, 'Invoice Date': '2025-09-01', 'Buyer Type': 'Alien' }]);
+    assert.match(bt.invoices[0].errors.join(), /not recognised/);
+    const ntnNoType = imp.groupRows([{ ...base, 'Invoice Date': '2025-09-01', 'Buyer NTN/CNIC': '1234567' }]);
+    assert.match(ntnNoType.invoices[0].errors.join(), /Buyer Type is required/);
+});
+
+test('DI rules: non-ATL registered buyer pays further tax; exempt needs SRO', () => {
+    const items = [{ ...base, quantity: 1, unitPrice: 1000, rate: '18%' }];
+    assert.strictEqual(calcInvoice(items, { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }).totals.totalFurtherTax, 0);
+    assert.strictEqual(calcInvoice(items, { buyerRegistrationType: 'Registered', furtherTaxRate: 4, buyerNonAtl: true }).totals.totalFurtherTax, 40);
+    const exempt = { ...base, quantity: 1, unitPrice: 100, rate: 'Exempt', saleType: 'Exempt Goods' };
+    assert.throws(() => calcInvoice([exempt], { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }), /SRO \/ Schedule no/);
+    assert.doesNotThrow(() => calcInvoice([{ ...exempt, sroScheduleNo: '6th Schedule Table I', sroItemSerialNo: '176(i)' }], { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }));
+});
+
+test('import: Annex-C style columns (line value instead of unit price)', () => {
+    const imp = require('../src/importer');
+    const { calcInvoice } = require('../src/tax');
+    const g = imp.groupRows([{ 'Sr. No.': 1, 'Document No.': 'S-1', 'Document Date': '31-Aug-2025', 'Buyer Registration No.': '1234567', 'Buyer Type': 'Registered',
+        'HS Code': '3904.1090', Description: 'PVC', 'Sale Type': 'Goods at standard rate (default)', Rate: '18%', UOM: 'KG', Quantity: '40,000.00', 'Value of Sales Excl. ST': '9,844,068' }]);
+    assert.deepStrictEqual(g.errors, []);
+    const inv = g.invoices[0];
+    assert.deepStrictEqual(inv.errors, []);
+    assert.strictEqual(inv.body.invoiceDate, '2025-08-31');
+    assert.strictEqual(inv.body.buyerNtnCnic, '1234567');
+    const t = calcInvoice(inv.body.items, { buyerRegistrationType: 'Registered', furtherTaxRate: 4 });
+    assert.strictEqual(t.lines[0].valueSalesExcludingST, 9844068);   // exactly the Annex-C value
+    assert.strictEqual(t.lines[0].salesTaxApplicable, 1771932.24);   // = Annex-C 1,771,932
+    assert.match(imp.groupRows([{ 'Invoice Ref': 'A', 'Invoice Date': '2025-01-01', 'HS Code': '0403.1000', Description: 'Y', 'Sale Type': 's', Quantity: 1, UOM: 'KG', Rate: '18%' }]).errors[0], /Unit Price \(or Value/);
+});
+
+test('review fixes: CSV formula injection, header value on a later row', () => {
+    const a = require('../src/annexc'), imp = require('../src/importer');
+    const inv = { buyerNtnCnic: '', buyerBusinessName: '=HYPERLINK("http://x")', buyerRegistrationType: 'Unregistered', buyerProvince: 'PUNJAB',
+        invoiceType: 'Sale Invoice', fbrInvoiceNumber: '1DI1', invoiceDate: '2025-08-31', invoiceRefNo: '', localNo: 1, invoiceNo: 'INV-1',
+        items: [{ hsCode: '0403.1000', saleType: 's', rate: '18%', uoM: 'KG', quantity: '1', valueSalesExcludingST: '1', fixedNotifiedValueOrRetailPrice: '0',
+            salesTaxApplicable: '0.18', extraTax: '0', salesTaxWithheldAtSource: '0', sroScheduleNo: '', sroItemSerialNo: '', furtherTax: '0', totalValues: '1.18' }] };
+    const rows = a.rows([inv], 'PUNJAB');
+    assert.ok(a.toCsv(rows, a.totals(rows)).includes(`"'=HYPERLINK(""http://x"")"`));
+    const base = { 'Invoice Ref': 'D-5', 'Invoice Date': '2025-09-01', 'HS Code': '0403.1000', Description: 'Y', 'Sale Type': 's', Quantity: 1, UOM: 'KG', 'Unit Price': 1, Rate: '18%' };
+    const g = imp.groupRows([{ ...base, 'Document Type': '', 'Buyer Type': '' }, { ...base, 'Document Type': 'Debit Note', 'Buyer Type': 'Registered', 'Buyer NTN/CNIC': '1234567' }]);
+    assert.strictEqual(g.invoices[0].body.invoiceType, 'Debit Note');
+    assert.strictEqual(g.invoices[0].body.buyerRegistrationType, 'Registered');
+    assert.strictEqual(g.invoices[0].body.buyerNtnCnic, '1234567');
 });

@@ -1,0 +1,1712 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raseed — App</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  input, select { border: 1px solid #cbd5e1; border-radius: .375rem; padding: .4rem .55rem; width: 100%; font-size: .875rem; background: #fff; }
+  input:focus, select:focus { outline: 2px solid #059669; outline-offset: -1px; }
+  label > span { display: block; font-size: .75rem; color: #475569; margin-bottom: .15rem; }
+  #receipt { width: 80mm; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #000; }
+  #receipt .qr { padding: 0.12in; background: #fff; } /* quiet zone so scanners can find the code */
+  #receipt .qr img, #receipt .qr canvas { width: 1in !important; height: 1in !important; }
+  @media print {
+    @page { size: 80mm auto; margin: 3mm; }
+    body * { visibility: hidden; }
+    #receipt, #receipt * { visibility: visible; }
+    #receipt { position: absolute; left: 0; top: 0; }
+  }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen antialiased">
+
+<div id="wakeBanner" class="hidden fixed inset-x-0 top-0 z-50 bg-amber-100 text-amber-900 text-sm text-center py-2 px-4">
+  Server is starting up (free plan sleeps when idle) — this can take up to a minute…
+</div>
+<div id="toast" class="hidden fixed top-4 right-4 z-50 max-w-md px-4 py-3 rounded shadow-lg text-sm"></div>
+
+<!-- Login -->
+<section id="loginView" class="hidden min-h-screen flex items-center justify-center px-4">
+  <form id="loginForm" class="bg-white rounded-xl shadow p-6 w-full max-w-sm space-y-4">
+    <a href="/" class="block text-2xl font-extrabold text-emerald-700">Raseed</a>
+    <h1 class="text-xl font-semibold">Sign in</h1>
+    <label><span>Email</span><input name="email" type="email" required autocomplete="username"></label>
+    <label><span>Password</span><input name="password" type="password" required autocomplete="current-password"></label>
+    <button class="w-full bg-emerald-700 hover:bg-emerald-800 text-white rounded py-2 font-medium">Log in</button>
+  </form>
+</section>
+
+<!-- App shell: left menu + page area -->
+<div id="shell" class="hidden">
+  <div id="navBackdrop" class="hidden fixed inset-0 bg-black/40 z-30 lg:hidden" onclick="toggleNav(false)"></div>
+  <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-60 bg-slate-900 text-slate-200 flex flex-col -translate-x-full lg:translate-x-0 transition-transform">
+    <a href="/" class="flex items-center gap-2 px-5 h-16 font-extrabold text-lg text-white border-b border-white/10">
+      <span class="inline-flex w-8 h-8 rounded-lg bg-emerald-600 items-center justify-center">R</span> Raseed
+    </a>
+    <nav id="nav" class="flex-1 overflow-y-auto py-3 text-sm"></nav>
+    <div class="border-t border-white/10 p-4 text-xs">
+      <div class="font-semibold text-white truncate" id="companyName"></div>
+      <div class="text-slate-400 truncate" id="userLine"></div>
+      <button onclick="logout()" class="mt-3 w-full border border-white/20 rounded px-3 py-1.5 hover:bg-white/10">Log out</button>
+    </div>
+  </aside>
+
+  <div class="lg:ml-60 min-h-screen flex flex-col">
+    <header id="topbar" class="sticky top-0 z-20 bg-white border-b">
+      <div class="px-4 md:px-6 h-16 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <button onclick="toggleNav(true)" class="lg:hidden p-2 -ml-2 rounded hover:bg-slate-100" aria-label="Menu">
+            <svg viewBox="0 0 24 24" class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+          <div class="min-w-0">
+            <h1 id="pageTitle" class="text-lg font-semibold truncate"></h1>
+            <div id="crumbs" class="text-xs text-slate-500 truncate"></div>
+          </div>
+        </div>
+        <span id="envBadge" class="hidden px-2 py-0.5 rounded text-xs font-bold"></span>
+      </div>
+      <div id="wsBanner" class="hidden bg-indigo-700 text-white text-sm">
+        <div class="px-4 md:px-6 py-2 flex flex-wrap items-center justify-between gap-2">
+          <span>Admin in the workspace of <b id="wsName"></b> — test invoices you send here are filed for this client.</span>
+          <button onclick="exitWorkspace()" class="bg-white text-indigo-800 rounded px-3 py-1 font-medium">Back to admin</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1 p-4 md:p-6">
+<!-- Super admin pages -->
+<section id="adminView" class="hidden">
+  <div data-page="a-dashboard" class="page hidden space-y-6">
+  <div id="adStats" class="grid grid-cols-2 lg:grid-cols-6 gap-4"></div>
+  <div class="bg-white rounded-xl shadow p-5">
+    <h2 class="font-semibold mb-3">Needs your attention</h2>
+    <div id="adAttention" class="text-sm"></div>
+  </div>
+  </div>
+  <div data-page="a-clients" class="page hidden space-y-6">
+  <div class="bg-white rounded-xl shadow p-5">
+    <h2 class="font-semibold mb-3">Register client</h2>
+    <form id="clientForm" class="grid sm:grid-cols-4 gap-3 items-end">
+      <label><span>Company name</span><input name="companyName" required></label>
+      <label><span>Login email</span><input name="clientEmail" type="email" required></label>
+      <label><span>Password (min 8)</span><input name="clientPassword" type="password" minlength="8" required></label>
+      <button class="bg-emerald-700 text-white rounded py-2">Create</button>
+    </form>
+  </div>
+  <div class="bg-white rounded-xl shadow p-5 overflow-x-auto">
+    <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
+      <h2 class="font-semibold">Clients</h2>
+      <button type="button" onclick="loadClients()" class="text-sm text-emerald-700 underline">Refresh</button>
+    </div>
+    <table class="w-full text-sm">
+      <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Company</th><th>Login</th><th>Env</th><th>Go-live</th><th class="text-right">This month</th><th>Last invoice</th><th></th></tr></thead>
+      <tbody id="clientRows"></tbody>
+    </table>
+  </div>
+  </div>
+  <div data-page="a-client" class="page hidden space-y-6">
+  <div id="managePanel" class="bg-white rounded-xl shadow p-5 space-y-6">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <h2 class="text-lg font-semibold">Manage: <span id="mpName"></span></h2>
+      <div class="flex flex-wrap gap-2 text-sm">
+        <button type="button" onclick="openWorkspace()" class="bg-indigo-700 text-white rounded px-3 py-1.5" title="Work inside this client's screen, e.g. to send the sandbox test invoices">Open workspace (test invoices)</button>
+        <button type="button" onclick="showClientActivity()" class="border rounded px-3 py-1.5">Activity log</button>
+        <button type="button" onclick="showClientReport()" class="border rounded px-3 py-1.5">Annex-C report</button>
+        <button type="button" onclick="closeManage()" class="text-slate-600 underline">← All clients</button>
+      </div>
+    </div>
+    <section>
+      <h3 class="font-semibold mb-2">FBR settings <span id="settingsHint" class="ml-2 text-xs font-normal text-amber-700"></span></h3>
+      <form id="settingsForm" class="grid sm:grid-cols-3 gap-3">
+      <label><span>Seller NTN / CNIC <span class="text-slate-400">(sent to FBR)</span></span><input name="sellerNtnCnic" inputmode="numeric" placeholder="7 or 13 digits" autocomplete="off"></label>
+      <label><span>Seller STRN <span class="text-slate-400">(printed on invoice)</span></span><input name="sellerStrn" inputmode="numeric" placeholder="13 digits, optional" autocomplete="off"></label>
+      <label><span>Seller business name</span><input name="sellerBusinessName" autocomplete="off"></label>
+      <label><span>Seller province</span><select name="sellerProvince" data-list="provinces"></select></label>
+      <label class="sm:col-span-2"><span>Seller address</span><input name="sellerAddress" autocomplete="off"></label>
+      <label><span>Environment</span>
+        <select name="fbrEnv"><option value="SANDBOX">Sandbox (testing)</option><option value="PRODUCTION">Production (live)</option></select>
+      </label>
+      <label class="sm:col-span-2"><span>PRAL security token <span id="tokenMasked" class="text-slate-400"></span></span>
+        <input name="fbrToken" type="password" placeholder="Leave empty to keep current token" autocomplete="new-password" data-lpignore="true" data-1p-ignore></label>
+      <label><span>Further tax % (unregistered buyers)</span><input name="furtherTaxRate" type="number" step="0.01" min="0" max="100"></label>
+      <label><span>Invoice number format <span class="text-slate-400">{YYYY} {YY} {MM} {NNNN}</span></span><input name="invoiceNumberFormat" maxlength="40" placeholder="INV-{YYYY}-{NNNN}" autocomplete="off"></label>
+      <label><span>Software registration no. <span class="text-slate-400">(from PRAL, printed)</span></span><input name="softwareRegNo" maxlength="60" autocomplete="off"></label>
+      <label><span>Authorization letter (STR-13) received on</span><input name="authLetterAt" type="date"></label>
+      <label><span>Authorization letter reference</span><input name="authLetterRef" maxlength="100" autocomplete="off" placeholder="e.g. file no. / scan name"></label>
+      <div class="sm:col-span-2"><span class="block text-xs text-slate-600 mb-1">Business nature — same as chosen in IRIS (tick all that apply)</span>
+        <div id="bizActs" class="flex flex-wrap gap-x-4 gap-y-1 text-sm"></div></div>
+      <label><span>Sector (as in IRIS)</span><select name="sector"></select></label>
+      <div class="sm:col-span-3 flex flex-wrap items-center gap-4">
+        <button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button>
+        <span class="text-xs text-slate-600">HS codes: <span id="hsStats">…</span></span>
+        <button type="button" id="hsSyncBtn" onclick="syncHs()" class="text-xs text-emerald-700 underline">Sync HS codes from FBR</button>
+      </div>
+    </form>
+    </section>
+    <section>
+      <h3 class="font-semibold mb-2">Go-live checklist <span id="mpObSummary" class="ml-2 text-xs font-normal"></span></h3>
+      <div id="mpChecklist" class="text-sm"></div>
+    </section>
+  </div>
+  </div>
+  <div data-page="a-reports" class="page hidden space-y-6">
+    <div class="bg-white rounded-xl shadow p-5 space-y-3">
+      <h2 class="font-semibold">Annex-C report <span class="text-xs font-normal text-slate-500">— sales filed with FBR, item-wise, same columns as IRIS Annex-C</span></h2>
+      <div class="flex flex-wrap items-end gap-3 text-sm">
+        <label><span>Client</span><select id="acClient"></select></label>
+      <label><span>Month</span><input type="month" id="acMonth"></label>
+      <label><span>Environment</span><select id="acEnv"><option value="PRODUCTION">Production (real)</option><option value="SANDBOX">Sandbox (tests)</option></select></label>
+      <button type="button" onclick="previewAnnexC()" class="bg-slate-800 text-white rounded px-3 py-1.5">Show</button>
+      <button type="button" onclick="downloadAnnexC()" class="bg-emerald-700 text-white rounded px-3 py-1.5">Download Excel (CSV)</button>
+    </div>
+    <div id="acSummary" class="text-sm"></div>
+  
+    </div>
+  </div>
+  <div data-page="a-activity" class="page hidden space-y-6">
+  <div id="aAuditBox" class="bg-white rounded-xl shadow">
+    <h2 class="p-5 pb-3 font-semibold">Activity log <span class="text-xs font-normal text-slate-500">— who did what; entries can't be edited or deleted</span></h2>
+    <div class="px-5 pb-5 space-y-3 text-sm">
+      <div class="flex flex-wrap items-end gap-2">
+        <label><span>Client</span><select id="aAuTenant"><option value="">All clients</option><option value="platform">Platform / admin</option></select></label>
+        <label><span>Type</span><select id="aAuAction"><option value="">All</option><option value="invoice.">Invoices</option><option value="import.">Imports</option>
+          <option value="settings.">Settings</option><option value="auth.">Logins</option><option value="product.">Products</option><option value="buyer.">Buyers</option>
+          <option value="report.">Reports</option><option value="admin.">Admin</option></select></label>
+        <label><span>Month</span><input type="month" id="aAuMonth"></label>
+        <label><span>Search</span><input id="aAuQ" placeholder="invoice #, user, text"></label>
+        <button type="button" onclick="loadAudit('a')" class="bg-slate-800 text-white rounded px-3 py-1.5">Show</button>
+        <button type="button" onclick="exportAudit('a')" class="text-emerald-700 underline">Download CSV</button>
+      </div>
+      <div class="overflow-x-auto"><table class="w-full text-xs">
+        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Time</th><th>User</th><th>Action</th><th>What happened</th></tr></thead>
+        <tbody id="aAuRows"></tbody></table></div>
+      <button type="button" id="aAuMore" onclick="loadAudit('a', true)" class="hidden text-emerald-700 underline text-xs">Load more</button>
+    </div>
+  </div>
+  </div>
+  <div data-page="a-leads" class="page hidden space-y-6">
+  <div id="leadsBox" class="bg-white rounded-xl shadow">
+    <h2 class="p-5 pb-3 font-semibold">Website enquiries <span id="leadsCount" class="ml-2 text-xs font-normal"></span></h2>
+    <div class="px-5 pb-5 space-y-3 text-sm">
+      <div class="flex flex-wrap items-end gap-2">
+        <label><span>Status</span><select id="leadStatus" onchange="loadLeads()"><option value="">All</option><option>NEW</option><option>CONTACTED</option><option>CLIENT</option><option>CLOSED</option></select></label>
+        <a href="/contact" target="_blank" class="text-emerald-700 underline text-xs">Open the contact page</a>
+      </div>
+      <div class="overflow-x-auto"><table class="w-full text-xs">
+        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Received</th><th>Name / business</th><th>Contact</th><th>Type / interest</th><th>Message</th><th>Status</th></tr></thead>
+        <tbody id="leadRows"></tbody></table></div>
+    </div>
+  </div>
+  </div>
+  <div data-page="a-system" class="page hidden space-y-6">
+  <div class="bg-white rounded-xl shadow p-5 text-sm flex flex-wrap items-center gap-3">
+    <span class="font-semibold">IP for FBR whitelisting:</span>
+    <span id="egressIp" class="font-mono">—</span>
+    <button onclick="loadEgressIp()" class="text-emerald-700 underline">Check</button>
+  </div>
+  <div class="bg-white rounded-xl shadow p-5 text-sm">HS codes: <span id="sysHs">…</span> <span class="text-slate-500">— synced from FBR automatically every week once a client token works; per client under Clients → Manage.</span></div>
+  </div>
+</section>
+
+<!-- Client pages -->
+<section id="clientView" class="hidden">
+  <div id="setupBanner" class="hidden rounded-xl border border-amber-300 bg-amber-50 text-amber-900 p-4 text-sm"></div>
+  <div data-page="c-dashboard" class="page hidden space-y-6">
+  <div id="cdStats" class="grid grid-cols-2 lg:grid-cols-4 gap-4"></div>
+  <div class="flex flex-wrap gap-3">
+    <a href="#/c-new" class="bg-emerald-700 text-white rounded-lg px-4 py-2 font-medium">+ New invoice</a>
+    <a href="#/c-import" class="bg-white border rounded-lg px-4 py-2 font-medium">Bulk import</a>
+    <a href="#/c-invoices" class="bg-white border rounded-lg px-4 py-2 font-medium">All sales invoices</a>
+  </div>
+  <div class="bg-white rounded-xl shadow p-5">
+    <h2 class="font-semibold mb-3">Latest invoices</h2>
+    <div id="cdRecent" class="text-sm"></div>
+  </div>
+  </div>
+  <div data-page="c-new" class="page hidden space-y-6">
+    <form id="invoiceForm" class="bg-white rounded-xl shadow p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold">Invoice details</h2>
+      </div>
+
+      <div id="scenarioRow" class="hidden bg-amber-50 border border-amber-200 rounded p-3">
+        <label><span>Sandbox scenario (required in sandbox)</span><select name="scenarioId" id="scenarioSel"></select></label>
+      </div>
+
+      <div class="grid sm:grid-cols-3 gap-3">
+        <label><span>Document type</span>
+          <select name="invoiceType" id="invoiceType"><option>Sale Invoice</option><option>Debit Note</option></select></label>
+        <label><span>Invoice date</span><input name="invoiceDate" type="date" required></label>
+        <label id="refNoWrap" class="hidden"><span>Original FBR invoice no.</span><input name="invoiceRefNo" autocomplete="off" placeholder="e.g. 7000007DI1747119701593"></label>
+        <label class="debit-only hidden"><span>Reason</span><select name="reason"></select></label>
+        <label class="debit-only hidden sm:col-span-2"><span>Remarks <span id="remarksReq" class="text-red-600 hidden">*</span></span><input name="reasonRemarks" maxlength="500" autocomplete="off"></label>
+      </div>
+
+      <div class="grid sm:grid-cols-3 gap-3">
+        <div>
+          <label><span>Buyer type</span>
+            <select name="buyerRegistrationType" id="buyerType"><option>Unregistered</option><option>Registered</option></select></label>
+          <label id="endConsumerWrap" class="flex items-center gap-1.5 mt-1.5 text-xs text-slate-700 cursor-pointer">
+            <input type="checkbox" name="endConsumer" checked style="width:auto"> End consumer / walk-in — no further tax</label>
+          <label id="nonAtlWrap" class="hidden flex items-center gap-1.5 mt-1.5 text-xs text-slate-700 cursor-pointer">
+            <input type="checkbox" name="buyerNonAtl" style="width:auto"> Not active with FBR (non-ATL) — further tax applies</label>
+        </div>
+        <div>
+          <label><span>Buyer NTN / CNIC <span id="ntnReq" class="text-red-600 hidden">*</span></span><input name="buyerNtnCnic" inputmode="numeric" autocomplete="off" placeholder="Type to search saved buyers"></label>
+          <div class="flex items-center gap-2 mt-1 text-xs"><button type="button" onclick="checkBuyerFbr()" class="text-emerald-700 underline">Check with FBR</button><span id="buyerCheck" class="text-slate-500"></span></div>
+        </div>
+        <label><span>Buyer name</span><input name="buyerBusinessName" placeholder="Walk-in Customer — or type to search saved" autocomplete="off"></label>
+        <label><span>Buyer province</span><select name="buyerProvince" data-list="provinces"></select></label>
+        <label class="sm:col-span-2"><span>Buyer address</span><input name="buyerAddress" placeholder="Defaults to seller address"></label>
+      </div>
+
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium text-sm">Items</h3>
+          <button type="button" onclick="addItem()" class="text-sm text-emerald-700 font-medium">+ Add item</button>
+        </div>
+        <div id="items" class="space-y-3"></div>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm bg-slate-50 rounded p-3">
+        <div>Value excl. ST<div id="tExcl" class="font-semibold">0.00</div></div>
+        <div>Sales tax<div id="tST" class="font-semibold">0.00</div></div>
+        <div>Further tax<div id="tFT" class="font-semibold">0.00</div></div>
+        <div>Total<div id="tTotal" class="font-bold text-emerald-700 text-base">0.00</div></div>
+      </div>
+
+      <button id="submitBtn" class="w-full bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded py-2.5 font-medium">Submit to FBR</button>
+    </form>
+  </div>
+  <div data-page="c-invoices" class="page hidden space-y-6">
+  <div class="bg-white rounded-xl shadow p-4 space-y-3">
+    <div class="flex flex-wrap items-end gap-2 text-sm">
+      <label class="flex-1 min-w-[14rem]"><span>Search</span><input id="ivQ" placeholder="Invoice no., FBR no., buyer name or NTN" autocomplete="off"></label>
+      <label><span>From</span><input type="date" id="ivFrom"></label>
+      <label><span>To</span><input type="date" id="ivTo"></label>
+      <label><span>Status</span><select id="ivStatus"><option value="">All</option><option value="SUBMITTED">Filed (SUBMITTED)</option><option value="ATTENTION">Needs attention</option>
+        <option value="QUEUED">Queued</option><option value="FAILED">Failed</option><option value="UNCERTAIN">Uncertain</option><option value="CANCELLED">Cancelled</option></select></label>
+      <label><span>Type</span><select id="ivType"><option value="">All</option><option>Sale Invoice</option><option>Debit Note</option></select></label>
+      <a href="#/c-new" class="ml-auto bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg px-4 py-2 font-medium">+ New invoice</a>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 text-xs" id="ivQuick">
+      <span class="text-slate-500">Quick:</span>
+      <button type="button" data-range="today" class="border rounded-full px-3 py-1 hover:border-emerald-600">Today</button>
+      <button type="button" data-range="yesterday" class="border rounded-full px-3 py-1 hover:border-emerald-600">Yesterday</button>
+      <button type="button" data-range="week" class="border rounded-full px-3 py-1 hover:border-emerald-600">This week</button>
+      <button type="button" data-range="month" class="border rounded-full px-3 py-1 hover:border-emerald-600">This month</button>
+      <button type="button" data-range="lastmonth" class="border rounded-full px-3 py-1 hover:border-emerald-600">Last month</button>
+      <button type="button" data-range="all" class="border rounded-full px-3 py-1 hover:border-emerald-600">All dates</button>
+    </div>
+  </div>
+  <div id="ivSummary" class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm"></div>
+  <div class="bg-white rounded-xl shadow overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="text-left text-slate-500 border-b bg-slate-50"><tr><th class="py-2 px-3">Invoice #</th><th>Date</th><th>Buyer</th><th>Scenario</th><th class="text-right">Total</th><th class="pl-3">Status</th><th>FBR invoice no.</th><th class="pr-3"></th></tr></thead>
+      <tbody id="invoiceRows"></tbody>
+    </table>
+    <div id="ivPager" class="flex items-center justify-between gap-2 p-3 text-xs text-slate-600 border-t"></div>
+  </div>
+  </div>
+  <div data-page="c-import" class="page hidden space-y-6">
+  <div class="bg-white rounded-xl shadow p-5 space-y-3">
+    <h2 class="font-semibold">Bulk import <span class="text-xs font-normal text-slate-500">— many invoices from Excel/CSV: one row per item, rows with the same Invoice Ref become one invoice</span></h2>
+    <div class="flex flex-wrap items-center gap-3 text-sm">
+      <button type="button" onclick="downloadTemplate()" class="text-emerald-700 underline">Download template (CSV)</button>
+      <label class="inline-flex items-center gap-2 bg-slate-800 text-white rounded px-3 py-1.5 cursor-pointer">
+        <span class="!m-0 !text-white !text-sm">Choose Excel / CSV file…</span>
+        <input type="file" id="importFile" accept=".xlsx,.xls,.csv" class="hidden"></label>
+      <span id="importFileName" class="text-xs text-slate-500"></span>
+    </div>
+    <div id="importPreview" class="text-sm"></div>
+    <div id="importBatches" class="text-sm"></div>
+  </div>
+  </div>
+  <div data-page="c-products" class="page hidden space-y-6">
+      <div class="bg-white rounded-xl shadow p-5 overflow-x-auto text-sm">
+        <h3 class="font-medium mb-2">Products <span class="text-xs font-normal text-slate-500">— add here, or from an item row with "★ Save as product"</span></h3>
+        <form id="productForm" class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3 bg-slate-50 border rounded p-3">
+          <input type="hidden" name="id">
+          <label class="col-span-2"><span>Product name</span><input name="name" required maxlength="200" autocomplete="off" placeholder="e.g. Yogurt 500g"></label>
+          <label class="col-span-2"><span>HS code</span><input name="hsCode" class="pf-hs" required autocomplete="off" placeholder="Type code or product, e.g. yogurt"></label>
+          <label><span>UOM</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
+          <label><span>Rate</span><input name="rate" list="rateList" value="18%" required></label>
+          <label class="col-span-2"><span>Sale type</span><select name="saleType" id="pfSaleType"></select></label>
+          <label><span>Unit price</span><input name="unitPrice" type="number" step="0.01" min="0" placeholder="optional"></label>
+          <label><span>SRO schedule no.</span><input name="sroScheduleNo" placeholder="optional"></label>
+          <label class="col-span-2"><span>SRO item serial</span><input name="sroItemSerialNo" placeholder="optional"></label>
+          <div class="col-span-2 sm:col-span-4 flex flex-wrap items-center gap-3">
+            <button id="pfSubmit" class="bg-emerald-700 text-white rounded px-3 py-1.5">Save product</button>
+            <button type="button" class="text-xs text-slate-600 underline" onclick="clearProductForm()">Clear</button>
+            <span id="pfMode" class="text-xs text-slate-500"></span>
+          </div>
+        </form>
+        <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Name</th><th>HS code</th><th>Rate</th><th>UOM</th><th class="text-right">Price</th><th></th></tr></thead>
+          <tbody id="productRows"></tbody></table>
+      </div>
+  </div>
+  <div data-page="c-buyers" class="page hidden space-y-6">
+      <div class="bg-white rounded-xl shadow p-5 overflow-x-auto text-sm">
+        <h3 class="font-medium mb-2">Buyers <span class="text-xs font-normal text-slate-500">— add here; buyers with an NTN/CNIC are also saved automatically when an invoice is filed</span></h3>
+        <form id="buyerForm" class="grid grid-cols-2 gap-2 mb-3 bg-slate-50 border rounded p-3">
+          <input type="hidden" name="id">
+          <label class="col-span-2"><span>Buyer name</span><input name="businessName" required maxlength="200" autocomplete="off"></label>
+          <label><span>Buyer type</span><select name="registrationType"><option>Unregistered</option><option>Registered</option></select></label>
+          <label><span>NTN / CNIC</span><input name="ntnCnic" inputmode="numeric" autocomplete="off" placeholder="7, 9 or 13 digits"></label>
+          <label><span>Province</span><select name="province" data-list="provinces"></select></label>
+          <label><span>Address</span><input name="address" autocomplete="off"></label>
+          <div class="col-span-2 flex flex-wrap items-center gap-3">
+            <button id="bfSubmit" class="bg-emerald-700 text-white rounded px-3 py-1.5">Save buyer</button>
+            <button type="button" class="text-xs text-slate-600 underline" onclick="clearBuyerForm()">Clear</button>
+            <span id="bfMode" class="text-xs text-slate-500"></span>
+          </div>
+        </form>
+        <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Name</th><th>NTN/CNIC</th><th>Type</th><th>Province</th><th></th></tr></thead>
+          <tbody id="buyerRows"></tbody></table>
+      </div>
+  </div>
+</section>
+    </main>
+  </div>
+</div>
+
+<!-- Receipt popup (after filing, or View from Sales Invoices) -->
+<div id="receiptModal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-start justify-center overflow-y-auto p-4" onclick="if (event.target === this) closeReceipt()">
+  <div class="bg-white rounded-xl shadow-xl p-5 mt-10 space-y-3">
+    <div class="flex items-center justify-between gap-6">
+      <h2 class="font-semibold">Receipt</h2>
+      <div class="flex gap-2">
+        <button id="printBtn" onclick="window.print()" class="hidden text-sm bg-slate-800 text-white rounded px-3 py-1">Print</button>
+        <button onclick="closeReceipt()" class="text-sm border rounded px-3 py-1">Close</button>
+      </div>
+    </div>
+    <div id="receiptEmpty" class="hidden"></div>
+    <div class="flex justify-center"><div id="receipt" class="hidden"></div></div>
+  </div>
+</div>
+
+<script>
+const S = { token: null, role: null, company: '', meta: null, settings: null, lists: {} };
+try { Object.assign(S, JSON.parse(localStorage.getItem('fbrSession') || '{}')); } catch {}
+
+const $ = sel => document.querySelector(sel);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = n => Number(n || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const r2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+function toast(msg, ok = false) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = `fixed top-4 right-4 z-50 max-w-md px-4 py-3 rounded shadow-lg text-sm ${ok ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`;
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.add('hidden'), ok ? 3000 : 8000);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    method: opts.method || 'GET',
+    headers: { 'Content-Type': 'application/json', ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && S.token) { logout(); throw new Error(data.error || 'Session expired'); }
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+function saveSession() {
+  try { localStorage.setItem('fbrSession', JSON.stringify({ token: S.token, role: S.role, company: S.company, adminSession: S.adminSession || null })); } catch {}
+}
+function logout() {
+  if (S.token) fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + S.token } }).catch(() => {});
+  S.token = S.role = null; S.adminSession = null;
+  try { localStorage.removeItem('fbrSession'); } catch {}
+  show();
+}
+
+/* ---------- Left menu + pages ---------- */
+const ICON = {
+  home: 'M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10',
+  plus: 'M12 5v14M5 12h14',
+  list: 'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01',
+  upload: 'M12 16V4m0 0l-4 4m4-4l4 4M4 16v4h16v-4',
+  box: 'M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8',
+  users: 'M16 11a4 4 0 10-8 0 4 4 0 008 0zM4 21a8 8 0 0116 0',
+  building: 'M4 21V5l8-3 8 3v16M9 21v-4h6v4M8 9h.01M12 9h.01M16 9h.01M8 13h.01M12 13h.01M16 13h.01',
+  chart: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+  clock: 'M12 7v5l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+  mail: 'M4 6h16v12H4zM4 6l8 7 8-7',
+  cog: 'M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z',
+};
+const NAV = {
+  client: [
+    { id: 'c-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
+    { id: 'c-new', label: 'New Invoice', icon: 'plus', crumb: 'Sales' },
+    { id: 'c-invoices', label: 'Sales Invoices', icon: 'list', crumb: 'Sales' },
+    { id: 'c-import', label: 'Bulk Import', icon: 'upload', crumb: 'Sales' },
+    { id: 'c-products', label: 'Products', icon: 'box', crumb: 'Masters' },
+    { id: 'c-buyers', label: 'Buyers', icon: 'users', crumb: 'Masters' },
+  ],
+  admin: [
+    { id: 'a-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
+    { id: 'a-clients', label: 'Clients', icon: 'building', crumb: 'Clients' },
+    { id: 'a-reports', label: 'Reports (Annex-C)', icon: 'chart', crumb: 'Reports' },
+    { id: 'a-activity', label: 'Activity Log', icon: 'clock', crumb: 'Compliance' },
+    { id: 'a-leads', label: 'Website Enquiries', icon: 'mail', crumb: 'Website' },
+    { id: 'a-system', label: 'System', icon: 'cog', crumb: 'Settings' },
+  ],
+};
+const HIDDEN_PAGES = { 'a-client': { label: 'Manage client', crumb: 'Clients', parent: 'a-clients' } };
+const PAGE_ENTER = {
+  'c-dashboard': () => loadDashboard(), 'c-invoices': () => loadInvoices(), 'c-import': () => loadBatches(),
+  'c-products': () => loadSaved(), 'c-buyers': () => loadSaved(),
+  'a-dashboard': () => loadAdminDash(), 'a-clients': () => loadClients(), 'a-reports': () => fillReportClients(),
+  'a-activity': () => loadAudit('a'), 'a-leads': () => loadLeads(), 'a-system': () => loadSystem(),
+};
+const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : NAV.client;
+function renderNav() {
+  $('#nav').innerHTML = navList().map(n => `<a href="#/${n.id}" data-nav="${n.id}" class="flex items-center gap-3 mx-3 my-0.5 px-3 py-2 rounded-lg hover:bg-white/10">
+    <svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[n.icon]}"/></svg>${esc(n.label)}</a>`).join('');
+}
+function toggleNav(open) {
+  $('#sidebar').classList.toggle('-translate-x-full', !open);
+  $('#navBackdrop').classList.toggle('hidden', !open);
+}
+function go(id) { if (location.hash === '#/' + id) route(); else location.hash = '/' + id; }
+function route() {
+  if (!S.token) return;
+  const list = navList(), view = S.role === 'SUPER_ADMIN' ? '#adminView' : '#clientView';
+  let id = location.hash.replace(/^#\/?/, '');
+  const meta = list.find(n => n.id === id) || HIDDEN_PAGES[id];
+  if (!meta || !document.querySelector(`${view} [data-page="${id}"]`) || (id === 'a-client' && !S.manageId)) {
+    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : (S.adminSession ? 'c-new' : 'c-dashboard');
+    history.replaceState(null, '', '#/' + id);
+  }
+  const m = list.find(n => n.id === id) || HIDDEN_PAGES[id];
+  document.querySelectorAll(`${view} .page`).forEach(pg => pg.classList.toggle('hidden', pg.dataset.page !== id));
+  const active = m.parent || id;
+  document.querySelectorAll('#nav [data-nav]').forEach(a => {
+    const on = a.dataset.nav === active;
+    a.classList.toggle('bg-emerald-600', on); a.classList.toggle('text-white', on); a.classList.toggle('hover:bg-white/10', !on);
+  });
+  $('#pageTitle').textContent = id === 'a-client' && S.managed ? S.managed.companyName : m.label;
+  $('#crumbs').textContent = `${m.crumb} / ${m.label}`;
+  toggleNav(false);
+  window.scrollTo(0, 0);
+  S.page = id;
+  (PAGE_ENTER[id] || (() => {}))();
+}
+window.addEventListener('hashchange', route);
+
+function show() {
+  for (const id of ['loginView', 'adminView', 'clientView', 'shell']) $('#' + id).classList.add('hidden');
+  if (!S.token) return $('#loginView').classList.remove('hidden');
+  $('#shell').classList.remove('hidden');
+  $('#companyName').textContent = S.company;
+  $('#userLine').textContent = S.adminSession ? 'Admin workspace' : (S.role === 'SUPER_ADMIN' ? 'Super admin' : 'Client');
+  $('#wsBanner').classList.toggle('hidden', !S.adminSession);
+  $('#wsName').textContent = S.company;
+  renderNav();
+  if (S.role === 'SUPER_ADMIN') { $('#adminView').classList.remove('hidden'); $('#envBadge').classList.add('hidden'); initAdmin(); }
+  else { $('#clientView').classList.remove('hidden'); initClient(); }
+}
+
+$('#loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    const d = await api('/api/auth/login', { method: 'POST', body: { email: f.get('email'), password: f.get('password') } });
+    Object.assign(S, { token: d.token, role: d.role, company: d.companyName });
+    saveSession(); e.target.reset(); show();
+  } catch (err) { toast(err.message); }
+});
+
+/* ---------- Admin ---------- */
+const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+async function loadClients() {
+  try {
+    const rows = await api('/api/admin/clients');
+    $('#clientRows').innerHTML = rows.map(c => {
+      const ob = c.onboarding, live = ob.done === ob.total;
+      return `<tr class="border-b align-top">
+      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc(c.sector || 'sector not set')}</div></td>
+      <td class="text-xs">${esc(c.emails.join(', '))}</td>
+      <td class="text-xs">${esc(c.fbrEnv)}<div>${c.fbrTokenMasked ? 'token ✔' : '<span class="text-amber-700">no token</span>'}</div></td>
+      <td class="text-xs"><span class="px-2 py-0.5 rounded ${live ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}">${live ? 'Live' : `${ob.done}/${ob.total} steps`}</span>
+        <div class="mt-1 text-slate-600">Scenarios ${ob.scenariosPassed}/${ob.scenariosAssigned || '?'}</div></td>
+      <td class="text-right text-xs">${c.thisMonth.invoices} invoices<div class="font-semibold">Rs ${money(c.thisMonth.total)}</div>
+        ${c.needsAttention ? `<div class="text-red-700">${c.needsAttention} need attention</div>` : ''}</td>
+      <td class="text-xs">${fmtDate(c.lastInvoiceAt)}</td>
+      <td class="text-right whitespace-nowrap"><button class="bg-emerald-700 text-white rounded px-3 py-1 text-xs" onclick="manageClient('${c.id}')">Manage</button></td></tr>`;
+    }).join('') || '<tr><td colspan="7" class="py-3 text-slate-500">No clients yet.</td></tr>';
+    const sel = $('#aAuTenant'), cur = sel.value;
+    sel.innerHTML = '<option value="">All clients</option><option value="platform">Platform / admin</option>' + rows.map(c => `<option value="${c.id}">${esc(c.companyName)}</option>`).join('');
+    sel.value = cur;
+    S.clients = rows;
+  } catch (err) { toast(err.message); }
+}
+// Shared by the client card and the admin grid. clickable = scenario chips pick the scenario in the invoice form.
+function checklistHtml(ob, clickable) {
+  const steps = ob.steps.map(st => `<li class="flex items-start gap-2"><span class="${st.done ? 'text-emerald-600' : 'text-slate-400'}">${st.done ? '✔' : '○'}</span>
+    <span class="${st.done ? 'text-slate-500' : 'text-slate-800'}">${esc(st.label)}</span></li>`).join('');
+  const chips = ob.scenarios.length
+    ? ob.scenarios.map(sc => {
+        const cls = sc.passed ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : sc.mockOnly ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-white text-slate-700 border-slate-300';
+        const tip = sc.passed ? 'Passed with FBR sandbox' : sc.mockOnly ? 'Only tried in mock mode — submit with the real sandbox token' : 'Not passed yet';
+        const tag = 'span';
+        return `<${tag} class="inline-block border rounded px-2 py-0.5 text-xs mr-1 mb-1 ${cls}" title="${esc(sc.desc)} — ${tip}">${sc.passed ? '✔ ' : ''}${sc.id}</${tag.split(' ')[0]}>`;
+      }).join('')
+    : '<span class="text-xs text-slate-500">Set business nature and sector (as in IRIS) to see which scenarios FBR will ask for.</span>';
+  return `<ul class="space-y-1 text-sm">${steps}</ul>
+    <div class="mt-3"><div class="text-xs text-slate-500 mb-1">Sandbox scenarios${clickable ? ' — click one to fill the invoice form with it' : ''}:</div>${chips}</div>`;
+}
+
+/* ---------- Admin: website enquiries ---------- */
+const LEAD_BADGE = { NEW: 'bg-amber-100 text-amber-900', CONTACTED: 'bg-sky-100 text-sky-800', CLIENT: 'bg-emerald-100 text-emerald-800', CLOSED: 'bg-slate-200 text-slate-600' };
+async function loadLeads() {
+  try {
+    const all = await api('/api/admin/leads');
+    const fresh = all.filter(l => l.status === 'NEW').length;
+    $('#leadsCount').innerHTML = fresh ? `<span class="px-2 py-0.5 rounded bg-amber-100 text-amber-900">${fresh} new</span>` : `<span class="text-slate-500">${all.length} total</span>`;
+    const st = $('#leadStatus').value, rows = st ? all.filter(l => l.status === st) : all;
+    $('#leadRows').innerHTML = rows.map(l => `<tr class="border-b last:border-0 align-top">
+      <td class="py-1 whitespace-nowrap">${fmtDate(l.createdAt)}</td>
+      <td><div class="font-medium">${esc(l.name)}</div><div class="text-slate-500">${esc(l.businessName)}${l.city ? ' · ' + esc(l.city) : ''}</div></td>
+      <td><a class="text-emerald-700" href="tel:${esc(l.phone)}">${esc(l.phone)}</a>
+        ${l.phone.replace(/\D/g, '').length >= 10 ? `<a class="ml-1 text-emerald-700 underline" target="_blank" rel="noopener" href="https://wa.me/${l.phone.replace(/\D/g, '').replace(/^0/, '92')}">WhatsApp</a>` : ''}
+        ${l.email ? `<div><a class="text-emerald-700" href="mailto:${esc(l.email)}">${esc(l.email)}</a></div>` : ''}</td>
+      <td>${esc(l.businessType)}<div class="text-slate-500">${esc(l.interest)}</div></td>
+      <td class="max-w-xs whitespace-pre-wrap">${esc(l.message)}</td>
+      <td><select class="!w-auto !text-xs !py-0.5 rounded ${LEAD_BADGE[l.status]}" onchange="setLeadStatus('${l.id}', this.value)">
+        ${['NEW', 'CONTACTED', 'CLIENT', 'CLOSED'].map(s => `<option ${s === l.status ? 'selected' : ''}>${s}</option>`).join('')}</select></td></tr>`).join('')
+      || '<tr><td colspan="6" class="py-2 text-slate-500">No enquiries yet.</td></tr>';
+  } catch (err) { toast(err.message); }
+}
+async function setLeadStatus(id, status) {
+  try { await api('/api/admin/leads/' + id, { method: 'PATCH', body: { status } }); loadLeads(); } catch (err) { toast(err.message); }
+}
+
+/* ---------- Admin: manage one client ---------- */
+async function initAdmin() {
+  try {
+    if (!S.meta) S.meta = await api('/api/meta');
+    if (!S.lists.provinces) await loadLists();
+  } catch (err) { toast(err.message); }
+  route();
+}
+// Admin dashboard: counts across all clients + what needs attention
+async function loadAdminDash() {
+  try {
+    const [clients, leads] = await Promise.all([api('/api/admin/clients'), api('/api/admin/leads')]);
+    S.clients = clients;
+    const live = clients.filter(c => c.onboarding.done === c.onboarding.total).length;
+    const card = (label, value, href, cls = '') => `<a href="${href}" class="bg-white rounded-xl shadow p-4 hover:ring-2 hover:ring-emerald-600"><div class="text-xs text-slate-500">${label}</div><div class="text-2xl font-bold mt-1 ${cls}">${value}</div></a>`;
+    const att = clients.reduce((a, c) => a + c.needsAttention, 0), newLeads = leads.filter(l => l.status === 'NEW').length;
+    $('#adStats').innerHTML = card('Clients', clients.length, '#/a-clients') + card('Live with FBR', live, '#/a-clients', 'text-emerald-700')
+      + card('In setup / testing', clients.length - live, '#/a-clients', 'text-amber-700')
+      + card('Invoices this month', clients.reduce((a, c) => a + c.thisMonth.invoices, 0), '#/a-reports')
+      + card('Need attention', att, '#/a-clients', att ? 'text-red-700' : '') + card('New enquiries', newLeads, '#/a-leads', newLeads ? 'text-amber-700' : '');
+    const items = [
+      ...clients.filter(c => c.needsAttention).map(c => `<li>⚠️ <b>${esc(c.companyName)}</b>: ${c.needsAttention} invoice(s) failed or uncertain — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">open</a></li>`),
+      ...clients.filter(c => c.onboarding.done < c.onboarding.total).map(c => `<li>🛠️ <b>${esc(c.companyName)}</b>: go-live ${c.onboarding.done}/${c.onboarding.total}, scenarios ${c.onboarding.scenariosPassed}/${c.onboarding.scenariosAssigned || '?'} — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">manage</a></li>`),
+      ...(newLeads ? [`<li>✉️ ${newLeads} new website enquir${newLeads > 1 ? 'ies' : 'y'} — <a class="text-emerald-700 underline" href="#/a-leads">view</a></li>`] : []),
+    ];
+    $('#adAttention').innerHTML = items.length ? `<ul class="space-y-2">${items.join('')}</ul>` : '<div class="text-slate-500">All good — nothing needs attention.</div>';
+  } catch (err) { toast(err.message); }
+}
+async function loadSystem() {
+  try {
+    const st = await api('/api/hs/stats');
+    $('#sysHs').textContent = st.FBR ? `${st.FBR.count.toLocaleString()} from FBR (last sync ${fmtDate(st.FBR.updatedAt)})` : `${(st['PCT-2017']?.count || 0).toLocaleString()} from the PCT 2017 list (not yet synced with FBR)`;
+  } catch { $('#sysHs').textContent = '—'; }
+}
+async function fillReportClients(preselect) {
+  try {
+    if (!S.clients) S.clients = await api('/api/admin/clients');
+    const sel = $('#acClient'), cur = preselect || sel.value || S.manageId || '';
+    sel.innerHTML = '<option value="">— choose client —</option>' + S.clients.map(c => `<option value="${c.id}">${esc(c.companyName)}</option>`).join('');
+    sel.value = cur;
+    const c = S.clients.find(x => x.id === sel.value);
+    if (c) setupAnnexC(c); else setupAnnexC({ fbrEnv: 'PRODUCTION' });
+    sel.onchange = () => { const x = S.clients.find(y => y.id === sel.value); if (x) setupAnnexC(x); $('#acSummary').innerHTML = ''; };
+  } catch (err) { toast(err.message); }
+}
+function showClientReport() { const id = S.manageId; go('a-reports'); setTimeout(() => fillReportClients(id), 0); }
+async function manageClient(id) {
+  try {
+    const [t, ob] = await Promise.all([api(`/api/admin/clients/${id}/settings`), api(`/api/admin/clients/${id}/onboarding`)]);
+    S.manageId = id; S.managed = t;
+    $('#mpName').textContent = t.companyName;
+    fillSettings(t);
+    renderChecklist(ob);
+    setupAnnexC(t);
+    $('#acSummary').innerHTML = '';
+    loadHsStats();
+    go('a-client');
+  } catch (err) { toast(err.message); }
+}
+function closeManage() { S.manageId = null; go('a-clients'); }
+function renderChecklist(ob) {
+  const live = ob.done === ob.total;
+  $('#mpObSummary').innerHTML = live ? '<span class="text-emerald-700">✔ Live with FBR</span>'
+    : `<span class="text-amber-700">${ob.done} of ${ob.total} done · scenarios ${ob.scenariosPassed}/${ob.scenariosAssigned || '?'}</span>`;
+  $('#mpChecklist').innerHTML = checklistHtml(ob, false)
+    + (ob.scenariosAssigned && ob.scenariosPassed < ob.scenariosAssigned ? '<div class="text-xs text-slate-500 mt-2">Run the remaining scenarios with <b>Open workspace</b>, using the real sandbox token (FBR_MOCK off).</div>' : '');
+}
+function showClientActivity() {
+  const id = S.manageId;
+  go('a-activity');
+  setTimeout(() => { $('#aAuTenant').value = id; loadAudit('a'); }, 0);
+}
+// Work inside the client's screen (sandbox test invoices). The admin session is kept and restored on exit.
+async function openWorkspace() {
+  try {
+    const d = await api(`/api/admin/clients/${S.manageId}/workspace`, { method: 'POST' });
+    S.adminSession = { token: S.token, role: S.role, company: S.company };
+    Object.assign(S, { token: d.token, role: 'CLIENT_USER', company: d.companyName });
+    clientReady = false;
+    saveSession(); show();
+  } catch (err) { toast(err.message); }
+}
+function exitWorkspace() {
+  if (!S.adminSession) return;
+  Object.assign(S, S.adminSession); S.adminSession = null;
+  saveSession(); show();
+}
+
+async function loadEgressIp() {
+  $('#egressIp').textContent = 'checking…';
+  try {
+    const d = await api('/api/admin/egress-ip');
+    $('#egressIp').textContent = `${d.ip} ${d.viaProxy ? '(via static proxy)' : '(no proxy — this IP may change on Render/Vercel)'}`;
+  } catch (err) { $('#egressIp').textContent = '—'; toast(err.message); }
+}
+$('#clientForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    await api('/api/admin/clients', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+    e.target.reset(); toast('Client created', true); loadClients();
+  } catch (err) { toast(err.message); }
+});
+
+/* ---------- Activity log (client: prefix c, admin: prefix a) ---------- */
+const AU_COLORS = { 'auth.login_failed': 'text-red-700', 'invoice.failed': 'text-red-700', 'invoice.uncertain': 'text-orange-700', 'invoice.cancel': 'text-slate-500', 'invoice.submitted': 'text-emerald-700' };
+function auditQuery(prefix) {
+  const p = new URLSearchParams();
+  const v = id => $('#' + prefix + id)?.value || '';
+  if (v('AuAction')) p.set('action', v('AuAction'));
+  if (v('AuMonth')) p.set('month', v('AuMonth'));
+  if (v('AuQ')) p.set('q', v('AuQ'));
+  if (prefix === 'a' && v('AuTenant')) p.set('tenantId', v('AuTenant'));
+  return p;
+}
+const auditUrl = () => '/api/admin/audit'; // the activity log is admin-only
+async function loadAudit(prefix, more = false) {
+  const p = auditQuery(prefix);
+  const rowsEl = $('#' + prefix + 'AuRows');
+  if (more && S['au' + prefix]) p.set('before', S['au' + prefix]);
+  try {
+    const d = await api(auditUrl(prefix) + '?' + p);
+    const html = d.entries.map(e => `<tr class="border-b last:border-0 align-top">
+      <td class="py-1 whitespace-nowrap">${new Date(e.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
+      <td>${esc(e.userEmail)}${e.ip ? `<div class="text-slate-400">${esc(e.ip)}</div>` : ''}</td>
+      <td class="font-mono ${AU_COLORS[e.action] || ''}">${esc(e.action)}</td>
+      <td>${esc(e.summary)}${e.details && e.action === 'settings.update' ? `<div class="text-slate-500">${Object.entries(e.details).map(([k, [a, b]]) => `${esc(k)}: ${esc(a || '—')} → ${esc(b || '—')}`).join('<br>')}</div>` : ''}</td></tr>`).join('');
+    rowsEl.innerHTML = more ? rowsEl.innerHTML + html : (html || '<tr><td colspan="4" class="py-2 text-slate-500">No activity found.</td></tr>');
+    S['au' + prefix] = d.entries.length ? d.entries[d.entries.length - 1].createdAt : null;
+    $('#' + prefix + 'AuMore').classList.toggle('hidden', !d.more);
+  } catch (err) { toast(err.message); }
+}
+async function exportAudit(prefix) {
+  const p = auditQuery(prefix); p.set('format', 'csv');
+  try {
+    const res = await fetch(auditUrl(prefix) + '?' + p, { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Download failed');
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: `activity-log${p.get('month') ? '-' + p.get('month') : ''}.csv` });
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (err) { toast(err.message); }
+}
+function setupAudit(prefix) { // kept for compatibility; the activity page loads on open
+  return;
+  const box = $('#' + prefix + 'AuditBox');
+  if (box.dataset.ready) return;
+  box.dataset.ready = '1';
+  box.addEventListener('toggle', () => { if (box.open) loadAudit(prefix); });
+}
+
+/* ---------- Client ---------- */
+let clientReady = false;
+async function initClient() {
+  try {
+    if (!S.meta) S.meta = await api('/api/meta');
+    S.settings = await api('/api/client/settings');
+    await loadLists();
+    if (!clientReady) setupInvoiceForm();
+    clientReady = true;
+    applyEnv();
+    route();
+  } catch (err) { toast(err.message); }
+}
+
+async function loadLists() {
+  // Live FBR reference data if the token works, otherwise built-in lists
+  const [prov, uom] = await Promise.all([api('/api/ref/provinces').catch(() => ({})), api('/api/ref/uom').catch(() => ({}))]);
+  S.lists.provinces = prov.data?.map(p => p.stateProvinceDesc) || S.meta.provinces;
+  S.lists.uoms = uom.data?.map(u => u.description) || S.meta.uoms;
+  for (const sel of document.querySelectorAll('select[data-list="provinces"]')) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">— select —</option>' + S.lists.provinces.map(p => `<option>${esc(p)}</option>`).join('');
+    sel.value = cur;
+  }
+}
+
+function fillSettings(s) {
+  const f = $('#settingsForm');
+  for (const k of ['sellerNtnCnic', 'sellerStrn', 'sellerBusinessName', 'sellerAddress', 'fbrEnv', 'furtherTaxRate', 'invoiceNumberFormat', 'softwareRegNo', 'authLetterRef']) f[k].value = s[k] ?? '';
+  f.authLetterAt.value = s.authLetterAt ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date(s.authLetterAt)) : '';
+  // Keep the saved value selectable even if FBR's list spells it differently
+  if (s.sellerProvince && ![...f.sellerProvince.options].some(o => o.value === s.sellerProvince)) {
+    f.sellerProvince.insertAdjacentHTML('beforeend', `<option>${esc(s.sellerProvince)}</option>`);
+  }
+  f.sellerProvince.value = s.sellerProvince || '';
+  f.fbrToken.value = '';
+  if (!$('#bizActs').children.length) {
+    $('#bizActs').innerHTML = S.meta.businessActivities.map(a => `<label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" name="businessActivities" value="${esc(a)}" style="width:auto"> ${esc(a)}</label>`).join('');
+    f.sector.innerHTML = '<option value="">— select —</option>' + S.meta.sectors.map(x => `<option>${esc(x)}</option>`).join('');
+  }
+  for (const cb of f.querySelectorAll('[name=businessActivities]')) cb.checked = (s.businessActivities || []).includes(cb.value);
+  f.sector.value = s.sector || '';
+  $('#tokenMasked').textContent = s.fbrTokenMasked ? `(saved: ${s.fbrTokenMasked})` : '(not set)';
+  const sellerMissing = !s.sellerNtnCnic || !s.sellerBusinessName || !s.sellerProvince || !s.sellerAddress;
+  const tokenMissing = !s.fbrTokenMasked && !S.meta.mock;
+  const missing = sellerMissing || tokenMissing;
+  $('#settingsHint').textContent = sellerMissing && tokenMissing ? 'Complete seller details and token before invoicing'
+    : sellerMissing ? 'Complete seller details before invoicing'
+    : tokenMissing ? 'Add the PRAL token before invoicing' : '';
+}
+
+function applyEnv() {
+  const sandbox = S.settings.fbrEnv === 'SANDBOX';
+  const b = $('#envBadge');
+  b.classList.remove('hidden');
+  b.textContent = (S.meta.mock ? 'MOCK · ' : '') + (sandbox ? 'SANDBOX' : 'PRODUCTION');
+  b.className = `px-2 py-0.5 rounded text-xs font-bold ${sandbox || S.meta.mock ? 'bg-amber-300 text-amber-900' : 'bg-red-600 text-white'}`;
+  // Sandbox scenarios are only for the admin testing in this client's workspace
+  const testing = sandbox && S.settings.workspace;
+  $('#scenarioRow').classList.toggle('hidden', !testing);
+  $('#scenarioSel').required = testing;
+  applySetupBanner();
+}
+function applySetupBanner() {
+  const s = S.settings, ban = $('#setupBanner');
+  let msg = '';
+  if (!s.ready) msg = '<b>Your account is being set up.</b> Your FBR details are not complete yet — please contact your administrator. You can add products and buyers meanwhile.';
+  else if (s.fbrEnv === 'SANDBOX' && !s.workspace) msg = '<b>Your account is being tested with FBR.</b> Invoicing opens as soon as your administrator switches it live. You can add products and buyers meanwhile.';
+  ban.innerHTML = msg;
+  ban.classList.toggle('hidden', !msg);
+  $('#submitBtn').disabled = Boolean(msg);
+  $('#importFile').disabled = Boolean(msg);
+}
+
+$('#settingsForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd);
+  body.businessActivities = fd.getAll('businessActivities');
+  if (!body.fbrToken) delete body.fbrToken;
+  if (body.fbrEnv === 'PRODUCTION' && S.managed.fbrEnv !== 'PRODUCTION' &&
+      !confirm(`Switch ${S.managed.companyName} to PRODUCTION? Their invoices will be filed with FBR for real. Make sure you saved the production token.`)) return;
+  try {
+    S.managed = await api(`/api/admin/clients/${S.manageId}/settings`, { method: 'PUT', body });
+    fillSettings(S.managed);
+    renderChecklist(await api(`/api/admin/clients/${S.manageId}/onboarding`));
+    loadClients();
+    toast('Settings saved', true);
+    if (body.fbrToken) setTimeout(loadHsStats, 30000);
+  } catch (err) { toast(err.message); }
+});
+
+/* ---------- Invoice form ---------- */
+const SALE_TYPES = () => [...new Set(S.meta.scenarios.map(s => s.saleType))];
+
+function itemRow() {
+  const div = document.createElement('div');
+  div.className = 'item border rounded p-3 grid grid-cols-2 sm:grid-cols-6 gap-2 relative';
+  div.innerHTML = `
+    <button type="button" class="absolute top-1 right-2 text-slate-400 hover:text-red-600" title="Remove" onclick="removeItem(this)">✕</button>
+    <label class="col-span-2 relative"><span>HS code</span>
+      <input name="hsCode" class="hs-input" placeholder="Type code or product, e.g. laptop" autocomplete="off" required>
+      <div class="hs-list hidden absolute z-30 left-0 top-full mt-1 w-[34rem] max-w-[85vw] max-h-72 overflow-auto bg-white border rounded shadow-lg text-xs"></div>
+    </label>
+    <label class="col-span-2"><span>Description (what you sell)</span><input name="productDescription" required autocomplete="off" placeholder="Type to search saved products"></label>
+    <label class="col-span-2"><span>Sale type</span><select name="saleType">${SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('')}</select></label>
+    <div class="hs-desc col-span-2 sm:col-span-6 text-xs text-slate-500 -mt-1"></div>
+    <label><span>Qty</span><input name="quantity" type="number" step="0.0001" min="0" value="1" required></label>
+    <label><span>UOM</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
+    <label><span>Unit price</span><input name="unitPrice" type="number" step="0.01" min="0" required></label>
+    <label><span>Rate</span><input name="rate" list="rateList" value="18%" required></label>
+    <label><span>Discount</span><input name="discount" type="number" step="0.01" min="0" value="0"></label>
+    <label title="3rd schedule / notified goods: total retail (or notified) value of the whole line, not per unit. Sales tax is charged on this."><span>Retail value, line total (3rd sch.)</span><input name="fixedNotifiedValueOrRetailPrice" type="number" step="0.01" min="0" value="0"></label>
+    <details class="col-span-2 sm:col-span-6 text-xs">
+      <summary class="cursor-pointer text-slate-500">More: SRO, overrides, extra tax, FED, ST withheld</summary>
+      <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 mt-2">
+        <label><span>SRO / Schedule no.</span><input name="sroScheduleNo" list="sroList" placeholder="e.g. 6th Schedule Table I"></label>
+        <label><span>SRO item serial</span><input name="sroItemSerialNo" placeholder="e.g. 176(i)"></label>
+        <label><span>Sales tax (override)</span><input name="salesTaxApplicable" type="number" step="0.01" min="0" placeholder="auto"></label>
+        <label><span>Further tax (override)</span><input name="furtherTax" type="number" step="0.01" min="0" placeholder="auto"></label>
+        <label><span>Extra tax</span><input name="extraTax" type="number" step="0.01" min="0" value="0"></label>
+        <label><span>FED payable</span><input name="fedPayable" type="number" step="0.01" min="0" value="0"></label>
+        <label><span>ST withheld at source</span><input name="salesTaxWithheldAtSource" type="number" step="0.01" min="0" value="0"></label>
+      </div>
+    </details>
+    <div class="col-span-2 sm:col-span-6 flex flex-wrap items-center justify-between gap-2">
+      <div class="text-xs text-slate-600 line-calc"></div>
+      <button type="button" class="save-product text-xs text-emerald-700 hover:underline">★ Save as product</button>
+    </div>`;
+  return div;
+}
+
+function addItem() {
+  const row = itemRow();
+  const sc = S.meta.scenarios.find(s => s.id === $('#scenarioSel').value);
+  if (sc) row.querySelector('[name=saleType]').value = sc.saleType;
+  $('#items').appendChild(row);
+  recalc();
+}
+function removeItem(btn) {
+  if ($('#items').children.length > 1) btn.closest('.item').remove();
+  recalc();
+}
+
+function readItems() {
+  return [...document.querySelectorAll('#items .item')].map(row => {
+    const o = {};
+    for (const el of row.querySelectorAll('input, select')) o[el.name] = el.value;
+    return o;
+  });
+}
+
+// Mirrors src/tax.js for the live preview; the server recalculates and is authoritative
+const NO_FT = new Set(['3rd Schedule Goods', 'Exempt Goods', 'Goods at zero-rate']);
+function recalc() {
+  // Further tax: unregistered business buyers, and registered buyers not active with FBR (non-ATL); never end consumers
+  const f0 = $('#invoiceForm'), regd = $('#buyerType').value === 'Registered';
+  const unreg = regd ? f0.buyerNonAtl.checked : !f0.endConsumer.checked;
+  const ftRate = Number(S.settings?.furtherTaxRate || 0);
+  const t = { excl: 0, st: 0, ft: 0, total: 0 };
+  const items = readItems();
+  document.querySelectorAll('#items .item').forEach((row, i) => {
+    const it = items[i];
+    const pct = Number((String(it.rate).match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
+    const excl = r2(Number(it.quantity || 0) * Number(it.unitPrice || 0) - Number(it.discount || 0));
+    const base = Number(it.fixedNotifiedValueOrRetailPrice) > 0 ? Number(it.fixedNotifiedValueOrRetailPrice) : excl;
+    const st = it.salesTaxApplicable !== '' ? r2(it.salesTaxApplicable) : r2(base * pct / 100);
+    const ft = it.furtherTax !== '' ? r2(it.furtherTax) : (unreg && pct > 0 && !NO_FT.has(it.saleType) ? r2(excl * ftRate / 100) : 0);
+    const total = r2(excl + st + ft + Number(it.extraTax || 0) + Number(it.fedPayable || 0));
+    const sroMissing = SRO_SALE_TYPES.has(it.saleType) && (!it.sroScheduleNo || !it.sroItemSerialNo);
+    row.querySelector('.line-calc').innerHTML = esc(`Excl. ST ${money(excl)} · ST ${money(st)} · Further ${money(ft)} · Line total ${money(total)}`)
+      + (sroMissing ? ' <span class="text-red-700">· needs SRO / Schedule no. and item serial (under More)</span>' : '');
+    t.excl += excl; t.st += st; t.ft += ft; t.total += total;
+  });
+  $('#tExcl').textContent = money(t.excl); $('#tST').textContent = money(t.st);
+  $('#tFT').textContent = money(t.ft); $('#tTotal').textContent = money(t.total);
+  // CNIC/NTN: always for B2B (registered, or unregistered business); for consumers above Rs 100,000
+  const limit = S.settings?.cnicRequiredAbove || 100000;
+  const needNtn = regd || !f0.endConsumer.checked || t.total > limit;
+  $('#ntnReq').classList.toggle('hidden', !needNtn);
+  $('#ntnReq').title = !regd && f0.endConsumer.checked ? `Required above Rs ${limit.toLocaleString('en-PK')}` : 'Required';
+}
+const SRO_SALE_TYPES = new Set(['Exempt Goods', 'Goods at Reduced Rate', 'Goods as per SRO.297(|)/2023']);
+
+// Ask FBR whether the buyer is registered and active (ATL); sets buyer type and the non-ATL tick
+async function checkBuyerFbr() {
+  const f = $('#invoiceForm'), out = $('#buyerCheck');
+  const ntn = f.buyerNtnCnic.value.replace(/\D/g, '');
+  if (![7, 9, 13].includes(ntn.length)) { out.className = 'text-red-700'; out.textContent = 'Enter a 7/9-digit NTN or 13-digit CNIC first'; return; }
+  out.className = 'text-slate-500'; out.textContent = 'Checking…';
+  try {
+    const r = await api('/api/buyers/check?ntn=' + ntn);
+    if (!r.live) { out.className = 'text-slate-500'; out.textContent = S.meta.mock ? 'Not checked (mock mode)' : 'FBR did not answer — set the buyer type yourself'; return; }
+    const parts = [r.registrationType || 'registration unknown', r.active === true ? 'Active (ATL)' : r.active === false ? 'Not active' : 'ATL unknown'];
+    out.className = r.registrationType === 'Registered' && r.active !== false ? 'text-emerald-700' : 'text-amber-700';
+    out.textContent = 'FBR: ' + parts.join(' · ');
+    if (r.registrationType) { f.buyerRegistrationType.value = r.registrationType; f.buyerRegistrationType.dispatchEvent(new Event('change')); }
+    if (r.registrationType === 'Unregistered') f.endConsumer.checked = false; // has an NTN/CNIC on record → business buyer
+    if (r.registrationType === 'Registered') f.buyerNonAtl.checked = r.active === false;
+    recalc();
+  } catch (err) { out.className = 'text-red-700'; out.textContent = err.message; }
+}
+
+function setupInvoiceForm() {
+  document.body.insertAdjacentHTML('beforeend',
+    `<datalist id="uomList">${S.lists.uoms.map(u => `<option value="${esc(u)}">`).join('')}</datalist>
+     <datalist id="rateList">${S.meta.rates.map(r => `<option value="${esc(r)}">`).join('')}</datalist>
+     <datalist id="sroList"><option value="6th Schedule Table I"><option value="6th Schedule Table II"><option value="8th Schedule Table 1"><option value="5th Schedule"><option value="SRO 297(I)/2023"></datalist>`);
+  $('#scenarioSel').innerHTML = '<option value="">— select scenario —</option>' +
+    S.meta.scenarios.map(s => `<option value="${s.id}">${s.id} — ${esc(s.desc)}</option>`).join('');
+  $('#scenarioSel').addEventListener('change', e => {
+    const sc = S.meta.scenarios.find(s => s.id === e.target.value);
+    if (!sc) return;
+    document.querySelectorAll('#items [name=saleType]').forEach(sel => sel.value = sc.saleType);
+    if (sc.buyer) { $('#buyerType').value = sc.buyer; $('#buyerType').dispatchEvent(new Event('change')); }
+    if (sc.endConsumer !== undefined) $('#invoiceForm').endConsumer.checked = sc.endConsumer;
+    recalc();
+  });
+  $('#buyerType').addEventListener('change', () => {
+    const reg = $('#buyerType').value === 'Registered';
+    $('#endConsumerWrap').classList.toggle('hidden', reg);
+    $('#nonAtlWrap').classList.toggle('hidden', !reg);
+    if (!reg) $('#invoiceForm').buyerNonAtl.checked = false;
+    recalc();
+  });
+  $('#invoiceForm').reason.innerHTML = '<option value="">— select reason —</option>' + S.meta.debitReasons.map(r => `<option>${esc(r)}</option>`).join('');
+  $('#invoiceType').addEventListener('change', applyDocType);
+  $('#invoiceForm').reason.addEventListener('change', () => $('#remarksReq').classList.toggle('hidden', $('#invoiceForm').reason.value !== 'Others'));
+  setupHsSearch();
+  setupSaved();
+  setupSavedForms();
+  setupImport();
+  $('#invoiceForm').addEventListener('input', recalc);
+  $('#invoiceForm').addEventListener('change', recalc);
+  $('#invoiceForm').invoiceDate.value = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
+  addItem();
+
+  $('#invoiceForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = e.target, btn = $('#submitBtn');
+    const body = {
+      invoiceType: f.invoiceType.value, invoiceDate: f.invoiceDate.value, invoiceRefNo: f.invoiceRefNo.value,
+      reason: f.reason.value, reasonRemarks: f.reasonRemarks.value,
+      scenarioId: f.scenarioId.value, buyerRegistrationType: f.buyerRegistrationType.value,
+      endConsumer: f.buyerRegistrationType.value === 'Unregistered' && f.endConsumer.checked,
+      buyerNonAtl: f.buyerRegistrationType.value === 'Registered' && f.buyerNonAtl.checked,
+      buyerNtnCnic: f.buyerNtnCnic.value, buyerBusinessName: f.buyerBusinessName.value,
+      buyerProvince: f.buyerProvince.value, buyerAddress: f.buyerAddress.value, items: readItems(),
+      clientRequestId: formRequestId,
+    };
+    btn.disabled = true; btn.textContent = 'Sending to FBR…';
+    try {
+      const d = await api('/api/invoices', { method: 'POST', body });
+      // An invoice now exists for this id (filed or not); the next submit is a new invoice.
+      // If the request never got a reply we keep the id, so resending can't create a duplicate.
+      formRequestId = newRequestId();
+      if (d.duplicate) toast(`This invoice was already sent (#${d.invoice.localNo}). Showing it instead of sending again.`, true);
+      handleResult(d, !d.duplicate);
+      if (d.invoice.status === 'SUBMITTED') resetForm();
+    } catch (err) { toast(err.message); }
+    finally { btn.disabled = false; btn.textContent = 'Submit to FBR'; }
+  });
+}
+
+// One id per invoice form; the server returns the existing invoice if the same id arrives twice
+function newRequestId() {
+  try { return crypto.randomUUID(); } catch { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12); }
+}
+let formRequestId = newRequestId();
+
+function applyDocType() {
+  const debit = $('#invoiceType').value === 'Debit Note';
+  $('#refNoWrap').classList.toggle('hidden', !debit);
+  document.querySelectorAll('.debit-only').forEach(el => el.classList.toggle('hidden', !debit));
+  $('#invoiceForm').invoiceRefNo.required = debit;
+  $('#invoiceForm').reason.required = debit;
+}
+
+// Prefill the form as a debit note against a filed sale invoice
+async function startDebitNote(id) {
+  try {
+    const { invoice: inv } = await api('/api/invoices/' + id);
+    const f = $('#invoiceForm');
+    f.invoiceType.value = 'Debit Note'; applyDocType();
+    f.invoiceRefNo.value = inv.fbrInvoiceNumber;
+    f.reason.value = ''; f.reasonRemarks.value = '';
+    f.invoiceDate.value = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
+    fillBuyer({ businessName: inv.buyerBusinessName, ntnCnic: inv.buyerNtnCnic, registrationType: inv.buyerRegistrationType, province: inv.buyerProvince, address: inv.buyerAddress, endConsumer: inv.endConsumer });
+    $('#items').innerHTML = '';
+    for (const it of inv.items) {
+      addItem();
+      const row = $('#items').lastElementChild;
+      const st = row.querySelector('[name=saleType]');
+      if (![...st.options].some(o => o.value === it.saleType)) st.insertAdjacentHTML('beforeend', `<option>${esc(it.saleType)}</option>`);
+      for (const k of ['hsCode', 'productDescription', 'uoM', 'rate', 'saleType', 'sroScheduleNo', 'sroItemSerialNo'])
+        row.querySelector(`[name=${k}]`).value = it[k] ?? '';
+      for (const k of ['quantity', 'unitPrice', 'discount', 'fixedNotifiedValueOrRetailPrice', 'extraTax', 'fedPayable', 'salesTaxWithheldAtSource'])
+        row.querySelector(`[name=${k}]`).value = Number(it[k] ?? 0);
+      row.querySelector('.hs-desc').textContent = `From original invoice #${inv.localNo}`;
+    }
+    formRequestId = newRequestId();
+    recalc();
+    $('#invoiceForm').scrollIntoView({ behavior: 'smooth' });
+    toast(`Debit note against invoice #${inv.localNo}: choose the reason, then change quantities/values to the amount being adjusted.`, true);
+  } catch (err) { toast(err.message); }
+}
+
+function resetForm() {
+  const f = $('#invoiceForm');
+  for (const n of ['buyerNtnCnic', 'buyerBusinessName', 'buyerAddress', 'invoiceRefNo', 'reasonRemarks']) f[n].value = '';
+  f.invoiceType.value = 'Sale Invoice'; f.reason.value = ''; applyDocType();
+  f.buyerRegistrationType.value = 'Unregistered'; f.endConsumer.checked = true;
+  f.buyerRegistrationType.dispatchEvent(new Event('change'));
+  $('#items').innerHTML = ''; addItem();
+  formRequestId = newRequestId();
+}
+
+function handleResult(d, announce = true) {
+  loadInvoices();
+  if (d.invoice.status === 'SUBMITTED') {
+    if (announce) toast(`Filed with FBR: ${d.invoice.fbrInvoiceNumber}`, true);
+    renderReceipt(d.invoice, d.seller);
+  } else if (d.invoice.status === 'QUEUED') {
+    toast(`FBR is not reachable right now. Invoice #${d.invoice.localNo} is queued and will be sent automatically.`);
+  } else if (d.invoice.status === 'UNCERTAIN') {
+    toast(`Invoice #${d.invoice.localNo}: connection to FBR broke after sending — it may already be filed. Check IRIS, then use the buttons in Recent invoices.`);
+  } else if (announce) {
+    toast(`FBR rejected invoice #${d.invoice.localNo}: ${d.invoice.errorMessage}`);
+  }
+}
+
+/* ---------- HS code search ---------- */
+async function loadHsStats() {
+  try {
+    const st = await api('/api/hs/stats');
+    const fbrN = st.FBR?.count || 0, pctN = st['PCT-2017']?.count || 0;
+    $('#hsStats').textContent = fbrN
+      ? `${fbrN.toLocaleString()} from FBR (synced ${new Date(st.FBR.updatedAt).toLocaleDateString()})` + (pctN ? ` + ${pctN.toLocaleString()} older PCT-2017` : '')
+      : `${pctN.toLocaleString()} from PCT 2017 list (not yet synced with FBR)`;
+  } catch { $('#hsStats').textContent = '—'; }
+}
+async function syncHs() {
+  const btn = $('#hsSyncBtn'); btn.disabled = true; btn.textContent = 'Syncing… (can take a minute)';
+  try { const d = await api(`/api/admin/clients/${S.manageId}/hs-sync`, { method: 'POST' }); toast(`Synced ${d.synced.toLocaleString()} HS codes from FBR`, true); loadHsStats(); }
+  catch (err) { toast(err.message); }
+  finally { btn.disabled = false; btn.textContent = 'Sync HS codes from FBR'; }
+}
+
+let hsTimer;
+async function hsSuggest(inp) {
+  const box = inp.parentElement.querySelector('.hs-list');
+  const q = inp.value.trim();
+  if (q.length < 2) return box.classList.add('hidden');
+  const rows = await api('/api/hs?q=' + encodeURIComponent(q)).catch(() => []);
+  if (inp.value.trim() !== q) return; // user kept typing
+  box.innerHTML = rows.length
+    ? rows.map(r => `<button type="button" class="hs-opt block w-full text-left px-3 py-2 hover:bg-emerald-50 border-b last:border-0"
+        data-code="${esc(r.code)}" data-desc="${esc(r.description)}">
+        <span class="font-mono font-semibold">${esc(r.code)}</span>
+        ${r.source === 'FBR' ? '<span class="ml-1 text-emerald-700 font-semibold">FBR</span>' : '<span class="ml-1 text-slate-400">PCT 2017</span>'}
+        <div class="text-slate-600">${esc(r.description)}</div></button>`).join('')
+    : '<div class="px-3 py-2 text-slate-500">No matching HS code</div>';
+  box.classList.remove('hidden');
+}
+// "Milk and cream › … › Yogurt" -> "Yogurt"; "Men's shirts › Of cotton › Other" -> "Of cotton (other)"
+function shortHsDesc(desc) {
+  const parts = desc.split(' › ').map(s => s.trim()).filter(Boolean);
+  const generic = s => /^(other|others|other than .*)$/i.test(s);
+  let i = parts.length - 1;
+  while (i > 0 && generic(parts[i])) i--;
+  const text = i < parts.length - 1 ? `${parts[i]} (other)` : parts[i];
+  return text.length > 150 ? text.slice(0, 147).replace(/\s+\S*$/, '') + '…' : text;
+}
+async function pickHs(row, code, desc) {
+  row.querySelector('[name=hsCode]').value = code;
+  row.querySelector('.hs-list').classList.add('hidden');
+  row.querySelector('.hs-desc').textContent = desc;
+  // Fill "what you sell" unless the user typed their own text
+  const pd = row.querySelector('[name=productDescription]');
+  if (!pd.value.trim() || pd.dataset.auto === '1') { pd.value = shortHsDesc(desc); pd.dataset.auto = '1'; }
+  // FBR rejects a UOM that doesn't belong to the HS code; use its list when the token works
+  const u = await api('/api/hs/' + encodeURIComponent(code) + '/uom').catch(() => null);
+  const uom = row.querySelector('[name=uoM]');
+  if (u?.data?.length) {
+    if (!u.data.includes(uom.value)) uom.value = u.data[0];
+    uom.title = 'FBR accepts for this HS code: ' + u.data.join(', ');
+  }
+  recalc();
+}
+function setupHsSearch() {
+  const items = $('#items');
+  items.addEventListener('input', e => {
+    if (e.target.name === 'productDescription') e.target.dataset.auto = ''; // typed by the user: don't overwrite on next pick
+    if (!e.target.matches('.hs-input')) return;
+    e.target.closest('.item').querySelector('.hs-desc').textContent = '';
+    clearTimeout(hsTimer);
+    hsTimer = setTimeout(() => hsSuggest(e.target), 250);
+  });
+  items.addEventListener('mousedown', e => {
+    const opt = e.target.closest('.hs-opt');
+    if (!opt) return;
+    e.preventDefault(); // keep focus so the list doesn't close before the pick
+    pickHs(opt.closest('.item'), opt.dataset.code, opt.dataset.desc);
+  });
+  items.addEventListener('focusout', e => {
+    if (e.target.matches('.hs-input')) setTimeout(() => e.target.parentElement.querySelector('.hs-list').classList.add('hidden'), 150);
+  });
+}
+
+/* ---------- Saved products & buyers ---------- */
+// Small dropdown under an input; rows are rendered by `render`, `onPick` gets the chosen row
+function suggest(input, rows, render, onPick) {
+  const host = input.parentElement;
+  let box = host.querySelector(':scope > .sg-list');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'sg-list hidden absolute z-30 left-0 top-full mt-1 w-[30rem] max-w-[85vw] max-h-72 overflow-auto bg-white border rounded shadow-lg text-xs';
+    host.classList.add('relative');
+    host.appendChild(box);
+  }
+  if (!rows.length) return box.classList.add('hidden');
+  box.innerHTML = rows.map((r, i) => `<button type="button" class="sg-opt block w-full text-left px-3 py-2 hover:bg-emerald-50 border-b last:border-0" data-i="${i}">${render(r)}</button>`).join('');
+  box._rows = rows; box._pick = onPick;
+  box.classList.remove('hidden');
+}
+document.addEventListener('mousedown', e => {
+  const opt = e.target.closest('.sg-opt');
+  if (!opt) return;
+  e.preventDefault();
+  const box = opt.closest('.sg-list');
+  box.classList.add('hidden');
+  box._pick(box._rows[Number(opt.dataset.i)]);
+});
+document.addEventListener('focusout', e => {
+  const box = e.target.parentElement?.querySelector(':scope > .sg-list');
+  if (box) setTimeout(() => box.classList.add('hidden'), 150);
+});
+const sgTimers = new WeakMap();
+function debounced(input, fn) {
+  clearTimeout(sgTimers.get(input));
+  sgTimers.set(input, setTimeout(fn, 250));
+}
+
+function fillRowFromProduct(row, p) {
+  const set = (n, v) => { const el = row.querySelector(`[name=${n}]`); if (el && v != null && v !== '') el.value = v; };
+  const st = row.querySelector('[name=saleType]');
+  if (p.saleType && ![...st.options].some(o => o.value === p.saleType)) st.insertAdjacentHTML('beforeend', `<option>${esc(p.saleType)}</option>`);
+  set('productDescription', p.name); set('hsCode', p.hsCode); set('uoM', p.uoM); set('rate', p.rate); set('saleType', p.saleType);
+  if (p.unitPrice != null) set('unitPrice', Number(p.unitPrice));
+  set('sroScheduleNo', p.sroScheduleNo); set('sroItemSerialNo', p.sroItemSerialNo);
+  row.querySelector('[name=productDescription]').dataset.auto = '';
+  row.querySelector('.hs-desc').textContent = 'From saved product';
+  recalc();
+}
+
+function fillBuyer(b) {
+  const f = $('#invoiceForm');
+  f.buyerBusinessName.value = b.businessName;
+  f.buyerNtnCnic.value = b.ntnCnic || '';
+  f.buyerRegistrationType.value = b.registrationType;
+  f.buyerRegistrationType.dispatchEvent(new Event('change'));
+  f.endConsumer.checked = b.endConsumer ?? false; // saved buyers are businesses
+  if (b.province) {
+    if (![...f.buyerProvince.options].some(o => o.value === b.province)) f.buyerProvince.insertAdjacentHTML('beforeend', `<option>${esc(b.province)}</option>`);
+    f.buyerProvince.value = b.province;
+  }
+  f.buyerAddress.value = b.address || '';
+  recalc();
+}
+
+async function saveRowAsProduct(row) {
+  const it = {};
+  for (const el of row.querySelectorAll('input, select')) it[el.name] = el.value;
+  try {
+    const p = await api('/api/products', { method: 'POST', body: {
+      name: it.productDescription, hsCode: it.hsCode, uoM: it.uoM, rate: it.rate, saleType: it.saleType,
+      unitPrice: it.unitPrice, sroScheduleNo: it.sroScheduleNo, sroItemSerialNo: it.sroItemSerialNo,
+    } });
+    toast(`Saved product "${p.name}"`, true);
+    loadSaved();
+  } catch (err) { toast(err.message); }
+}
+
+function setupSaved() {
+  const f = $('#invoiceForm');
+  // Products: search while typing the item description
+  $('#items').addEventListener('input', e => {
+    const inp = e.target;
+    if (inp.name !== 'productDescription' || inp.value.trim().length < 2) return;
+    debounced(inp, async () => {
+      const rows = await api('/api/products?q=' + encodeURIComponent(inp.value.trim())).catch(() => []);
+      suggest(inp, rows,
+        p => `<b>${esc(p.name)}</b> <span class="font-mono text-slate-500">${esc(p.hsCode)}</span> · ${esc(p.rate)} · ${esc(p.uoM)}${p.unitPrice != null ? ' · Rs ' + money(p.unitPrice) : ''}`,
+        p => fillRowFromProduct(inp.closest('.item'), p));
+    });
+  });
+  $('#items').addEventListener('click', e => {
+    const btn = e.target.closest('.save-product');
+    if (btn) saveRowAsProduct(btn.closest('.item'));
+  });
+  // Buyers: search by name or NTN
+  for (const name of ['buyerBusinessName', 'buyerNtnCnic']) {
+    const inp = f[name];
+    inp.addEventListener('input', () => {
+      const q = inp.value.trim();
+      if (q.length < (name === 'buyerNtnCnic' ? 3 : 2)) return;
+      debounced(inp, async () => {
+        const rows = await api('/api/buyers?q=' + encodeURIComponent(q)).catch(() => []);
+        suggest(inp, rows,
+          b => `<b>${esc(b.businessName)}</b> <span class="font-mono text-slate-500">${esc(b.ntnCnic || '')}</span> · ${esc(b.registrationType)}${b.province ? ' · ' + esc(b.province) : ''}`,
+          fillBuyer);
+      });
+    });
+  }
+
+}
+
+async function loadSaved() {
+  try {
+    const [products, buyers] = await Promise.all([api('/api/products'), api('/api/buyers')]);
+    S.saved = { products, buyers };
+    $('#productRows').innerHTML = products.map(p => `<tr class="border-b last:border-0">
+      <td class="py-1">${esc(p.name)}</td><td class="font-mono text-xs">${esc(p.hsCode)}</td><td>${esc(p.rate)}</td><td class="text-xs">${esc(p.uoM)}</td>
+      <td class="text-right">${p.unitPrice != null ? money(p.unitPrice) : ''}</td>
+      <td class="text-right whitespace-nowrap"><button class="text-emerald-700 text-xs mr-2" onclick="editProduct('${p.id}')">Edit</button><button class="text-red-600 text-xs" onclick="deleteSaved('products','${p.id}')">Delete</button></td></tr>`).join('')
+      || '<tr><td colspan="6" class="py-2 text-slate-500">No saved products yet.</td></tr>';
+    $('#buyerRows').innerHTML = buyers.map(b => `<tr class="border-b last:border-0">
+      <td class="py-1">${esc(b.businessName)}</td><td class="font-mono text-xs">${esc(b.ntnCnic || '')}</td><td>${esc(b.registrationType)}</td><td class="text-xs">${esc(b.province)}</td>
+      <td class="text-right whitespace-nowrap"><button class="text-emerald-700 text-xs mr-2" onclick="editBuyer('${b.id}')">Edit</button><button class="text-red-600 text-xs" onclick="deleteSaved('buyers','${b.id}')">Delete</button></td></tr>`).join('')
+      || '<tr><td colspan="5" class="py-2 text-slate-500">No saved buyers yet.</td></tr>';
+  } catch (err) { toast(err.message); }
+}
+function setSelect(sel, v) {
+  if (v && ![...sel.options].some(o => o.value === v)) sel.insertAdjacentHTML('beforeend', `<option>${esc(v)}</option>`);
+  sel.value = v || '';
+}
+function clearProductForm() {
+  const f = $('#productForm');
+  f.reset(); f.id.value = '';
+  $('#pfSubmit').textContent = 'Save product'; $('#pfMode').textContent = '';
+}
+function editProduct(id) {
+  const p = S.saved.products.find(x => x.id === id), f = $('#productForm');
+  for (const k of ['id', 'name', 'hsCode', 'uoM', 'rate', 'sroScheduleNo', 'sroItemSerialNo']) f[k].value = p[k] ?? '';
+  f.unitPrice.value = p.unitPrice != null ? Number(p.unitPrice) : '';
+  setSelect(f.saleType, p.saleType);
+  $('#pfSubmit').textContent = 'Update product'; $('#pfMode').textContent = `Editing "${p.name}"`;
+  f.name.focus();
+}
+function clearBuyerForm() {
+  const f = $('#buyerForm');
+  f.reset(); f.id.value = '';
+  $('#bfSubmit').textContent = 'Save buyer'; $('#bfMode').textContent = '';
+}
+function editBuyer(id) {
+  const b = S.saved.buyers.find(x => x.id === id), f = $('#buyerForm');
+  f.id.value = b.id; f.businessName.value = b.businessName; f.ntnCnic.value = b.ntnCnic || '';
+  f.registrationType.value = b.registrationType; f.address.value = b.address || '';
+  setSelect(f.province, b.province);
+  $('#bfSubmit').textContent = 'Update buyer'; $('#bfMode').textContent = `Editing "${b.businessName}"`;
+  f.businessName.focus();
+}
+function setupSavedForms() {
+  const pf = $('#productForm'), bf = $('#buyerForm');
+  $('#pfSaleType').innerHTML = SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('');
+  // HS code search inside the product form
+  pf.hsCode.addEventListener('input', () => {
+    const q = pf.hsCode.value.trim();
+    if (q.length < 2) return;
+    debounced(pf.hsCode, async () => {
+      const rows = await api('/api/hs?q=' + encodeURIComponent(q)).catch(() => []);
+      suggest(pf.hsCode, rows,
+        r => `<span class="font-mono font-semibold">${esc(r.code)}</span> <div class="text-slate-600">${esc(r.description)}</div>`,
+        r => { pf.hsCode.value = r.code; if (!pf.name.value.trim()) pf.name.value = shortHsDesc(r.description); });
+    });
+  });
+  pf.addEventListener('submit', async e => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(pf));
+    if (!body.id) delete body.id;
+    try {
+      const p = await api('/api/products', { method: 'POST', body });
+      toast(`${body.id ? 'Updated' : 'Saved'} product "${p.name}"`, true);
+      clearProductForm(); loadSaved();
+    } catch (err) { toast(err.message); }
+  });
+  bf.addEventListener('submit', async e => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(bf));
+    if (!body.id) delete body.id;
+    try {
+      const b = await api('/api/buyers', { method: 'POST', body });
+      toast(`${body.id ? 'Updated' : 'Saved'} buyer "${b.businessName}"`, true);
+      clearBuyerForm(); loadSaved();
+    } catch (err) { toast(err.message); }
+  });
+}
+
+async function deleteSaved(kind, id) {
+  if (!confirm('Delete this saved ' + (kind === 'products' ? 'product' : 'buyer') + '? Past invoices are not affected.')) return;
+  try { await api(`/api/${kind}/${id}`, { method: 'DELETE' }); loadSaved(); } catch (err) { toast(err.message); }
+}
+
+/* ---------- Bulk import ---------- */
+let importRows = null, importFileName = '';
+function loadSheetJs() {
+  if (window.XLSX) return Promise.resolve();
+  return new Promise((ok, fail) => {
+    const sc = Object.assign(document.createElement('script'), { src: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js', onload: ok, onerror: () => fail(new Error('Could not load the Excel reader')) });
+    document.head.appendChild(sc);
+  });
+}
+async function downloadTemplate() {
+  try {
+    const res = await fetch('/api/import/template', { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!res.ok) throw new Error('Download failed');
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: 'invoice-import-template.csv' });
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (err) { toast(err.message); }
+}
+// Read the first sheet into [{header: value}]. CSV is read as plain text so 05-09-2025 stays day-first.
+// Excel: real cell values (not the formatted text, which can cut 246.1017 to 246); dates become YYYY-MM-DD.
+async function readSheet(file) {
+  await loadSheetJs();
+  const csv = /\.csv$/i.test(file.name);
+  const wb = csv
+    ? XLSX.read(await file.text(), { type: 'string', raw: true })
+    : XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: !csv });
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return rows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v instanceof Date ? ymd(v) : v])));
+}
+const IMPORT_BADGE = { ok: 'bg-emerald-100 text-emerald-800', error: 'bg-red-100 text-red-800', duplicate: 'bg-slate-200 text-slate-600' };
+function renderImportPreview(d) {
+  const t = d.totals;
+  $('#importPreview').innerHTML = `
+    <div class="grid grid-cols-2 sm:grid-cols-6 gap-3 bg-slate-50 rounded p-3">
+      <div>Invoices in file<div class="font-semibold">${d.invoices}</div></div>
+      <div>Ready to send<div class="font-semibold text-emerald-700">${d.ok}</div></div>
+      <div>With errors<div class="font-semibold ${d.errors ? 'text-red-700' : ''}">${d.errors}</div></div>
+      <div>Already imported<div class="font-semibold">${d.duplicates}</div></div>
+      <div>Sales tax (ready)<div class="font-semibold">${money(t.totalST)}</div></div>
+      <div>Total (ready)<div class="font-semibold text-emerald-700">${money(t.totalAmount)}</div></div>
+    </div>
+    ${d.unknownHeaders.length ? `<div class="text-xs text-amber-800 mt-2">Ignored columns (not recognised): ${d.unknownHeaders.map(esc).join(', ')}</div>` : ''}
+    <div class="overflow-x-auto mt-3 max-h-80 overflow-y-auto"><table class="w-full text-xs">
+      <thead class="text-left text-slate-500 border-b sticky top-0 bg-white"><tr><th class="py-1">Ref</th><th>Rows</th><th>Date</th><th>Buyer</th><th class="text-right">Lines</th><th class="text-right">Total</th><th>Status</th></tr></thead>
+      <tbody>${d.list.map(r => `<tr class="border-b last:border-0 align-top">
+        <td class="py-1 font-mono">${esc(r.ref || '—')}</td><td>${r.rows.length > 1 ? r.rows[0] + '–' + r.rows[r.rows.length - 1] : r.rows[0]}</td>
+        <td>${esc(r.date || '')}</td><td>${esc(r.buyer)}</td><td class="text-right">${r.lines}</td><td class="text-right">${r.total != null ? money(r.total) : ''}</td>
+        <td><span class="px-1.5 py-0.5 rounded ${IMPORT_BADGE[r.status]}">${r.status === 'ok' ? 'Ready' : r.status === 'duplicate' ? 'Already imported' : 'Error'}</span>
+          ${r.errors.map(e => `<div class="text-red-700">${esc(e)}</div>`).join('')}${r.note ? `<div class="text-slate-500">${esc(r.note)}</div>` : ''}</td></tr>`).join('')}</tbody>
+    </table></div>
+    <div class="flex flex-wrap items-center gap-3 mt-3">
+      ${d.ok ? `<button type="button" id="importSend" onclick="commitImport(${d.errors > 0})" class="bg-emerald-700 text-white rounded px-3 py-1.5">Send ${d.ok} invoice${d.ok > 1 ? 's' : ''} to FBR</button>` : ''}
+      ${d.errors ? `<span class="text-xs text-red-700">${d.ok ? 'Invoices with errors will be skipped — fix them in the file and import again later.' : 'Fix the errors in the file and choose it again.'}</span>` : ''}
+      <button type="button" onclick="clearImport()" class="text-xs text-slate-600 underline">Cancel</button>
+    </div>`;
+}
+function clearImport() { importRows = null; $('#importPreview').innerHTML = ''; $('#importFileName').textContent = ''; $('#importFile').value = ''; }
+async function commitImport(skipInvalid) {
+  if (skipInvalid && !confirm('Some invoices have errors and will be skipped. Send the valid ones now?')) return;
+  const btn = $('#importSend'); btn.disabled = true; btn.textContent = 'Queuing…';
+  try {
+    const d = await api('/api/import/commit', { method: 'POST', body: { rows: importRows, fileName: importFileName, skipInvalid } });
+    toast(`${d.queued} invoice(s) queued — they are being sent to FBR one by one${d.skipped ? `; ${d.skipped} already imported were skipped` : ''}.`, true);
+    clearImport(); loadBatches(); loadInvoices();
+  } catch (err) { toast(err.message); btn.disabled = false; btn.textContent = 'Send to FBR'; }
+}
+async function loadBatches() {
+  try {
+    const list = await api('/api/import/batches');
+    const active = list.some(b => (b.counts.QUEUED || 0) + (b.counts.SUBMITTING || 0) > 0);
+    $('#importBatches').innerHTML = list.length ? `<h3 class="font-medium mt-2 mb-1">Recent imports</h3>` + list.map(b => {
+      const c = b.counts, filed = c.SUBMITTED || 0, done = filed + (c.FAILED || 0) + (c.UNCERTAIN || 0) + (c.CANCELLED || 0);
+      const pct = b.invoiceCount ? Math.round(done / b.invoiceCount * 100) : 100;
+      const pill = (n, label, cls) => n ? `<span class="px-1.5 py-0.5 rounded ${cls}">${n} ${label}</span>` : '';
+      return `<div class="border rounded p-2 mb-2">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div><span class="font-medium">${esc(b.fileName)}</span> <span class="text-xs text-slate-500">${new Date(b.createdAt).toLocaleString('en-PK')} · ${b.invoiceCount} invoices${b.skipped ? ` · ${b.skipped} skipped (already imported)` : ''}</span></div>
+          <div class="flex flex-wrap gap-1 text-xs">${pill(c.QUEUED, 'waiting', BADGE.QUEUED)}${pill(c.SUBMITTING, 'sending', BADGE.SUBMITTING)}${pill(filed, 'filed', BADGE.SUBMITTED)}${pill(c.FAILED, 'failed', BADGE.FAILED)}${pill(c.UNCERTAIN, 'check IRIS', BADGE.UNCERTAIN)}
+            <button class="text-emerald-700 underline ml-1" onclick="toggleBatch('${b.id}')">Details</button></div>
+        </div>
+        <div class="h-1.5 bg-slate-100 rounded mt-2"><div class="h-1.5 rounded ${c.FAILED || c.UNCERTAIN ? 'bg-amber-500' : 'bg-emerald-600'}" style="width:${pct}%"></div></div>
+        <div id="batch-${b.id}" class="hidden mt-2"></div></div>`;
+    }).join('') : '';
+    clearTimeout(S.batchTimer);
+    if (active) S.batchTimer = setTimeout(() => { loadBatches(); loadInvoices(); }, 4000);
+  } catch (err) { toast(err.message); }
+}
+async function toggleBatch(id) {
+  const box = $('#batch-' + id);
+  if (!box.classList.contains('hidden')) return box.classList.add('hidden');
+  try {
+    const { invoices } = await api('/api/import/batches/' + id);
+    box.innerHTML = `<table class="w-full text-xs"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">#</th><th>Ref</th><th class="text-right">Total</th><th>Status</th><th>FBR invoice no.</th></tr></thead><tbody>
+      ${invoices.map(i => `<tr class="border-b last:border-0 align-top"><td class="py-1">${esc(i.invoiceNo || i.localNo)}</td><td class="font-mono">${esc(i.importRef)}</td><td class="text-right">${money(i.totalAmount)}</td>
+        <td><span class="px-1.5 py-0.5 rounded ${BADGE[i.status]}">${i.status}</span>${i.errorMessage && i.status !== 'SUBMITTED' ? `<div class="text-red-700">${esc(i.errorMessage)}</div>` : ''}</td>
+        <td class="font-mono">${esc(i.fbrInvoiceNumber || '')}</td></tr>`).join('')}</tbody></table>`;
+    box.classList.remove('hidden');
+  } catch (err) { toast(err.message); }
+}
+function setupImport() {
+  $('#importFile').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    importFileName = file.name;
+    $('#importFileName').textContent = `Reading ${file.name}…`;
+    try {
+      importRows = await readSheet(file);
+      $('#importFileName').textContent = `${file.name} — ${importRows.length} rows`;
+      renderImportPreview(await api('/api/import/preview', { method: 'POST', body: { rows: importRows, fileName: file.name } }));
+    } catch (err) { toast(err.message); $('#importFileName').textContent = ''; }
+  });
+  loadBatches();
+}
+
+/* ---------- Annex-C report ---------- */
+function annexParams() {
+  if (!$('#acClient').value) { toast('Choose a client'); return null; }
+  const month = $('#acMonth').value;
+  if (!month) { toast('Choose a month'); return null; }
+  return `month=${encodeURIComponent(month)}&env=${$('#acEnv').value}`;
+}
+async function previewAnnexC() {
+  const q = annexParams(); if (!q) return;
+  try {
+    const d = await api(`/api/admin/clients/${$('#acClient').value}/annex-c?` + q);
+    const t = d.totals;
+    $('#acSummary').innerHTML = d.lines ? `
+      <div class="grid grid-cols-2 sm:grid-cols-6 gap-3 bg-slate-50 rounded p-3">
+        <div>Invoices<div class="font-semibold">${d.invoices}</div></div>
+        <div>Item lines<div class="font-semibold">${d.lines}</div></div>
+        <div>Value excl. ST<div class="font-semibold">${money(t.valueExclST)}</div></div>
+        <div>Sales tax<div class="font-semibold">${money(t.salesTax)}</div></div>
+        <div>Further tax<div class="font-semibold">${money(t.furtherTax)}</div></div>
+        <div>Total<div class="font-semibold text-emerald-700">${money(t.totalValue)}</div></div>
+      </div>
+      <div class="overflow-x-auto mt-3"><table class="w-full text-xs">
+        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Date</th><th>FBR invoice no.</th><th>Buyer</th><th>HS code</th><th>Sale type</th><th>Rate</th><th class="text-right">Qty</th><th class="text-right">Value excl. ST</th><th class="text-right">ST</th><th class="text-right">Further</th></tr></thead>
+        <tbody>${d.rows.map(r => `<tr class="border-b last:border-0"><td class="py-1">${esc(r.documentDate)}</td><td class="font-mono">${esc(r.documentNo)}</td>
+          <td>${esc(r.buyerName)}</td><td class="font-mono">${esc(r.hsCode)}</td><td>${esc(r.saleType)}</td><td>${esc(r.rate)}</td>
+          <td class="text-right">${r.quantity}</td><td class="text-right">${money(r.valueExclST)}</td><td class="text-right">${money(r.salesTax)}</td><td class="text-right">${money(r.furtherTax)}</td></tr>`).join('')}</tbody>
+      </table>${d.lines > d.rows.length ? `<div class="text-xs text-slate-500 mt-1">Showing first ${d.rows.length} of ${d.lines} lines — download for all.</div>` : ''}</div>`
+      : '<div class="text-slate-500">No invoices filed with FBR in this month.</div>';
+  } catch (err) { toast(err.message); }
+}
+async function downloadAnnexC() {
+  const q = annexParams(); if (!q) return;
+  try {
+    const res = await fetch(`/api/admin/clients/${$('#acClient').value}/annex-c?format=csv&` + q, { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Download failed');
+    const name = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || `annex-c-${$('#acMonth').value}.csv`;
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (err) { toast(err.message); }
+}
+function setupAnnexC(t) {
+  if (!$('#acMonth').value) $('#acMonth').value = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date()).slice(0, 7);
+  $('#acEnv').value = t.fbrEnv;
+}
+
+/* ---------- Invoice list ---------- */
+const BADGE = {
+  SUBMITTED: 'bg-emerald-100 text-emerald-800', FAILED: 'bg-red-100 text-red-800', DRAFT: 'bg-slate-200 text-slate-700',
+  SUBMITTING: 'bg-sky-100 text-sky-800', UNCERTAIN: 'bg-orange-200 text-orange-900', CANCELLED: 'bg-slate-200 text-slate-500 line-through',
+  QUEUED: 'bg-indigo-100 text-indigo-800',
+};
+function irisWindow(i) {
+  const left = S.meta.editWindowHours - (Date.now() - new Date(i.submittedAt || i.createdAt).getTime()) / 3600000;
+  return left > 0 ? `<span class="text-xs text-slate-500" title="Change or cancel in IRIS within ${S.meta.editWindowHours} hours of filing">IRIS edit: ${left >= 1 ? Math.floor(left) + 'h' : Math.max(1, Math.round(left * 60)) + 'm'} left</span>`
+    : '<span class="text-xs text-slate-400" title="After the window, cancellation needs Commissioner approval">IRIS edit closed</span>';
+}
+function invoiceActions(i) {
+  if (i.status === 'CANCELLED') return `<span class="text-xs text-slate-500" title="${esc(i.cancelNote)}">Cancelled</span>`;
+  if (i.status === 'SUBMITTED') return `<div class="flex flex-col items-end gap-1 text-xs">
+      <button class="text-emerald-700 text-sm" onclick="openInvoice('${i.id}')">Receipt</button>
+      ${i.invoiceType === 'Sale Invoice' ? `<button class="text-sky-700 underline" onclick="startDebitNote('${i.id}')">Debit note</button>` : ''}
+      <button class="text-slate-600 underline" onclick="cancelInvoice('${i.id}', ${(Date.now() - new Date(i.submittedAt || i.createdAt).getTime()) / 3600000 > S.meta.editWindowHours})">Mark cancelled in IRIS</button>
+      ${irisWindow(i)}</div>`;
+  if (i.status === 'SUBMITTING') return '<span class="text-sky-700 text-xs">Sending…</span>';
+  if (i.status === 'QUEUED') return `<div class="flex flex-col items-end gap-1 text-xs">
+      <button class="text-indigo-700 underline" onclick="retryInvoice('${i.id}', this)">Send now</button>
+      <button class="text-slate-600 underline" onclick="unqueueInvoice('${i.id}')">Stop</button></div>`;
+  if (i.status === 'UNCERTAIN') return `<div class="flex flex-col items-end gap-1 text-xs">
+      <button class="text-emerald-700 underline" onclick="resolveInvoice('${i.id}', this)">Found in IRIS</button>
+      <button class="text-orange-700 underline" onclick="retryInvoice('${i.id}', this, true)">Not in IRIS — resubmit</button></div>`;
+  return `<button class="text-amber-700" onclick="retryInvoice('${i.id}', this)">Retry</button>`;
+}
+// Date helpers in Pakistan time
+const pkDate = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(d);
+function quickRange(r) {
+  const today = pkDate(), [y, m, d] = today.split('-').map(Number);
+  const iso = dt => pkDate(dt), day = n => new Date(Date.UTC(y, m - 1, d + n, 12));
+  if (r === 'today') return [today, today];
+  if (r === 'yesterday') return [iso(day(-1)), iso(day(-1))];
+  if (r === 'week') { const dow = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7; return [iso(day(-dow)), today]; } // Monday-based
+  if (r === 'month') return [`${today.slice(0, 7)}-01`, today];
+  if (r === 'lastmonth') { const s = new Date(Date.UTC(y, m - 2, 1, 12)), e = new Date(Date.UTC(y, m - 1, 0, 12)); return [iso(s), iso(e)]; }
+  return ['', ''];
+}
+function setupInvoiceFilters() {
+  if (S.ivReady) return; S.ivReady = true; S.ivPage = 1;
+  for (const id of ['#ivFrom', '#ivTo', '#ivStatus', '#ivType']) $(id).addEventListener('change', () => { S.ivPage = 1; markQuick(''); loadInvoices(); });
+  $('#ivQ').addEventListener('input', () => { clearTimeout(S.ivT); S.ivT = setTimeout(() => { S.ivPage = 1; loadInvoices(); }, 300); });
+  $('#ivQuick').addEventListener('click', e => {
+    const b = e.target.closest('[data-range]'); if (!b) return;
+    const [f, t] = quickRange(b.dataset.range);
+    $('#ivFrom').value = f; $('#ivTo').value = t; S.ivPage = 1; markQuick(b.dataset.range); loadInvoices();
+  });
+  const [f, t] = quickRange('month'); $('#ivFrom').value = f; $('#ivTo').value = t; markQuick('month');
+}
+function markQuick(r) {
+  document.querySelectorAll('#ivQuick [data-range]').forEach(b => {
+    const on = b.dataset.range === r;
+    b.classList.toggle('bg-emerald-700', on); b.classList.toggle('text-white', on); b.classList.toggle('border-emerald-700', on);
+  });
+}
+async function loadInvoices() {
+  if (!$('#ivFrom')) return;
+  setupInvoiceFilters();
+  try {
+    const p = new URLSearchParams({ page: S.ivPage || 1, limit: 25 });
+    for (const [k, id] of [['from', '#ivFrom'], ['to', '#ivTo'], ['status', '#ivStatus'], ['type', '#ivType'], ['q', '#ivQ']]) if ($(id).value) p.set(k, $(id).value);
+    const seq = (S.ivSeq = (S.ivSeq || 0) + 1);
+    const d = await api('/api/invoices/search?' + p);
+    if (seq !== S.ivSeq) return; // a newer filter was applied while this was loading — don't overwrite it
+    const rows = d.rows;
+    const f = d.filed, box = (l, v, cls = '') => `<div class="bg-white rounded-xl shadow p-3"><div class="text-xs text-slate-500">${l}</div><div class="font-semibold ${cls}">${v}</div></div>`;
+    $('#ivSummary').innerHTML = box('Invoices shown', d.total) + box('Filed with FBR', f.count, 'text-emerald-700')
+      + box('Value excl. ST (filed)', money(f.totalExclST)) + box('Sales tax (filed)', money(f.totalST)) + box('Total (filed)', 'Rs ' + money(f.totalAmount), 'text-emerald-700');
+    $('#ivPager').innerHTML = d.total ? `<span>Page ${d.page} of ${d.pages} · ${d.total} invoice(s)</span><span class="flex gap-2">
+      <button class="border rounded px-3 py-1 disabled:opacity-40" ${d.page <= 1 ? 'disabled' : ''} onclick="S.ivPage=${d.page - 1};loadInvoices()">‹ Previous</button>
+      <button class="border rounded px-3 py-1 disabled:opacity-40" ${d.page >= d.pages ? 'disabled' : ''} onclick="S.ivPage=${d.page + 1};loadInvoices()">Next ›</button></span>` : '';
+    $('#invoiceRows').innerHTML = rows.map(i => `<tr class="border-b last:border-0 align-top">
+      <td class="py-2 px-3 whitespace-nowrap font-medium">${esc(i.invoiceNo || i.localNo)}${i.offlineMode ? '<div class="text-xs text-indigo-700" title="Issued while FBR/internet was down (Rule 150XC)">offline mode</div>' : ''}</td><td>${esc(i.invoiceDate)}</td><td>${esc(i.buyerBusinessName)}
+        ${i.invoiceType === 'Debit Note' ? `<div class="text-xs text-sky-700">Debit note → ${esc(i.invoiceRefNo)}</div>` : ''}</td>
+      <td>${esc(i.scenarioId || (i.fbrEnv === 'PRODUCTION' ? 'Live' : ''))}</td>
+      <td class="text-right">${money(i.totalAmount)}</td>
+      <td><span class="px-2 py-0.5 rounded text-xs ${BADGE[i.status]}" title="${esc(i.errorMessage || '')}">${i.status}</span>
+        ${i.status === 'QUEUED' && !i.errorMessage ? '<div class="text-xs text-indigo-700">Waiting to be sent</div>' : ''}
+      ${i.errorMessage && i.status !== 'SUBMITTED' ? `<div class="text-xs ${i.status === 'UNCERTAIN' ? 'text-orange-800' : i.status === 'QUEUED' ? 'text-indigo-800' : 'text-red-700'} max-w-xs">${esc(i.errorMessage)}</div>` : ''}
+      ${i.importRef ? `<div class="text-xs text-slate-500">Import ref ${esc(i.importRef)}</div>` : ''}</td>
+      <td class="font-mono text-xs">${esc(i.fbrInvoiceNumber || '')}</td>
+      <td class="text-right whitespace-nowrap pr-3">
+        ${invoiceActions(i)}
+      </td></tr>`).join('') || '<tr><td colspan="8" class="py-6 px-3 text-slate-500">No invoices for these filters.</td></tr>';
+    clearTimeout(S.listTimer);
+    if (rows.some(i => i.status === 'QUEUED' || i.status === 'SUBMITTING')) S.listTimer = setTimeout(loadInvoices, 8000);
+  } catch (err) { toast(err.message); }
+}
+async function loadDashboard() {
+  try {
+    const d = await api('/api/client/dashboard');
+    const card = (l, v, sub, href, cls = '') => `<a href="${href}" class="bg-white rounded-xl shadow p-4 hover:ring-2 hover:ring-emerald-600"><div class="text-xs text-slate-500">${l}</div><div class="text-2xl font-bold mt-1 ${cls}">${v}</div><div class="text-xs text-slate-500 mt-1">${sub}</div></a>`;
+    $('#cdStats').innerHTML = card("Today's sales", 'Rs ' + money(d.today.total), `${d.today.invoices} invoice(s) · tax ${money(d.today.salesTax)}`, '#/c-invoices', 'text-emerald-700')
+      + card('This month', 'Rs ' + money(d.month.total), `${d.month.invoices} invoice(s) · tax ${money(d.month.salesTax)}`, '#/c-invoices')
+      + card('Waiting to send', d.queued, 'queued while FBR is unreachable', '#/c-invoices', d.queued ? 'text-indigo-700' : '')
+      + card('Need attention', d.attention, 'failed or uncertain', '#/c-invoices', d.attention ? 'text-red-700' : '');
+    $('#cdRecent').innerHTML = d.recent.length ? `<table class="w-full"><tbody>${d.recent.map(i => `<tr class="border-b last:border-0">
+      <td class="py-2 font-medium">${esc(i.invoiceNo || i.localNo)}</td><td>${esc(i.invoiceDate)}</td><td>${esc(i.buyerBusinessName)}</td>
+      <td class="text-right">Rs ${money(i.totalAmount)}</td><td class="pl-3"><span class="px-2 py-0.5 rounded text-xs ${BADGE[i.status]}">${i.status}</span></td>
+      <td class="text-right">${i.status === 'SUBMITTED' ? `<button class="text-emerald-700 text-xs underline" onclick="openInvoice('${i.id}')">Receipt</button>` : ''}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="text-slate-500">No invoices yet — <a class="text-emerald-700 underline" href="#/c-new">create the first one</a>.</div>';
+    // "Need attention" opens the list filtered to it
+    $('#cdStats').lastElementChild.addEventListener('click', () => setTimeout(() => { $('#ivStatus').value = 'ATTENTION'; $('#ivFrom').value = ''; $('#ivTo').value = ''; markQuick('all'); loadInvoices(); }, 50));
+  } catch (err) { toast(err.message); }
+}
+async function unqueueInvoice(id) {
+  if (!confirm('Stop sending this invoice to FBR? It will be marked FAILED; you can Retry it later.')) return;
+  try { await api(`/api/invoices/${id}/unqueue`, { method: 'POST' }); loadInvoices(); loadBatches(); } catch (err) { toast(err.message); }
+}
+async function openInvoice(id) {
+  try { const d = await api('/api/invoices/' + id); renderReceipt(d.invoice, d.seller); } catch (err) { toast(err.message); }
+}
+async function retryInvoice(id, btn, uncertain = false) {
+  if (uncertain && !confirm('Resubmit only if this invoice is NOT in IRIS. If FBR already has it, resubmitting creates a duplicate in your sales and in the buyer\'s ledger.\n\nI checked IRIS and it is not there — resubmit?')) return;
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
+  try { handleResult(await api(`/api/invoices/${id}/retry`, { method: 'POST', body: uncertain ? { confirmUncertain: true } : {} })); }
+  catch (err) { toast(err.message); btn.disabled = false; btn.textContent = label; loadInvoices(); }
+}
+async function cancelInvoice(id, pastWindow) {
+  const h = S.meta.editWindowHours;
+  const msg = pastWindow
+    ? `More than ${h} hours have passed, so FBR needs Commissioner approval to cancel.\n\nAfter the cancellation is approved and done in IRIS, enter the approval reference:`
+    : `First cancel this invoice in IRIS (allowed within ${h} hours of filing). The app cannot cancel at FBR.\n\nDone in IRIS? Optional note:`;
+  const note = prompt(msg, '');
+  if (note === null) return;
+  try { await api(`/api/invoices/${id}/cancel`, { method: 'POST', body: { note } }); toast('Marked cancelled; it is left out of reports', true); loadInvoices(); }
+  catch (err) { toast(err.message); }
+}
+async function resolveInvoice(id, btn) {
+  const no = prompt('Enter the FBR invoice number exactly as shown in IRIS for this invoice:');
+  if (!no) return;
+  btn.disabled = true;
+  try { const d = await api(`/api/invoices/${id}/resolve`, { method: 'POST', body: { fbrInvoiceNumber: no } }); toast('Marked as filed with FBR', true); handleResult(d, false); }
+  catch (err) { toast(err.message); btn.disabled = false; }
+}
+
+/* ---------- Receipt ---------- */
+function renderReceipt(inv, seller) {
+  const line = '<div style="border-top:1px dashed #000;margin:4px 0"></div>';
+  const row = (a, b, bold) => `<div style="display:flex;justify-content:space-between;${bold ? 'font-weight:bold' : ''}"><span>${a}</span><span>${b}</span></div>`;
+  $('#receipt').innerHTML = `
+    <div style="text-align:center">
+      <div style="font-size:13px;font-weight:bold">${esc(seller.sellerBusinessName)}</div>
+      <div>${esc(seller.sellerAddress)}</div>
+      <div>NTN/CNIC: ${esc(seller.sellerNtnCnic)}</div>
+      ${seller.sellerStrn ? `<div>STRN: ${esc(seller.sellerStrn)}</div>` : ''}
+      <div style="margin-top:2px;font-weight:bold">${esc(inv.invoiceType.toUpperCase())}</div>
+    </div>${line}
+    ${row('Invoice #', esc(inv.invoiceNo || inv.localNo))}${row('Date', esc(inv.invoiceDate))}
+    ${row('Buyer', esc(inv.buyerBusinessName))}
+    ${inv.buyerNtnCnic ? row('Buyer NTN/CNIC', esc(inv.buyerNtnCnic)) : ''}
+    ${row('Buyer type', inv.endConsumer ? 'End consumer' : esc(inv.buyerRegistrationType))}
+    ${inv.invoiceRefNo ? row('Ref invoice', esc(inv.invoiceRefNo)) : ''}
+    ${inv.reason ? row('Reason', esc(inv.reason + (inv.reasonRemarks ? ' — ' + inv.reasonRemarks : ''))) : ''}
+    ${line}
+    ${inv.items.map(it => `
+      <div>${esc(it.productDescription)} <span style="color:#555">(${esc(it.hsCode)})</span></div>
+      ${row(`${Number(it.quantity)} ${esc(it.uoM)} × ${money(it.unitPrice)}`, money(it.valueSalesExcludingST))}
+      ${row(`  ST ${esc(it.rate)}`, money(it.salesTaxApplicable))}
+      ${Number(it.furtherTax) ? row('  Further tax', money(it.furtherTax)) : ''}
+      ${Number(it.extraTax) ? row('  Extra tax', money(it.extraTax)) : ''}
+      ${Number(it.fedPayable) ? row('  FED', money(it.fedPayable)) : ''}`).join('')}
+    ${line}
+    ${row('Value excl. ST', money(inv.totalExclST))}
+    ${row('Sales tax', money(inv.totalST))}
+    ${Number(inv.totalFurtherTax) ? row('Further tax', money(inv.totalFurtherTax)) : ''}
+    ${row('TOTAL (Rs)', money(inv.totalAmount), true)}
+    ${line}
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
+      <img src="/fbr-di-logo.jpg" alt="FBR Digital Invoicing" style="width:1in;height:auto" onerror="this.replaceWith(Object.assign(document.createElement('div'),{textContent:'FBR Digital Invoicing System',style:'font-size:9px;font-weight:bold;width:1in;text-align:center'}))">
+      <div class="qr" id="qrBox"></div>
+    </div>
+    <div style="text-align:center;margin-top:4px">FBR Invoice No.</div>
+    <div style="text-align:center;font-weight:bold;word-break:break-all">${esc(inv.fbrInvoiceNumber)}</div>
+    ${inv.offlineMode ? '<div style="text-align:center;margin-top:2px">(Offline mode invoice — filed after reconnection)</div>' : ''}
+    ${inv.fbrEnv === 'SANDBOX' ? '<div style="text-align:center;margin-top:4px">*** SANDBOX TEST — NOT A TAX INVOICE ***</div>' : ''}
+    <div style="text-align:center;margin-top:4px;font-weight:bold">Integrated with FBR</div>
+    ${seller.softwareRegNo ? `<div style="text-align:center">Software Reg. No: ${esc(seller.softwareRegNo)}</div>` : ''}
+    <div style="text-align:center;margin-top:4px;color:#333">Verify this invoice through the FBR Tax Asaan app or SMS at 9966</div>`;
+  // QR v2 (25×25) holds the 22-28 char FBR number at error level L; printed at 1×1 inch
+  new QRCode($('#qrBox'), { text: inv.fbrInvoiceNumber, width: 96, height: 96, correctLevel: QRCode.CorrectLevel.L });
+  $('#receipt').classList.remove('hidden');
+  $('#printBtn').classList.remove('hidden');
+  $('#receiptModal').classList.remove('hidden');
+}
+function closeReceipt() { $('#receiptModal').classList.add('hidden'); }
+
+// A free Render instance sleeps after 15 idle minutes; wake it before the user needs it
+async function wakeServer() {
+  const slow = setTimeout(() => $('#wakeBanner').classList.remove('hidden'), 2500);
+  const until = Date.now() + 120000;
+  while (Date.now() < until) {
+    try {
+      const r = await fetch('/api/health', { cache: 'no-store' });
+      if (r.ok) break;
+    } catch {}
+    await new Promise(res => setTimeout(res, 3000));
+  }
+  clearTimeout(slow);
+  $('#wakeBanner').classList.add('hidden');
+}
+
+wakeServer().then(show);
+</script>
+</body>
+</html>

@@ -5,12 +5,15 @@
 //   valueSalesExcludingST = quantity × unitPrice − discount
 //   ST base               = fixedNotifiedValueOrRetailPrice if > 0 (3rd schedule), else valueSalesExcludingST
 //   salesTaxApplicable    = ST base × rate%
-//   furtherTax            = valueSalesExcludingST × furtherTaxRate%   (unregistered business buyer, taxable rate only;
-//                           not on sales to end consumers — confirmed by the CA)
+//   furtherTax            = valueSalesExcludingST × furtherTaxRate%   for unregistered business buyers and for
+//                           registered buyers that are not active (non-ATL) — STA s.3(1A); taxable rates only;
+//                           never on sales to end consumers (CA rule / DI Rules #2–3)
 //   totalValues           = valueSalesExcludingST + ST + furtherTax + extraTax + fedPayable
 
 // Sale types where further tax is not charged by default
 const NO_FURTHER_TAX_SALE_TYPES = new Set(['3rd Schedule Goods', 'Exempt Goods', 'Goods at zero-rate']);
+// Exempt / concessionary lines must name the schedule/SRO and its serial (e.g. "6th Schedule Table I", "176(i)")
+const SRO_REQUIRED_SALE_TYPES = new Set(['Exempt Goods', 'Goods at Reduced Rate', 'Goods as per SRO.297(|)/2023']);
 
 function round2(n) {
     return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -32,7 +35,7 @@ function hasOverride(v) {
     return v !== null && v !== undefined && v !== '';
 }
 
-function calcItem(raw, { buyerRegistrationType, furtherTaxRate, endConsumer = false }) {
+function calcItem(raw, { buyerRegistrationType, furtherTaxRate, endConsumer = false, buyerNonAtl = false }) {
     const quantity = num(raw.quantity);
     const unitPrice = num(raw.unitPrice);
     const discount = num(raw.discount);
@@ -56,7 +59,8 @@ function calcItem(raw, { buyerRegistrationType, furtherTaxRate, endConsumer = fa
         ? round2(num(raw.salesTaxApplicable))
         : round2(stBase * pct / 100);
 
-    const furtherApplies = buyerRegistrationType === 'Unregistered' && !endConsumer && pct > 0 && !NO_FURTHER_TAX_SALE_TYPES.has(raw.saleType);
+    const furtherBuyer = buyerRegistrationType === 'Unregistered' ? !endConsumer : buyerNonAtl;
+    const furtherApplies = furtherBuyer && pct > 0 && !NO_FURTHER_TAX_SALE_TYPES.has(raw.saleType);
     const furtherTax = hasOverride(raw.furtherTax)
         ? round2(num(raw.furtherTax))
         : (furtherApplies ? round2(valueSalesExcludingST * Number(furtherTaxRate) / 100) : 0);
@@ -91,6 +95,9 @@ function calcInvoice(items, ctx) {
             if (!l[f]) throw new Error(`Item ${l.sNo}: ${f} is required`);
         }
         if (!/^\d{4}\.\d{4}$/.test(l.hsCode)) throw new Error(`Item ${l.sNo}: HS code must look like 0101.2100`);
+        if (SRO_REQUIRED_SALE_TYPES.has(l.saleType) && (!l.sroScheduleNo || !l.sroItemSerialNo)) {
+            throw new Error(`Item ${l.sNo}: "${l.saleType}" needs the SRO / Schedule no. and item serial (e.g. 6th Schedule Table I, 176(i)) — under More`);
+        }
     }
     const sum = f => round2(lines.reduce((a, l) => a + l[f], 0));
     return {
@@ -104,4 +111,4 @@ function calcInvoice(items, ctx) {
     };
 }
 
-module.exports = { calcInvoice, calcItem, ratePercent, round2 };
+module.exports = { calcInvoice, calcItem, ratePercent, round2, SRO_REQUIRED_SALE_TYPES };

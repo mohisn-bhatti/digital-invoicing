@@ -29,10 +29,19 @@ function requireTenant(req, res, next) {
 
 function signToken(user) {
     return jwt.sign(
-        { id: user.id, role: user.role, tenantId: user.tenantId },
+        { id: user.id, email: user.email, role: user.role, tenantId: user.tenantId },
         process.env.JWT_SECRET,
         { expiresIn: '12h' }
     );
 }
 
-module.exports = { authenticateToken, requireRole, requireTenant, signToken };
+// Admin working inside a client's workspace (sandbox testing). Acts as that client; audited under the admin's email.
+function signWorkspaceToken(admin, tenantId) {
+    return jwt.sign(
+        { id: admin.id, email: admin.email, role: 'CLIENT_USER', tenantId, impersonatedBy: admin.id },
+        process.env.JWT_SECRET,
+        { expiresIn: '2h' }
+    );
+}
+
+module.exports = { authenticateToken, requireRole, requireTenant, signToken, signWorkspaceToken };

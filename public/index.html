@@ -3,1032 +3,209 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FBR Digital Invoicing</title>
+<title>Raseed — FBR Digital Invoicing for Pakistani businesses</title>
+<meta name="description" content="Raseed files every sales invoice with FBR Digital Invoicing in real time, prints receipts with the official FBR invoice number and QR, and keeps your sales tax records ready for your return.">
+<meta name="theme-color" content="#047857">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23047857'/><text x='50%' y='58%' font-size='38' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle' dominant-baseline='middle'>R</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
-  input, select { border: 1px solid #cbd5e1; border-radius: .375rem; padding: .4rem .55rem; width: 100%; font-size: .875rem; background: #fff; }
-  input:focus, select:focus { outline: 2px solid #059669; outline-offset: -1px; }
-  label > span { display: block; font-size: .75rem; color: #475569; margin-bottom: .15rem; }
-  #receipt { width: 80mm; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #000; }
-  #receipt .qr { padding: 0.12in; background: #fff; } /* quiet zone so scanners can find the code */
-  #receipt .qr img, #receipt .qr canvas { width: 1in !important; height: 1in !important; }
-  @media print {
-    @page { size: 80mm auto; margin: 3mm; }
-    body * { visibility: hidden; }
-    #receipt, #receipt * { visibility: visible; }
-    #receipt { position: absolute; left: 0; top: 0; }
-  }
+  html { scroll-behavior: smooth; }
+  .receipt { font-family: ui-monospace, Menlo, monospace; }
+  .tear { background: radial-gradient(circle at 6px -2px, transparent 6px, #fff 6.5px) repeat-x; background-size: 12px 12px; height: 10px; }
 </style>
 </head>
-<body class="bg-slate-100 text-slate-800 min-h-screen">
+<body class="bg-white text-slate-800 antialiased">
 
-<!-- Top bar -->
-<header id="topbar" class="hidden bg-emerald-700 text-white">
-  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-    <div class="font-semibold truncate">FBR Digital Invoicing · <span id="companyName"></span></div>
-    <div class="flex items-center gap-3 text-sm">
-      <span id="envBadge" class="hidden px-2 py-0.5 rounded text-xs font-bold"></span>
-      <button onclick="logout()" class="underline">Log out</button>
+<!-- Nav -->
+<header class="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-100">
+  <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
+    <a href="/" class="flex items-center gap-2 font-extrabold text-xl text-emerald-700">
+      <span class="inline-flex w-8 h-8 rounded-lg bg-emerald-700 text-white items-center justify-center text-lg">R</span> Raseed
+    </a>
+    <nav class="hidden md:flex items-center gap-6 text-sm text-slate-600">
+      <a href="#features" class="hover:text-emerald-700">Features</a>
+      <a href="#how" class="hover:text-emerald-700">How it works</a>
+      <a href="#who" class="hover:text-emerald-700">Who it's for</a>
+      <a href="#faq" class="hover:text-emerald-700">FAQ</a>
+      <a href="/contact" class="hover:text-emerald-700">Contact</a>
+    </nav>
+    <div class="flex items-center gap-2 text-sm">
+      <a href="/app" class="px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100">Log in</a>
+      <a href="/contact" class="px-4 py-2 rounded-lg bg-emerald-700 text-white font-medium hover:bg-emerald-800">Book a free demo</a>
     </div>
   </div>
 </header>
 
-<div id="wakeBanner" class="hidden fixed inset-x-0 top-0 z-40 bg-amber-100 text-amber-900 text-sm text-center py-2 px-4">
-  Server is starting up (free plan sleeps when idle) — this can take up to a minute…
-</div>
-<div id="toast"class="hidden fixed top-4 right-4 z-50 max-w-md px-4 py-3 rounded shadow-lg text-sm"></div>
-
-<!-- Login -->
-<section id="loginView" class="hidden min-h-screen flex items-center justify-center px-4">
-  <form id="loginForm" class="bg-white rounded-xl shadow p-6 w-full max-w-sm space-y-4">
-    <h1 class="text-xl font-semibold">Sign in</h1>
-    <label><span>Email</span><input name="email" type="email" required autocomplete="username"></label>
-    <label><span>Password</span><input name="password" type="password" required autocomplete="current-password"></label>
-    <button class="w-full bg-emerald-700 hover:bg-emerald-800 text-white rounded py-2 font-medium">Log in</button>
-  </form>
-</section>
-
-<!-- Super admin -->
-<section id="adminView" class="hidden max-w-6xl mx-auto px-4 py-6 space-y-6">
-  <div class="bg-white rounded-xl shadow p-5">
-    <h2 class="font-semibold mb-3">Register client</h2>
-    <form id="clientForm" class="grid sm:grid-cols-4 gap-3 items-end">
-      <label><span>Company name</span><input name="companyName" required></label>
-      <label><span>Login email</span><input name="clientEmail" type="email" required></label>
-      <label><span>Password (min 8)</span><input name="clientPassword" type="password" minlength="8" required></label>
-      <button class="bg-emerald-700 text-white rounded py-2">Create</button>
-    </form>
-  </div>
-  <div class="bg-white rounded-xl shadow p-5 text-sm flex flex-wrap items-center gap-3">
-    <span class="font-semibold">IP for FBR whitelisting:</span>
-    <span id="egressIp" class="font-mono">—</span>
-    <button onclick="loadEgressIp()" class="text-emerald-700 underline">Check</button>
-  </div>
-  <div class="bg-white rounded-xl shadow p-5 overflow-x-auto">
-    <h2 class="font-semibold mb-3">Clients</h2>
-    <table class="w-full text-sm">
-      <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Company</th><th>Login</th><th>Seller NTN</th><th>Env</th><th>Token</th><th class="text-right">Invoices</th></tr></thead>
-      <tbody id="clientRows"></tbody>
-    </table>
-  </div>
-</section>
-
-<!-- Client -->
-<section id="clientView" class="hidden max-w-6xl mx-auto px-4 py-6 space-y-6">
-
-  <details id="settingsBox" class="bg-white rounded-xl shadow">
-    <summary class="cursor-pointer p-5 font-semibold">FBR settings <span id="settingsHint" class="ml-2 text-xs font-normal text-amber-700"></span></summary>
-    <form id="settingsForm" class="px-5 pb-5 grid sm:grid-cols-3 gap-3">
-      <label><span>Seller NTN / CNIC <span class="text-slate-400">(sent to FBR)</span></span><input name="sellerNtnCnic" inputmode="numeric" placeholder="7 or 13 digits" autocomplete="off"></label>
-      <label><span>Seller STRN <span class="text-slate-400">(printed on invoice)</span></span><input name="sellerStrn" inputmode="numeric" placeholder="13 digits, optional" autocomplete="off"></label>
-      <label><span>Seller business name</span><input name="sellerBusinessName" autocomplete="off"></label>
-      <label><span>Seller province</span><select name="sellerProvince" data-list="provinces"></select></label>
-      <label class="sm:col-span-2"><span>Seller address</span><input name="sellerAddress" autocomplete="off"></label>
-      <label><span>Environment</span>
-        <select name="fbrEnv"><option value="SANDBOX">Sandbox (testing)</option><option value="PRODUCTION">Production (live)</option></select>
-      </label>
-      <label class="sm:col-span-2"><span>PRAL security token <span id="tokenMasked" class="text-slate-400"></span></span>
-        <input name="fbrToken" type="password" placeholder="Leave empty to keep current token" autocomplete="new-password" data-lpignore="true" data-1p-ignore></label>
-      <label><span>Further tax % (unregistered buyers)</span><input name="furtherTaxRate" type="number" step="0.01" min="0" max="100"></label>
-      <div class="sm:col-span-3 flex flex-wrap items-center gap-4">
-        <button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button>
-        <span class="text-xs text-slate-600">HS codes: <span id="hsStats">…</span></span>
-        <button type="button" id="hsSyncBtn" onclick="syncHs()" class="text-xs text-emerald-700 underline">Sync HS codes from FBR</button>
+<!-- Hero -->
+<section class="bg-gradient-to-b from-emerald-50 to-white">
+  <div class="max-w-6xl mx-auto px-4 py-16 md:py-24 grid md:grid-cols-2 gap-12 items-center">
+    <div>
+      <span class="inline-block text-xs font-semibold tracking-wide uppercase text-emerald-800 bg-emerald-100 rounded-full px-3 py-1">FBR Digital Invoicing · PRAL DI API</span>
+      <h1 class="mt-5 text-4xl md:text-5xl font-extrabold leading-tight text-slate-900">Har bill, FBR ke saath.<br><span class="text-emerald-700">Bina jhanjhat.</span></h1>
+      <p class="mt-5 text-lg text-slate-600 max-w-xl">Raseed files every sales invoice with FBR in real time, prints receipts with the official FBR invoice number and QR code, and keeps your sales tax records ready for the monthly return.</p>
+      <div class="mt-8 flex flex-wrap gap-3">
+        <a href="/contact" class="px-5 py-3 rounded-lg bg-emerald-700 text-white font-semibold hover:bg-emerald-800">Book a free demo</a>
+        <a href="#how" class="px-5 py-3 rounded-lg border border-slate-300 font-semibold hover:border-emerald-700 hover:text-emerald-700">See how it works</a>
       </div>
-    </form>
-  </details>
-
-  <div class="grid lg:grid-cols-3 gap-6">
-    <!-- Billing form -->
-    <form id="invoiceForm" class="lg:col-span-2 bg-white rounded-xl shadow p-5 space-y-4">
-      <div class="flex items-center justify-between">
-        <h2 class="font-semibold">New invoice</h2>
-      </div>
-
-      <div id="scenarioRow" class="hidden bg-amber-50 border border-amber-200 rounded p-3">
-        <label><span>Sandbox scenario (required in sandbox)</span><select name="scenarioId" id="scenarioSel"></select></label>
-      </div>
-
-      <div class="grid sm:grid-cols-3 gap-3">
-        <label><span>Document type</span>
-          <select name="invoiceType" id="invoiceType"><option>Sale Invoice</option><option>Debit Note</option></select></label>
-        <label><span>Invoice date</span><input name="invoiceDate" type="date" required></label>
-        <label id="refNoWrap" class="hidden"><span>Original FBR invoice no.</span><input name="invoiceRefNo" autocomplete="off" placeholder="e.g. 7000007DI1747119701593"></label>
-        <label class="debit-only hidden"><span>Reason</span><select name="reason"></select></label>
-        <label class="debit-only hidden sm:col-span-2"><span>Remarks <span id="remarksReq" class="text-red-600 hidden">*</span></span><input name="reasonRemarks" maxlength="500" autocomplete="off"></label>
-      </div>
-
-      <div class="grid sm:grid-cols-3 gap-3">
-        <div>
-          <label><span>Buyer type</span>
-            <select name="buyerRegistrationType" id="buyerType"><option>Unregistered</option><option>Registered</option></select></label>
-          <label id="endConsumerWrap" class="flex items-center gap-1.5 mt-1.5 text-xs text-slate-700 cursor-pointer">
-            <input type="checkbox" name="endConsumer" checked style="width:auto"> End consumer / walk-in — no further tax</label>
-        </div>
-        <label><span>Buyer NTN / CNIC <span id="ntnReq" class="text-red-600 hidden">*</span></span><input name="buyerNtnCnic" inputmode="numeric" autocomplete="off" placeholder="Type to search saved buyers"></label>
-        <label><span>Buyer name</span><input name="buyerBusinessName" placeholder="Walk-in Customer — or type to search saved" autocomplete="off"></label>
-        <label><span>Buyer province</span><select name="buyerProvince" data-list="provinces"></select></label>
-        <label class="sm:col-span-2"><span>Buyer address</span><input name="buyerAddress" placeholder="Defaults to seller address"></label>
-      </div>
-
-      <div>
-        <div class="flex items-center justify-between mb-2">
-          <h3 class="font-medium text-sm">Items</h3>
-          <button type="button" onclick="addItem()" class="text-sm text-emerald-700 font-medium">+ Add item</button>
-        </div>
-        <div id="items" class="space-y-3"></div>
-      </div>
-
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm bg-slate-50 rounded p-3">
-        <div>Value excl. ST<div id="tExcl" class="font-semibold">0.00</div></div>
-        <div>Sales tax<div id="tST" class="font-semibold">0.00</div></div>
-        <div>Further tax<div id="tFT" class="font-semibold">0.00</div></div>
-        <div>Total<div id="tTotal" class="font-bold text-emerald-700 text-base">0.00</div></div>
-      </div>
-
-      <button id="submitBtn" class="w-full bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded py-2.5 font-medium">Submit to FBR</button>
-    </form>
-
-    <!-- Receipt -->
-    <div class="bg-white rounded-xl shadow p-5 space-y-3">
-      <div class="flex items-center justify-between">
-        <h2 class="font-semibold">Receipt</h2>
-        <button id="printBtn" onclick="window.print()" class="hidden text-sm bg-slate-800 text-white rounded px-3 py-1">Print</button>
-      </div>
-      <div id="receiptEmpty" class="text-sm text-slate-500">Submit or open an invoice to see its receipt.</div>
-      <div class="flex justify-center"><div id="receipt" class="hidden"></div></div>
+      <ul class="mt-8 grid sm:grid-cols-2 gap-2 text-sm text-slate-600">
+        <li>✔ Real FBR invoice number on every sale</li>
+        <li>✔ Scannable QR, verifiable in Tax Asaan</li>
+        <li>✔ Excel bulk upload</li>
+        <li>✔ Setup &amp; FBR testing done for you</li>
+      </ul>
     </div>
-  </div>
 
-  <div class="bg-white rounded-xl shadow p-5 overflow-x-auto">
-    <h2 class="font-semibold mb-3">Recent invoices</h2>
-    <table class="w-full text-sm">
-      <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">#</th><th>Date</th><th>Buyer</th><th>Scenario</th><th class="text-right">Total</th><th>Status</th><th>FBR invoice no.</th><th></th></tr></thead>
-      <tbody id="invoiceRows"></tbody>
-    </table>
-  </div>
-
-  <div class="bg-white rounded-xl shadow p-5 space-y-3">
-    <h2 class="font-semibold">Annex-C report <span class="text-xs font-normal text-slate-500">— sales filed with FBR, item-wise, same columns as IRIS Annex-C, to reconcile with your return</span></h2>
-    <div class="flex flex-wrap items-end gap-3 text-sm">
-      <label><span>Month</span><input type="month" id="acMonth"></label>
-      <label><span>Environment</span><select id="acEnv"><option value="PRODUCTION">Production (real)</option><option value="SANDBOX">Sandbox (tests)</option></select></label>
-      <button type="button" onclick="previewAnnexC()" class="bg-slate-800 text-white rounded px-3 py-1.5">Show</button>
-      <button type="button" onclick="downloadAnnexC()" class="bg-emerald-700 text-white rounded px-3 py-1.5">Download Excel (CSV)</button>
-    </div>
-    <div id="acSummary" class="text-sm"></div>
-  </div>
-
-  <details id="savedBox" class="bg-white rounded-xl shadow">
-    <summary class="cursor-pointer p-5 font-semibold">Saved products &amp; buyers</summary>
-    <div class="px-5 pb-5 grid lg:grid-cols-2 gap-6 text-sm">
-      <div class="overflow-x-auto">
-        <h3 class="font-medium mb-2">Products <span class="text-xs font-normal text-slate-500">— add here, or from an item row with "★ Save as product"</span></h3>
-        <form id="productForm" class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3 bg-slate-50 border rounded p-3">
-          <input type="hidden" name="id">
-          <label class="col-span-2"><span>Product name</span><input name="name" required maxlength="200" autocomplete="off" placeholder="e.g. Yogurt 500g"></label>
-          <label class="col-span-2"><span>HS code</span><input name="hsCode" class="pf-hs" required autocomplete="off" placeholder="Type code or product, e.g. yogurt"></label>
-          <label><span>UOM</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
-          <label><span>Rate</span><input name="rate" list="rateList" value="18%" required></label>
-          <label class="col-span-2"><span>Sale type</span><select name="saleType" id="pfSaleType"></select></label>
-          <label><span>Unit price</span><input name="unitPrice" type="number" step="0.01" min="0" placeholder="optional"></label>
-          <label><span>SRO schedule no.</span><input name="sroScheduleNo" placeholder="optional"></label>
-          <label class="col-span-2"><span>SRO item serial</span><input name="sroItemSerialNo" placeholder="optional"></label>
-          <div class="col-span-2 sm:col-span-4 flex flex-wrap items-center gap-3">
-            <button id="pfSubmit" class="bg-emerald-700 text-white rounded px-3 py-1.5">Save product</button>
-            <button type="button" class="text-xs text-slate-600 underline" onclick="clearProductForm()">Clear</button>
-            <span id="pfMode" class="text-xs text-slate-500"></span>
+    <!-- Receipt illustration -->
+    <div class="flex justify-center">
+      <div class="relative">
+        <div class="absolute -inset-6 bg-emerald-200/40 blur-3xl rounded-full"></div>
+        <div class="relative w-72 bg-white shadow-2xl rounded-t-lg receipt text-[11px] text-slate-800">
+          <div class="p-5">
+            <div class="text-center">
+              <div class="font-bold text-sm">AL-NOOR TRADERS</div>
+              <div>Shahrah-e-Faisal, Karachi</div>
+              <div>NTN 1234567 · STRN 3277876123456</div>
+              <div class="mt-1 font-bold">SALE INVOICE</div>
+            </div>
+            <div class="border-t border-dashed border-slate-400 my-2"></div>
+            <div class="flex justify-between"><span>Invoice #</span><span>1042</span></div>
+            <div class="flex justify-between"><span>Buyer</span><span>ABC Distributors</span></div>
+            <div class="border-t border-dashed border-slate-400 my-2"></div>
+            <div>PVC resin (3904.1090)</div>
+            <div class="flex justify-between"><span>100 KG × 250.00</span><span>25,000.00</span></div>
+            <div class="flex justify-between"><span>&nbsp; ST 18%</span><span>4,500.00</span></div>
+            <div>PVC pipes (3917.2390)</div>
+            <div class="flex justify-between"><span>20 × 1,200.00</span><span>24,000.00</span></div>
+            <div class="flex justify-between"><span>&nbsp; ST 18%</span><span>4,320.00</span></div>
+            <div class="border-t border-dashed border-slate-400 my-2"></div>
+            <div class="flex justify-between font-bold"><span>TOTAL (Rs)</span><span>57,820.00</span></div>
+            <div class="border-t border-dashed border-slate-400 my-2"></div>
+            <div class="flex items-center justify-between gap-3">
+              <img src="/fbr-di-logo.jpg" alt="FBR Digital Invoicing System" class="w-20">
+              <div id="heroQr" class="w-20 h-20"></div>
+            </div>
+            <div class="text-center mt-2">FBR Invoice No.</div>
+            <div class="text-center font-bold">1234567DI1791300004321</div>
           </div>
-        </form>
-        <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Name</th><th>HS code</th><th>Rate</th><th>UOM</th><th class="text-right">Price</th><th></th></tr></thead>
-          <tbody id="productRows"></tbody></table>
-      </div>
-      <div class="overflow-x-auto">
-        <h3 class="font-medium mb-2">Buyers <span class="text-xs font-normal text-slate-500">— add here; buyers with an NTN/CNIC are also saved automatically when an invoice is filed</span></h3>
-        <form id="buyerForm" class="grid grid-cols-2 gap-2 mb-3 bg-slate-50 border rounded p-3">
-          <input type="hidden" name="id">
-          <label class="col-span-2"><span>Buyer name</span><input name="businessName" required maxlength="200" autocomplete="off"></label>
-          <label><span>Buyer type</span><select name="registrationType"><option>Unregistered</option><option>Registered</option></select></label>
-          <label><span>NTN / CNIC</span><input name="ntnCnic" inputmode="numeric" autocomplete="off" placeholder="7, 9 or 13 digits"></label>
-          <label><span>Province</span><select name="province" data-list="provinces"></select></label>
-          <label><span>Address</span><input name="address" autocomplete="off"></label>
-          <div class="col-span-2 flex flex-wrap items-center gap-3">
-            <button id="bfSubmit" class="bg-emerald-700 text-white rounded px-3 py-1.5">Save buyer</button>
-            <button type="button" class="text-xs text-slate-600 underline" onclick="clearBuyerForm()">Clear</button>
-            <span id="bfMode" class="text-xs text-slate-500"></span>
-          </div>
-        </form>
-        <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Name</th><th>NTN/CNIC</th><th>Type</th><th>Province</th><th></th></tr></thead>
-          <tbody id="buyerRows"></tbody></table>
+          <div class="tear"></div>
+        </div>
+        <div class="absolute -right-6 top-10 bg-white shadow-lg rounded-lg px-3 py-2 text-xs font-sans">
+          <div class="text-emerald-700 font-semibold">✔ Filed with FBR</div><div class="text-slate-500">in seconds</div>
+        </div>
       </div>
     </div>
-  </details>
+  </div>
 </section>
+
+<!-- Why -->
+<section class="max-w-6xl mx-auto px-4 py-14">
+  <div class="grid md:grid-cols-3 gap-6 text-center">
+    <div class="p-6 rounded-xl bg-slate-50"><div class="text-3xl font-extrabold text-emerald-700">Real-time</div><p class="mt-2 text-slate-600">Every invoice is validated and filed with FBR the moment you issue it — no month-end data entry on the portal.</p></div>
+    <div class="p-6 rounded-xl bg-slate-50"><div class="text-3xl font-extrabold text-emerald-700">No duplicates</div><p class="mt-2 text-slate-600">Double clicks, network drops and FBR outages are handled for you. A sale is never filed twice.</p></div>
+    <div class="p-6 rounded-xl bg-slate-50"><div class="text-3xl font-extrabold text-emerald-700">Return-ready</div><p class="mt-2 text-slate-600">Item-wise sales in the same layout as the IRIS Annex-C, so the return reconciles in minutes.</p></div>
+  </div>
+</section>
+
+<!-- Features -->
+<section id="features" class="bg-slate-50 py-16">
+  <div class="max-w-6xl mx-auto px-4">
+    <h2 class="text-3xl font-extrabold text-slate-900 text-center">Everything you need to invoice the FBR way</h2>
+    <p class="mt-3 text-center text-slate-600 max-w-2xl mx-auto">Built around the FBR Digital Invoicing rules — sale types, HS codes, further tax, debit notes and the scenarios FBR tests before you go live.</p>
+    <div class="mt-10 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+      <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🧾</div><h3 class="mt-3 font-semibold">FBR invoice number &amp; QR</h3><p class="mt-2 text-sm text-slate-600">Each invoice carries the official FBR number and a QR code your customers can verify. Prints on 80mm thermal receipts.</p></div>
+      <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">📊</div><h3 class="mt-3 font-semibold">Excel bulk upload</h3><p class="mt-2 text-sm text-slate-600">Upload hundreds of invoices from Excel or CSV. See errors before sending; valid invoices are filed one by one in the background.</p></div>
+      <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🔁</div><h3 class="mt-3 font-semibold">Keeps working when FBR doesn't</h3><p class="mt-2 text-sm text-slate-600">If FBR is unreachable, invoices wait in a queue and are sent automatically when it is back.</p></div>
+      <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🧮</div><h3 class="mt-3 font-semibold">Tax worked out for you</h3><p class="mt-2 text-sm text-slate-600">Sales tax, further tax for unregistered buyers, 3rd schedule retail price, exempt and zero-rated items, discounts.</p></div>
+      <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🔎</div><h3 class="mt-3 font-semibold">HS code search</h3><p class="mt-2 text-sm text-slate-600">Type "laptop" or "0403" and pick the right HS/PCT code; the unit of measure FBR expects is filled in.</p></div>
+      <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">↩️</div><h3 class="mt-3 font-semibold">Debit notes, done right</h3><p class="mt-2 text-sm text-slate-600">Linked to the original invoice, checked against FBR's 180-day and value limits before sending.</p></div>
+      <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">📇</div><h3 class="mt-3 font-semibold">Products &amp; buyers saved</h3><p class="mt-2 text-sm text-slate-600">Pick a saved product and the HS code, rate and price fill themselves. Registered buyers are remembered with their NTN.</p></div>
+      <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">📑</div><h3 class="mt-3 font-semibold">Annex-C report</h3><p class="mt-2 text-sm text-slate-600">Monthly item-wise sales export in the IRIS Annex-C layout for your sales tax return.</p></div>
+      <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🛡️</div><h3 class="mt-3 font-semibold">Records you can trust</h3><p class="mt-2 text-sm text-slate-600">A tamper-proof activity log of every invoice and change, kept for FBR's six-year retention period.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section id="how" class="py-16">
+  <div class="max-w-6xl mx-auto px-4">
+    <h2 class="text-3xl font-extrabold text-slate-900 text-center">From registration to your first FBR invoice</h2>
+    <div class="mt-10 grid md:grid-cols-4 gap-6">
+      <div class="relative p-6 rounded-xl border"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">1</div><h3 class="mt-4 font-semibold">Register in IRIS</h3><p class="mt-2 text-sm text-slate-600">Choose Digital Invoicing → API integration → PRAL. We guide you through every field.</p></div>
+      <div class="relative p-6 rounded-xl border"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">2</div><h3 class="mt-4 font-semibold">We set you up</h3><p class="mt-2 text-sm text-slate-600">Your business details, FBR token and products go in. Your account is ready to test.</p></div>
+      <div class="relative p-6 rounded-xl border"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">3</div><h3 class="mt-4 font-semibold">FBR testing, handled</h3><p class="mt-2 text-sm text-slate-600">We run the sandbox scenarios FBR assigns to your business type until IRIS marks them complete.</p></div>
+      <div class="relative p-6 rounded-xl border border-emerald-600 bg-emerald-50"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">4</div><h3 class="mt-4 font-semibold">Go live</h3><p class="mt-2 text-sm text-slate-600">With your production token, every invoice you issue is filed with FBR instantly.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- Who it's for -->
+<section id="who" class="bg-emerald-900 text-white py-16">
+  <div class="max-w-6xl mx-auto px-4">
+    <h2 class="text-3xl font-extrabold text-center">Made for businesses that invoice from the office</h2>
+    <div class="mt-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div class="rounded-xl bg-white/10 p-6"><h3 class="font-semibold text-lg">Wholesalers &amp; distributors</h3><p class="mt-2 text-sm text-emerald-50/80">Many invoices a day, registered buyers, Excel uploads.</p></div>
+      <div class="rounded-xl bg-white/10 p-6"><h3 class="font-semibold text-lg">Manufacturers</h3><p class="mt-2 text-sm text-emerald-50/80">Standard, reduced, exempt and 3rd schedule goods on one system.</p></div>
+      <div class="rounded-xl bg-white/10 p-6"><h3 class="font-semibold text-lg">Service providers</h3><p class="mt-2 text-sm text-emerald-50/80">Raise compliant invoices from the browser — no hardware needed.</p></div>
+      <div class="rounded-xl bg-white/10 p-6"><h3 class="font-semibold text-lg">Importers &amp; traders</h3><p class="mt-2 text-sm text-emerald-50/80">HS-code-wise sales ready for your returns and stock statements.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq" class="py-16">
+  <div class="max-w-3xl mx-auto px-4">
+    <h2 class="text-3xl font-extrabold text-slate-900 text-center">Questions</h2>
+    <div class="mt-8 space-y-3">
+      <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">Do I need anything from FBR first?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
+        <p class="mt-3 text-slate-600 text-sm">You need an active NTN/STRN and an IRIS login. In IRIS you select Digital Invoicing with PRAL as the integrator; we help you fill it in and whitelist the server.</p></details>
+      <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">What happens if the internet or FBR is down?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
+        <p class="mt-3 text-slate-600 text-sm">Your invoice is saved and queued. Raseed retries automatically and files it as soon as FBR responds — and it never files the same sale twice.</p></details>
+      <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">Can I upload invoices from Excel?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
+        <p class="mt-3 text-slate-600 text-sm">Yes. Download our template, fill one row per item, and upload. You see every error before anything is sent, and re-uploading the same file never creates duplicates.</p></details>
+      <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">Can my customers verify the invoice?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
+        <p class="mt-3 text-slate-600 text-sm">Every receipt shows the FBR invoice number and a QR code with the FBR Digital Invoicing logo, which customers can check in FBR's Tax Asaan app.</p></details>
+      <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">Is my data safe?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
+        <p class="mt-3 text-slate-600 text-sm">Each business only sees its own data. Your FBR token is stored encrypted, and every action is recorded in a log that cannot be edited or deleted.</p></details>
+      <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">How much does it cost?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
+        <p class="mt-3 text-slate-600 text-sm">It depends on your business and invoice volume. <a href="/contact" class="text-emerald-700 underline">Contact us</a> for a free demo and a quote.</p></details>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="px-4 pb-16">
+  <div class="max-w-6xl mx-auto rounded-2xl bg-emerald-700 text-white p-10 md:p-14 flex flex-col md:flex-row items-center justify-between gap-6">
+    <div>
+      <h2 class="text-3xl font-extrabold">Ready to file with FBR the easy way?</h2>
+      <p class="mt-2 text-emerald-50">Tell us about your business — we'll show you Raseed with your own products.</p>
+    </div>
+    <div class="flex flex-wrap gap-3">
+      <a href="/contact" class="px-5 py-3 rounded-lg bg-white text-emerald-800 font-semibold hover:bg-emerald-50">Book a free demo</a>
+      <a data-wa href="#" class="hidden px-5 py-3 rounded-lg border border-white/60 font-semibold hover:bg-white/10">WhatsApp us</a>
+    </div>
+  </div>
+</section>
+
+<footer class="border-t">
+  <div class="max-w-6xl mx-auto px-4 py-8 flex flex-col md:flex-row gap-4 justify-between text-sm text-slate-500">
+    <div><span class="font-bold text-emerald-700">Raseed</span> · FBR Digital Invoicing for Pakistani businesses <span data-contact class="block mt-1"></span></div>
+    <div class="flex gap-4"><a href="/contact" class="hover:text-emerald-700">Contact</a><a href="/app" class="hover:text-emerald-700">Log in</a></div>
+  </div>
+  <p class="max-w-6xl mx-auto px-4 pb-8 text-xs text-slate-400">Raseed is independent software that connects to FBR Digital Invoicing through PRAL. It is not affiliated with or endorsed by the Federal Board of Revenue or PRAL.</p>
+</footer>
 
 <script>
-const S = { token: null, role: null, company: '', meta: null, settings: null, lists: {} };
-try { Object.assign(S, JSON.parse(localStorage.getItem('fbrSession') || '{}')); } catch {}
-
-const $ = sel => document.querySelector(sel);
-const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const money = n => Number(n || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const r2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
-
-function toast(msg, ok = false) {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.className = `fixed top-4 right-4 z-50 max-w-md px-4 py-3 rounded shadow-lg text-sm ${ok ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`;
-  clearTimeout(t._h); t._h = setTimeout(() => t.classList.add('hidden'), ok ? 3000 : 8000);
-}
-
-async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    method: opts.method || 'GET',
-    headers: { 'Content-Type': 'application/json', ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
+try { new QRCode(document.getElementById('heroQr'), { text: '1234567DI1791300004321', width: 80, height: 80, correctLevel: QRCode.CorrectLevel.L }); } catch {}
+// Contact details come from the server (.env CONTACT_*); hidden when not set
+fetch('/api/public/site').then(r => r.json()).then(s => {
+  if (s.whatsapp) document.querySelectorAll('[data-wa]').forEach(a => {
+    a.href = `https://wa.me/${s.whatsapp}?text=${encodeURIComponent('Assalam o Alaikum! I would like to know more about Raseed.')}`;
+    a.target = '_blank'; a.rel = 'noopener'; a.classList.remove('hidden');
   });
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && S.token) { logout(); throw new Error(data.error || 'Session expired'); }
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-  return data;
-}
-
-function saveSession() {
-  try { localStorage.setItem('fbrSession', JSON.stringify({ token: S.token, role: S.role, company: S.company })); } catch {}
-}
-function logout() {
-  S.token = S.role = null;
-  try { localStorage.removeItem('fbrSession'); } catch {}
-  show();
-}
-
-function show() {
-  for (const id of ['loginView', 'adminView', 'clientView']) $('#' + id).classList.add('hidden');
-  $('#topbar').classList.toggle('hidden', !S.token);
-  if (!S.token) return $('#loginView').classList.remove('hidden');
-  $('#companyName').textContent = S.company;
-  if (S.role === 'SUPER_ADMIN') { $('#adminView').classList.remove('hidden'); loadClients(); }
-  else { $('#clientView').classList.remove('hidden'); initClient(); }
-}
-
-$('#loginForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  const f = new FormData(e.target);
-  try {
-    const d = await api('/api/auth/login', { method: 'POST', body: { email: f.get('email'), password: f.get('password') } });
-    Object.assign(S, { token: d.token, role: d.role, company: d.companyName });
-    saveSession(); e.target.reset(); show();
-  } catch (err) { toast(err.message); }
-});
-
-/* ---------- Admin ---------- */
-async function loadClients() {
-  try {
-    const rows = await api('/api/admin/clients');
-    $('#clientRows').innerHTML = rows.map(c => `<tr class="border-b last:border-0">
-      <td class="py-2">${esc(c.companyName)}</td><td>${esc(c.emails.join(', '))}</td><td>${esc(c.sellerNtnCnic || '—')}</td>
-      <td>${esc(c.fbrEnv)}</td><td>${c.fbrTokenMasked ? '✔' : '—'}</td><td class="text-right">${c.invoiceCount}</td></tr>`).join('')
-      || '<tr><td colspan="6" class="py-3 text-slate-500">No clients yet.</td></tr>';
-  } catch (err) { toast(err.message); }
-}
-async function loadEgressIp() {
-  $('#egressIp').textContent = 'checking…';
-  try {
-    const d = await api('/api/admin/egress-ip');
-    $('#egressIp').textContent = `${d.ip} ${d.viaProxy ? '(via static proxy)' : '(no proxy — this IP may change on Render/Vercel)'}`;
-  } catch (err) { $('#egressIp').textContent = '—'; toast(err.message); }
-}
-$('#clientForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  try {
-    await api('/api/admin/clients', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
-    e.target.reset(); toast('Client created', true); loadClients();
-  } catch (err) { toast(err.message); }
-});
-
-/* ---------- Client ---------- */
-let clientReady = false;
-async function initClient() {
-  try {
-    if (!S.meta) S.meta = await api('/api/meta');
-    S.settings = await api('/api/client/settings');
-    await loadLists();
-    fillSettings();
-    loadHsStats();
-    if (!clientReady) setupInvoiceForm();
-    clientReady = true;
-    applyEnv();
-    loadInvoices();
-  } catch (err) { toast(err.message); }
-}
-
-async function loadLists() {
-  // Live FBR reference data if the token works, otherwise built-in lists
-  const [prov, uom] = await Promise.all([api('/api/ref/provinces').catch(() => ({})), api('/api/ref/uom').catch(() => ({}))]);
-  S.lists.provinces = prov.data?.map(p => p.stateProvinceDesc) || S.meta.provinces;
-  S.lists.uoms = uom.data?.map(u => u.description) || S.meta.uoms;
-  for (const sel of document.querySelectorAll('select[data-list="provinces"]')) {
-    const cur = sel.value;
-    sel.innerHTML = '<option value="">— select —</option>' + S.lists.provinces.map(p => `<option>${esc(p)}</option>`).join('');
-    sel.value = cur;
-  }
-}
-
-function fillSettings() {
-  const f = $('#settingsForm'), s = S.settings;
-  for (const k of ['sellerNtnCnic', 'sellerStrn', 'sellerBusinessName', 'sellerAddress', 'fbrEnv', 'furtherTaxRate']) f[k].value = s[k] ?? '';
-  // Keep the saved value selectable even if FBR's list spells it differently
-  if (s.sellerProvince && ![...f.sellerProvince.options].some(o => o.value === s.sellerProvince)) {
-    f.sellerProvince.insertAdjacentHTML('beforeend', `<option>${esc(s.sellerProvince)}</option>`);
-  }
-  f.sellerProvince.value = s.sellerProvince || '';
-  f.fbrToken.value = '';
-  $('#tokenMasked').textContent = s.fbrTokenMasked ? `(saved: ${s.fbrTokenMasked})` : '(not set)';
-  const sellerMissing = !s.sellerNtnCnic || !s.sellerBusinessName || !s.sellerProvince || !s.sellerAddress;
-  const tokenMissing = !s.fbrTokenMasked && !S.meta.mock;
-  const missing = sellerMissing || tokenMissing;
-  $('#settingsHint').textContent = sellerMissing && tokenMissing ? 'Complete seller details and token before invoicing'
-    : sellerMissing ? 'Complete seller details before invoicing'
-    : tokenMissing ? 'Add the PRAL token before invoicing' : '';
-  if (missing) $('#settingsBox').open = true;
-}
-
-function applyEnv() {
-  const sandbox = S.settings.fbrEnv === 'SANDBOX';
-  const b = $('#envBadge');
-  b.classList.remove('hidden');
-  b.textContent = (S.meta.mock ? 'MOCK · ' : '') + (sandbox ? 'SANDBOX' : 'PRODUCTION');
-  b.className = `px-2 py-0.5 rounded text-xs font-bold ${sandbox || S.meta.mock ? 'bg-amber-300 text-amber-900' : 'bg-red-600 text-white'}`;
-  $('#scenarioRow').classList.toggle('hidden', !sandbox);
-  $('#scenarioSel').required = sandbox;
-}
-
-$('#settingsForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  const body = Object.fromEntries(new FormData(e.target));
-  if (!body.fbrToken) delete body.fbrToken;
-  if (body.fbrEnv === 'PRODUCTION' && S.settings.fbrEnv !== 'PRODUCTION' &&
-      !confirm('Switch to PRODUCTION? Invoices will be filed with FBR for real. Make sure you saved the production token.')) return;
-  try {
-    S.settings = await api('/api/client/settings', { method: 'PUT', body });
-    fillSettings(); applyEnv(); toast('Settings saved', true);
-    if (body.fbrToken) { loadLists(); setTimeout(loadHsStats, 30000); }
-  } catch (err) { toast(err.message); }
-});
-
-/* ---------- Invoice form ---------- */
-const SALE_TYPES = () => [...new Set(S.meta.scenarios.map(s => s.saleType))];
-
-function itemRow() {
-  const div = document.createElement('div');
-  div.className = 'item border rounded p-3 grid grid-cols-2 sm:grid-cols-6 gap-2 relative';
-  div.innerHTML = `
-    <button type="button" class="absolute top-1 right-2 text-slate-400 hover:text-red-600" title="Remove" onclick="removeItem(this)">✕</button>
-    <label class="col-span-2 relative"><span>HS code</span>
-      <input name="hsCode" class="hs-input" placeholder="Type code or product, e.g. laptop" autocomplete="off" required>
-      <div class="hs-list hidden absolute z-30 left-0 top-full mt-1 w-[34rem] max-w-[85vw] max-h-72 overflow-auto bg-white border rounded shadow-lg text-xs"></div>
-    </label>
-    <label class="col-span-2"><span>Description (what you sell)</span><input name="productDescription" required autocomplete="off" placeholder="Type to search saved products"></label>
-    <label class="col-span-2"><span>Sale type</span><select name="saleType">${SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('')}</select></label>
-    <div class="hs-desc col-span-2 sm:col-span-6 text-xs text-slate-500 -mt-1"></div>
-    <label><span>Qty</span><input name="quantity" type="number" step="0.0001" min="0" value="1" required></label>
-    <label><span>UOM</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
-    <label><span>Unit price</span><input name="unitPrice" type="number" step="0.01" min="0" required></label>
-    <label><span>Rate</span><input name="rate" list="rateList" value="18%" required></label>
-    <label><span>Discount</span><input name="discount" type="number" step="0.01" min="0" value="0"></label>
-    <label title="3rd schedule / notified goods: total retail (or notified) value of the whole line, not per unit. Sales tax is charged on this."><span>Retail value, line total (3rd sch.)</span><input name="fixedNotifiedValueOrRetailPrice" type="number" step="0.01" min="0" value="0"></label>
-    <details class="col-span-2 sm:col-span-6 text-xs">
-      <summary class="cursor-pointer text-slate-500">More: SRO, overrides, extra tax, FED, ST withheld</summary>
-      <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 mt-2">
-        <label><span>SRO schedule no.</span><input name="sroScheduleNo"></label>
-        <label><span>SRO item serial</span><input name="sroItemSerialNo"></label>
-        <label><span>Sales tax (override)</span><input name="salesTaxApplicable" type="number" step="0.01" min="0" placeholder="auto"></label>
-        <label><span>Further tax (override)</span><input name="furtherTax" type="number" step="0.01" min="0" placeholder="auto"></label>
-        <label><span>Extra tax</span><input name="extraTax" type="number" step="0.01" min="0" value="0"></label>
-        <label><span>FED payable</span><input name="fedPayable" type="number" step="0.01" min="0" value="0"></label>
-        <label><span>ST withheld at source</span><input name="salesTaxWithheldAtSource" type="number" step="0.01" min="0" value="0"></label>
-      </div>
-    </details>
-    <div class="col-span-2 sm:col-span-6 flex flex-wrap items-center justify-between gap-2">
-      <div class="text-xs text-slate-600 line-calc"></div>
-      <button type="button" class="save-product text-xs text-emerald-700 hover:underline">★ Save as product</button>
-    </div>`;
-  return div;
-}
-
-function addItem() {
-  const row = itemRow();
-  const sc = S.meta.scenarios.find(s => s.id === $('#scenarioSel').value);
-  if (sc) row.querySelector('[name=saleType]').value = sc.saleType;
-  $('#items').appendChild(row);
-  recalc();
-}
-function removeItem(btn) {
-  if ($('#items').children.length > 1) btn.closest('.item').remove();
-  recalc();
-}
-
-function readItems() {
-  return [...document.querySelectorAll('#items .item')].map(row => {
-    const o = {};
-    for (const el of row.querySelectorAll('input, select')) o[el.name] = el.value;
-    return o;
-  });
-}
-
-// Mirrors src/tax.js for the live preview; the server recalculates and is authoritative
-const NO_FT = new Set(['3rd Schedule Goods', 'Exempt Goods', 'Goods at zero-rate']);
-function recalc() {
-  // Further tax only for unregistered *business* buyers, not end consumers (CA rule)
-  const unreg = $('#buyerType').value === 'Unregistered' && !$('#invoiceForm').endConsumer.checked;
-  const ftRate = Number(S.settings?.furtherTaxRate || 0);
-  const t = { excl: 0, st: 0, ft: 0, total: 0 };
-  const items = readItems();
-  document.querySelectorAll('#items .item').forEach((row, i) => {
-    const it = items[i];
-    const pct = Number((String(it.rate).match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
-    const excl = r2(Number(it.quantity || 0) * Number(it.unitPrice || 0) - Number(it.discount || 0));
-    const base = Number(it.fixedNotifiedValueOrRetailPrice) > 0 ? Number(it.fixedNotifiedValueOrRetailPrice) : excl;
-    const st = it.salesTaxApplicable !== '' ? r2(it.salesTaxApplicable) : r2(base * pct / 100);
-    const ft = it.furtherTax !== '' ? r2(it.furtherTax) : (unreg && pct > 0 && !NO_FT.has(it.saleType) ? r2(excl * ftRate / 100) : 0);
-    const total = r2(excl + st + ft + Number(it.extraTax || 0) + Number(it.fedPayable || 0));
-    row.querySelector('.line-calc').textContent = `Excl. ST ${money(excl)} · ST ${money(st)} · Further ${money(ft)} · Line total ${money(total)}`;
-    t.excl += excl; t.st += st; t.ft += ft; t.total += total;
-  });
-  $('#tExcl').textContent = money(t.excl); $('#tST').textContent = money(t.st);
-  $('#tFT').textContent = money(t.ft); $('#tTotal').textContent = money(t.total);
-}
-
-function setupInvoiceForm() {
-  document.body.insertAdjacentHTML('beforeend',
-    `<datalist id="uomList">${S.lists.uoms.map(u => `<option value="${esc(u)}">`).join('')}</datalist>
-     <datalist id="rateList">${S.meta.rates.map(r => `<option value="${esc(r)}">`).join('')}</datalist>`);
-  $('#scenarioSel').innerHTML = '<option value="">— select scenario —</option>' +
-    S.meta.scenarios.map(s => `<option value="${s.id}">${s.id} — ${esc(s.desc)}</option>`).join('');
-  $('#scenarioSel').addEventListener('change', e => {
-    const sc = S.meta.scenarios.find(s => s.id === e.target.value);
-    if (!sc) return;
-    document.querySelectorAll('#items [name=saleType]').forEach(sel => sel.value = sc.saleType);
-    if (sc.buyer) { $('#buyerType').value = sc.buyer; $('#buyerType').dispatchEvent(new Event('change')); }
-    if (sc.endConsumer !== undefined) $('#invoiceForm').endConsumer.checked = sc.endConsumer;
-    recalc();
-  });
-  $('#buyerType').addEventListener('change', () => {
-    const reg = $('#buyerType').value === 'Registered';
-    $('#ntnReq').classList.toggle('hidden', !reg);
-    $('#endConsumerWrap').classList.toggle('hidden', reg);
-  });
-  $('#invoiceForm').reason.innerHTML = '<option value="">— select reason —</option>' + S.meta.debitReasons.map(r => `<option>${esc(r)}</option>`).join('');
-  $('#invoiceType').addEventListener('change', applyDocType);
-  $('#invoiceForm').reason.addEventListener('change', () => $('#remarksReq').classList.toggle('hidden', $('#invoiceForm').reason.value !== 'Others'));
-  setupHsSearch();
-  setupSaved();
-  setupSavedForms();
-  setupAnnexC();
-  $('#invoiceForm').addEventListener('input', recalc);
-  $('#invoiceForm').addEventListener('change', recalc);
-  $('#invoiceForm').invoiceDate.value = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
-  addItem();
-
-  $('#invoiceForm').addEventListener('submit', async e => {
-    e.preventDefault();
-    const f = e.target, btn = $('#submitBtn');
-    const body = {
-      invoiceType: f.invoiceType.value, invoiceDate: f.invoiceDate.value, invoiceRefNo: f.invoiceRefNo.value,
-      reason: f.reason.value, reasonRemarks: f.reasonRemarks.value,
-      scenarioId: f.scenarioId.value, buyerRegistrationType: f.buyerRegistrationType.value,
-      endConsumer: f.buyerRegistrationType.value === 'Unregistered' && f.endConsumer.checked,
-      buyerNtnCnic: f.buyerNtnCnic.value, buyerBusinessName: f.buyerBusinessName.value,
-      buyerProvince: f.buyerProvince.value, buyerAddress: f.buyerAddress.value, items: readItems(),
-      clientRequestId: formRequestId,
-    };
-    btn.disabled = true; btn.textContent = 'Sending to FBR…';
-    try {
-      const d = await api('/api/invoices', { method: 'POST', body });
-      // An invoice now exists for this id (filed or not); the next submit is a new invoice.
-      // If the request never got a reply we keep the id, so resending can't create a duplicate.
-      formRequestId = newRequestId();
-      if (d.duplicate) toast(`This invoice was already sent (#${d.invoice.localNo}). Showing it instead of sending again.`, true);
-      handleResult(d, !d.duplicate);
-      if (d.invoice.status === 'SUBMITTED') resetForm();
-    } catch (err) { toast(err.message); }
-    finally { btn.disabled = false; btn.textContent = 'Submit to FBR'; }
-  });
-}
-
-// One id per invoice form; the server returns the existing invoice if the same id arrives twice
-function newRequestId() {
-  try { return crypto.randomUUID(); } catch { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12); }
-}
-let formRequestId = newRequestId();
-
-function applyDocType() {
-  const debit = $('#invoiceType').value === 'Debit Note';
-  $('#refNoWrap').classList.toggle('hidden', !debit);
-  document.querySelectorAll('.debit-only').forEach(el => el.classList.toggle('hidden', !debit));
-  $('#invoiceForm').invoiceRefNo.required = debit;
-  $('#invoiceForm').reason.required = debit;
-}
-
-// Prefill the form as a debit note against a filed sale invoice
-async function startDebitNote(id) {
-  try {
-    const { invoice: inv } = await api('/api/invoices/' + id);
-    const f = $('#invoiceForm');
-    f.invoiceType.value = 'Debit Note'; applyDocType();
-    f.invoiceRefNo.value = inv.fbrInvoiceNumber;
-    f.reason.value = ''; f.reasonRemarks.value = '';
-    f.invoiceDate.value = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
-    fillBuyer({ businessName: inv.buyerBusinessName, ntnCnic: inv.buyerNtnCnic, registrationType: inv.buyerRegistrationType, province: inv.buyerProvince, address: inv.buyerAddress, endConsumer: inv.endConsumer });
-    $('#items').innerHTML = '';
-    for (const it of inv.items) {
-      addItem();
-      const row = $('#items').lastElementChild;
-      const st = row.querySelector('[name=saleType]');
-      if (![...st.options].some(o => o.value === it.saleType)) st.insertAdjacentHTML('beforeend', `<option>${esc(it.saleType)}</option>`);
-      for (const k of ['hsCode', 'productDescription', 'uoM', 'rate', 'saleType', 'sroScheduleNo', 'sroItemSerialNo'])
-        row.querySelector(`[name=${k}]`).value = it[k] ?? '';
-      for (const k of ['quantity', 'unitPrice', 'discount', 'fixedNotifiedValueOrRetailPrice', 'extraTax', 'fedPayable', 'salesTaxWithheldAtSource'])
-        row.querySelector(`[name=${k}]`).value = Number(it[k] ?? 0);
-      row.querySelector('.hs-desc').textContent = `From original invoice #${inv.localNo}`;
-    }
-    formRequestId = newRequestId();
-    recalc();
-    $('#invoiceForm').scrollIntoView({ behavior: 'smooth' });
-    toast(`Debit note against invoice #${inv.localNo}: choose the reason, then change quantities/values to the amount being adjusted.`, true);
-  } catch (err) { toast(err.message); }
-}
-
-function resetForm() {
-  const f = $('#invoiceForm');
-  for (const n of ['buyerNtnCnic', 'buyerBusinessName', 'buyerAddress', 'invoiceRefNo', 'reasonRemarks']) f[n].value = '';
-  f.invoiceType.value = 'Sale Invoice'; f.reason.value = ''; applyDocType();
-  f.buyerRegistrationType.value = 'Unregistered'; f.endConsumer.checked = true;
-  f.buyerRegistrationType.dispatchEvent(new Event('change'));
-  $('#items').innerHTML = ''; addItem();
-  formRequestId = newRequestId();
-}
-
-function handleResult(d, announce = true) {
-  loadInvoices();
-  if (d.invoice.status === 'SUBMITTED') {
-    if (announce) toast(`Filed with FBR: ${d.invoice.fbrInvoiceNumber}`, true);
-    renderReceipt(d.invoice, d.seller);
-  } else if (d.invoice.status === 'UNCERTAIN') {
-    toast(`Invoice #${d.invoice.localNo}: connection to FBR broke after sending — it may already be filed. Check IRIS, then use the buttons in Recent invoices.`);
-  } else if (announce) {
-    toast(`FBR rejected invoice #${d.invoice.localNo}: ${d.invoice.errorMessage}`);
-  }
-}
-
-/* ---------- HS code search ---------- */
-async function loadHsStats() {
-  try {
-    const st = await api('/api/hs/stats');
-    const fbrN = st.FBR?.count || 0, pctN = st['PCT-2017']?.count || 0;
-    $('#hsStats').textContent = fbrN
-      ? `${fbrN.toLocaleString()} from FBR (synced ${new Date(st.FBR.updatedAt).toLocaleDateString()})` + (pctN ? ` + ${pctN.toLocaleString()} older PCT-2017` : '')
-      : `${pctN.toLocaleString()} from PCT 2017 list (not yet synced with FBR)`;
-  } catch { $('#hsStats').textContent = '—'; }
-}
-async function syncHs() {
-  const btn = $('#hsSyncBtn'); btn.disabled = true; btn.textContent = 'Syncing… (can take a minute)';
-  try { const d = await api('/api/hs/sync', { method: 'POST' }); toast(`Synced ${d.synced.toLocaleString()} HS codes from FBR`, true); loadHsStats(); }
-  catch (err) { toast(err.message); }
-  finally { btn.disabled = false; btn.textContent = 'Sync HS codes from FBR'; }
-}
-
-let hsTimer;
-async function hsSuggest(inp) {
-  const box = inp.parentElement.querySelector('.hs-list');
-  const q = inp.value.trim();
-  if (q.length < 2) return box.classList.add('hidden');
-  const rows = await api('/api/hs?q=' + encodeURIComponent(q)).catch(() => []);
-  if (inp.value.trim() !== q) return; // user kept typing
-  box.innerHTML = rows.length
-    ? rows.map(r => `<button type="button" class="hs-opt block w-full text-left px-3 py-2 hover:bg-emerald-50 border-b last:border-0"
-        data-code="${esc(r.code)}" data-desc="${esc(r.description)}">
-        <span class="font-mono font-semibold">${esc(r.code)}</span>
-        ${r.source === 'FBR' ? '<span class="ml-1 text-emerald-700 font-semibold">FBR</span>' : '<span class="ml-1 text-slate-400">PCT 2017</span>'}
-        <div class="text-slate-600">${esc(r.description)}</div></button>`).join('')
-    : '<div class="px-3 py-2 text-slate-500">No matching HS code</div>';
-  box.classList.remove('hidden');
-}
-// "Milk and cream › … › Yogurt" -> "Yogurt"; "Men's shirts › Of cotton › Other" -> "Of cotton (other)"
-function shortHsDesc(desc) {
-  const parts = desc.split(' › ').map(s => s.trim()).filter(Boolean);
-  const generic = s => /^(other|others|other than .*)$/i.test(s);
-  let i = parts.length - 1;
-  while (i > 0 && generic(parts[i])) i--;
-  const text = i < parts.length - 1 ? `${parts[i]} (other)` : parts[i];
-  return text.length > 150 ? text.slice(0, 147).replace(/\s+\S*$/, '') + '…' : text;
-}
-async function pickHs(row, code, desc) {
-  row.querySelector('[name=hsCode]').value = code;
-  row.querySelector('.hs-list').classList.add('hidden');
-  row.querySelector('.hs-desc').textContent = desc;
-  // Fill "what you sell" unless the user typed their own text
-  const pd = row.querySelector('[name=productDescription]');
-  if (!pd.value.trim() || pd.dataset.auto === '1') { pd.value = shortHsDesc(desc); pd.dataset.auto = '1'; }
-  // FBR rejects a UOM that doesn't belong to the HS code; use its list when the token works
-  const u = await api('/api/hs/' + encodeURIComponent(code) + '/uom').catch(() => null);
-  const uom = row.querySelector('[name=uoM]');
-  if (u?.data?.length) {
-    if (!u.data.includes(uom.value)) uom.value = u.data[0];
-    uom.title = 'FBR accepts for this HS code: ' + u.data.join(', ');
-  }
-  recalc();
-}
-function setupHsSearch() {
-  const items = $('#items');
-  items.addEventListener('input', e => {
-    if (e.target.name === 'productDescription') e.target.dataset.auto = ''; // typed by the user: don't overwrite on next pick
-    if (!e.target.matches('.hs-input')) return;
-    e.target.closest('.item').querySelector('.hs-desc').textContent = '';
-    clearTimeout(hsTimer);
-    hsTimer = setTimeout(() => hsSuggest(e.target), 250);
-  });
-  items.addEventListener('mousedown', e => {
-    const opt = e.target.closest('.hs-opt');
-    if (!opt) return;
-    e.preventDefault(); // keep focus so the list doesn't close before the pick
-    pickHs(opt.closest('.item'), opt.dataset.code, opt.dataset.desc);
-  });
-  items.addEventListener('focusout', e => {
-    if (e.target.matches('.hs-input')) setTimeout(() => e.target.parentElement.querySelector('.hs-list').classList.add('hidden'), 150);
-  });
-}
-
-/* ---------- Saved products & buyers ---------- */
-// Small dropdown under an input; rows are rendered by `render`, `onPick` gets the chosen row
-function suggest(input, rows, render, onPick) {
-  const host = input.parentElement;
-  let box = host.querySelector(':scope > .sg-list');
-  if (!box) {
-    box = document.createElement('div');
-    box.className = 'sg-list hidden absolute z-30 left-0 top-full mt-1 w-[30rem] max-w-[85vw] max-h-72 overflow-auto bg-white border rounded shadow-lg text-xs';
-    host.classList.add('relative');
-    host.appendChild(box);
-  }
-  if (!rows.length) return box.classList.add('hidden');
-  box.innerHTML = rows.map((r, i) => `<button type="button" class="sg-opt block w-full text-left px-3 py-2 hover:bg-emerald-50 border-b last:border-0" data-i="${i}">${render(r)}</button>`).join('');
-  box._rows = rows; box._pick = onPick;
-  box.classList.remove('hidden');
-}
-document.addEventListener('mousedown', e => {
-  const opt = e.target.closest('.sg-opt');
-  if (!opt) return;
-  e.preventDefault();
-  const box = opt.closest('.sg-list');
-  box.classList.add('hidden');
-  box._pick(box._rows[Number(opt.dataset.i)]);
-});
-document.addEventListener('focusout', e => {
-  const box = e.target.parentElement?.querySelector(':scope > .sg-list');
-  if (box) setTimeout(() => box.classList.add('hidden'), 150);
-});
-const sgTimers = new WeakMap();
-function debounced(input, fn) {
-  clearTimeout(sgTimers.get(input));
-  sgTimers.set(input, setTimeout(fn, 250));
-}
-
-function fillRowFromProduct(row, p) {
-  const set = (n, v) => { const el = row.querySelector(`[name=${n}]`); if (el && v != null && v !== '') el.value = v; };
-  const st = row.querySelector('[name=saleType]');
-  if (p.saleType && ![...st.options].some(o => o.value === p.saleType)) st.insertAdjacentHTML('beforeend', `<option>${esc(p.saleType)}</option>`);
-  set('productDescription', p.name); set('hsCode', p.hsCode); set('uoM', p.uoM); set('rate', p.rate); set('saleType', p.saleType);
-  if (p.unitPrice != null) set('unitPrice', Number(p.unitPrice));
-  set('sroScheduleNo', p.sroScheduleNo); set('sroItemSerialNo', p.sroItemSerialNo);
-  row.querySelector('[name=productDescription]').dataset.auto = '';
-  row.querySelector('.hs-desc').textContent = 'From saved product';
-  recalc();
-}
-
-function fillBuyer(b) {
-  const f = $('#invoiceForm');
-  f.buyerBusinessName.value = b.businessName;
-  f.buyerNtnCnic.value = b.ntnCnic || '';
-  f.buyerRegistrationType.value = b.registrationType;
-  f.buyerRegistrationType.dispatchEvent(new Event('change'));
-  f.endConsumer.checked = b.endConsumer ?? false; // saved buyers are businesses
-  if (b.province) {
-    if (![...f.buyerProvince.options].some(o => o.value === b.province)) f.buyerProvince.insertAdjacentHTML('beforeend', `<option>${esc(b.province)}</option>`);
-    f.buyerProvince.value = b.province;
-  }
-  f.buyerAddress.value = b.address || '';
-  recalc();
-}
-
-async function saveRowAsProduct(row) {
-  const it = {};
-  for (const el of row.querySelectorAll('input, select')) it[el.name] = el.value;
-  try {
-    const p = await api('/api/products', { method: 'POST', body: {
-      name: it.productDescription, hsCode: it.hsCode, uoM: it.uoM, rate: it.rate, saleType: it.saleType,
-      unitPrice: it.unitPrice, sroScheduleNo: it.sroScheduleNo, sroItemSerialNo: it.sroItemSerialNo,
-    } });
-    toast(`Saved product "${p.name}"`, true);
-    if ($('#savedBox').open) loadSaved();
-  } catch (err) { toast(err.message); }
-}
-
-function setupSaved() {
-  const f = $('#invoiceForm');
-  // Products: search while typing the item description
-  $('#items').addEventListener('input', e => {
-    const inp = e.target;
-    if (inp.name !== 'productDescription' || inp.value.trim().length < 2) return;
-    debounced(inp, async () => {
-      const rows = await api('/api/products?q=' + encodeURIComponent(inp.value.trim())).catch(() => []);
-      suggest(inp, rows,
-        p => `<b>${esc(p.name)}</b> <span class="font-mono text-slate-500">${esc(p.hsCode)}</span> · ${esc(p.rate)} · ${esc(p.uoM)}${p.unitPrice != null ? ' · Rs ' + money(p.unitPrice) : ''}`,
-        p => fillRowFromProduct(inp.closest('.item'), p));
-    });
-  });
-  $('#items').addEventListener('click', e => {
-    const btn = e.target.closest('.save-product');
-    if (btn) saveRowAsProduct(btn.closest('.item'));
-  });
-  // Buyers: search by name or NTN
-  for (const name of ['buyerBusinessName', 'buyerNtnCnic']) {
-    const inp = f[name];
-    inp.addEventListener('input', () => {
-      const q = inp.value.trim();
-      if (q.length < (name === 'buyerNtnCnic' ? 3 : 2)) return;
-      debounced(inp, async () => {
-        const rows = await api('/api/buyers?q=' + encodeURIComponent(q)).catch(() => []);
-        suggest(inp, rows,
-          b => `<b>${esc(b.businessName)}</b> <span class="font-mono text-slate-500">${esc(b.ntnCnic || '')}</span> · ${esc(b.registrationType)}${b.province ? ' · ' + esc(b.province) : ''}`,
-          fillBuyer);
-      });
-    });
-  }
-  $('#savedBox').addEventListener('toggle', () => { if ($('#savedBox').open) loadSaved(); });
-}
-
-async function loadSaved() {
-  try {
-    const [products, buyers] = await Promise.all([api('/api/products'), api('/api/buyers')]);
-    S.saved = { products, buyers };
-    $('#productRows').innerHTML = products.map(p => `<tr class="border-b last:border-0">
-      <td class="py-1">${esc(p.name)}</td><td class="font-mono text-xs">${esc(p.hsCode)}</td><td>${esc(p.rate)}</td><td class="text-xs">${esc(p.uoM)}</td>
-      <td class="text-right">${p.unitPrice != null ? money(p.unitPrice) : ''}</td>
-      <td class="text-right whitespace-nowrap"><button class="text-emerald-700 text-xs mr-2" onclick="editProduct('${p.id}')">Edit</button><button class="text-red-600 text-xs" onclick="deleteSaved('products','${p.id}')">Delete</button></td></tr>`).join('')
-      || '<tr><td colspan="6" class="py-2 text-slate-500">No saved products yet.</td></tr>';
-    $('#buyerRows').innerHTML = buyers.map(b => `<tr class="border-b last:border-0">
-      <td class="py-1">${esc(b.businessName)}</td><td class="font-mono text-xs">${esc(b.ntnCnic || '')}</td><td>${esc(b.registrationType)}</td><td class="text-xs">${esc(b.province)}</td>
-      <td class="text-right whitespace-nowrap"><button class="text-emerald-700 text-xs mr-2" onclick="editBuyer('${b.id}')">Edit</button><button class="text-red-600 text-xs" onclick="deleteSaved('buyers','${b.id}')">Delete</button></td></tr>`).join('')
-      || '<tr><td colspan="5" class="py-2 text-slate-500">No saved buyers yet.</td></tr>';
-  } catch (err) { toast(err.message); }
-}
-function setSelect(sel, v) {
-  if (v && ![...sel.options].some(o => o.value === v)) sel.insertAdjacentHTML('beforeend', `<option>${esc(v)}</option>`);
-  sel.value = v || '';
-}
-function clearProductForm() {
-  const f = $('#productForm');
-  f.reset(); f.id.value = '';
-  $('#pfSubmit').textContent = 'Save product'; $('#pfMode').textContent = '';
-}
-function editProduct(id) {
-  const p = S.saved.products.find(x => x.id === id), f = $('#productForm');
-  for (const k of ['id', 'name', 'hsCode', 'uoM', 'rate', 'sroScheduleNo', 'sroItemSerialNo']) f[k].value = p[k] ?? '';
-  f.unitPrice.value = p.unitPrice != null ? Number(p.unitPrice) : '';
-  setSelect(f.saleType, p.saleType);
-  $('#pfSubmit').textContent = 'Update product'; $('#pfMode').textContent = `Editing "${p.name}"`;
-  f.name.focus();
-}
-function clearBuyerForm() {
-  const f = $('#buyerForm');
-  f.reset(); f.id.value = '';
-  $('#bfSubmit').textContent = 'Save buyer'; $('#bfMode').textContent = '';
-}
-function editBuyer(id) {
-  const b = S.saved.buyers.find(x => x.id === id), f = $('#buyerForm');
-  f.id.value = b.id; f.businessName.value = b.businessName; f.ntnCnic.value = b.ntnCnic || '';
-  f.registrationType.value = b.registrationType; f.address.value = b.address || '';
-  setSelect(f.province, b.province);
-  $('#bfSubmit').textContent = 'Update buyer'; $('#bfMode').textContent = `Editing "${b.businessName}"`;
-  f.businessName.focus();
-}
-function setupSavedForms() {
-  const pf = $('#productForm'), bf = $('#buyerForm');
-  $('#pfSaleType').innerHTML = SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('');
-  // HS code search inside the product form
-  pf.hsCode.addEventListener('input', () => {
-    const q = pf.hsCode.value.trim();
-    if (q.length < 2) return;
-    debounced(pf.hsCode, async () => {
-      const rows = await api('/api/hs?q=' + encodeURIComponent(q)).catch(() => []);
-      suggest(pf.hsCode, rows,
-        r => `<span class="font-mono font-semibold">${esc(r.code)}</span> <div class="text-slate-600">${esc(r.description)}</div>`,
-        r => { pf.hsCode.value = r.code; if (!pf.name.value.trim()) pf.name.value = shortHsDesc(r.description); });
-    });
-  });
-  pf.addEventListener('submit', async e => {
-    e.preventDefault();
-    const body = Object.fromEntries(new FormData(pf));
-    if (!body.id) delete body.id;
-    try {
-      const p = await api('/api/products', { method: 'POST', body });
-      toast(`${body.id ? 'Updated' : 'Saved'} product "${p.name}"`, true);
-      clearProductForm(); loadSaved();
-    } catch (err) { toast(err.message); }
-  });
-  bf.addEventListener('submit', async e => {
-    e.preventDefault();
-    const body = Object.fromEntries(new FormData(bf));
-    if (!body.id) delete body.id;
-    try {
-      const b = await api('/api/buyers', { method: 'POST', body });
-      toast(`${body.id ? 'Updated' : 'Saved'} buyer "${b.businessName}"`, true);
-      clearBuyerForm(); loadSaved();
-    } catch (err) { toast(err.message); }
-  });
-}
-
-async function deleteSaved(kind, id) {
-  if (!confirm('Delete this saved ' + (kind === 'products' ? 'product' : 'buyer') + '? Past invoices are not affected.')) return;
-  try { await api(`/api/${kind}/${id}`, { method: 'DELETE' }); loadSaved(); } catch (err) { toast(err.message); }
-}
-
-/* ---------- Annex-C report ---------- */
-function annexParams() {
-  const month = $('#acMonth').value;
-  if (!month) { toast('Choose a month'); return null; }
-  return `month=${encodeURIComponent(month)}&env=${$('#acEnv').value}`;
-}
-async function previewAnnexC() {
-  const q = annexParams(); if (!q) return;
-  try {
-    const d = await api('/api/reports/annex-c?' + q);
-    const t = d.totals;
-    $('#acSummary').innerHTML = d.lines ? `
-      <div class="grid grid-cols-2 sm:grid-cols-6 gap-3 bg-slate-50 rounded p-3">
-        <div>Invoices<div class="font-semibold">${d.invoices}</div></div>
-        <div>Item lines<div class="font-semibold">${d.lines}</div></div>
-        <div>Value excl. ST<div class="font-semibold">${money(t.valueExclST)}</div></div>
-        <div>Sales tax<div class="font-semibold">${money(t.salesTax)}</div></div>
-        <div>Further tax<div class="font-semibold">${money(t.furtherTax)}</div></div>
-        <div>Total<div class="font-semibold text-emerald-700">${money(t.totalValue)}</div></div>
-      </div>
-      <div class="overflow-x-auto mt-3"><table class="w-full text-xs">
-        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Date</th><th>FBR invoice no.</th><th>Buyer</th><th>HS code</th><th>Sale type</th><th>Rate</th><th class="text-right">Qty</th><th class="text-right">Value excl. ST</th><th class="text-right">ST</th><th class="text-right">Further</th></tr></thead>
-        <tbody>${d.rows.map(r => `<tr class="border-b last:border-0"><td class="py-1">${esc(r.documentDate)}</td><td class="font-mono">${esc(r.documentNo)}</td>
-          <td>${esc(r.buyerName)}</td><td class="font-mono">${esc(r.hsCode)}</td><td>${esc(r.saleType)}</td><td>${esc(r.rate)}</td>
-          <td class="text-right">${r.quantity}</td><td class="text-right">${money(r.valueExclST)}</td><td class="text-right">${money(r.salesTax)}</td><td class="text-right">${money(r.furtherTax)}</td></tr>`).join('')}</tbody>
-      </table>${d.lines > d.rows.length ? `<div class="text-xs text-slate-500 mt-1">Showing first ${d.rows.length} of ${d.lines} lines — download for all.</div>` : ''}</div>`
-      : '<div class="text-slate-500">No invoices filed with FBR in this month.</div>';
-  } catch (err) { toast(err.message); }
-}
-async function downloadAnnexC() {
-  const q = annexParams(); if (!q) return;
-  try {
-    const res = await fetch('/api/reports/annex-c?format=csv&' + q, { headers: { Authorization: 'Bearer ' + S.token } });
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Download failed');
-    const url = URL.createObjectURL(await res.blob());
-    const a = Object.assign(document.createElement('a'), { href: url, download: `annex-c-${$('#acMonth').value}-${$('#acEnv').value.toLowerCase()}.csv` });
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  } catch (err) { toast(err.message); }
-}
-function setupAnnexC() {
-  $('#acMonth').value = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date()).slice(0, 7);
-  $('#acEnv').value = S.settings.fbrEnv;
-}
-
-/* ---------- Invoice list ---------- */
-const BADGE = {
-  SUBMITTED: 'bg-emerald-100 text-emerald-800', FAILED: 'bg-red-100 text-red-800', DRAFT: 'bg-slate-200 text-slate-700',
-  SUBMITTING: 'bg-sky-100 text-sky-800', UNCERTAIN: 'bg-orange-200 text-orange-900', CANCELLED: 'bg-slate-200 text-slate-500 line-through',
-};
-function irisWindow(i) {
-  const left = S.meta.editWindowHours - (Date.now() - new Date(i.submittedAt || i.createdAt).getTime()) / 3600000;
-  return left > 0 ? `<span class="text-xs text-slate-500" title="Change or cancel in IRIS within ${S.meta.editWindowHours} hours of filing">IRIS edit: ${left >= 1 ? Math.floor(left) + 'h' : Math.max(1, Math.round(left * 60)) + 'm'} left</span>`
-    : '<span class="text-xs text-slate-400" title="After the window, cancellation needs Commissioner approval">IRIS edit closed</span>';
-}
-function invoiceActions(i) {
-  if (i.status === 'CANCELLED') return `<span class="text-xs text-slate-500" title="${esc(i.cancelNote)}">Cancelled</span>`;
-  if (i.status === 'SUBMITTED') return `<div class="flex flex-col items-end gap-1 text-xs">
-      <button class="text-emerald-700 text-sm" onclick="openInvoice('${i.id}')">Receipt</button>
-      ${i.invoiceType === 'Sale Invoice' ? `<button class="text-sky-700 underline" onclick="startDebitNote('${i.id}')">Debit note</button>` : ''}
-      <button class="text-slate-600 underline" onclick="cancelInvoice('${i.id}', ${(Date.now() - new Date(i.submittedAt || i.createdAt).getTime()) / 3600000 > S.meta.editWindowHours})">Mark cancelled in IRIS</button>
-      ${irisWindow(i)}</div>`;
-  if (i.status === 'SUBMITTING') return '<span class="text-sky-700 text-xs">Sending…</span>';
-  if (i.status === 'UNCERTAIN') return `<div class="flex flex-col items-end gap-1 text-xs">
-      <button class="text-emerald-700 underline" onclick="resolveInvoice('${i.id}', this)">Found in IRIS</button>
-      <button class="text-orange-700 underline" onclick="retryInvoice('${i.id}', this, true)">Not in IRIS — resubmit</button></div>`;
-  return `<button class="text-amber-700" onclick="retryInvoice('${i.id}', this)">Retry</button>`;
-}
-async function loadInvoices() {
-  try {
-    const rows = await api('/api/invoices');
-    $('#invoiceRows').innerHTML = rows.map(i => `<tr class="border-b last:border-0 align-top">
-      <td class="py-2">${i.localNo}</td><td>${esc(i.invoiceDate)}</td><td>${esc(i.buyerBusinessName)}
-        ${i.invoiceType === 'Debit Note' ? `<div class="text-xs text-sky-700">Debit note → ${esc(i.invoiceRefNo)}</div>` : ''}</td>
-      <td>${esc(i.scenarioId || (i.fbrEnv === 'PRODUCTION' ? 'Live' : ''))}</td>
-      <td class="text-right">${money(i.totalAmount)}</td>
-      <td><span class="px-2 py-0.5 rounded text-xs ${BADGE[i.status]}" title="${esc(i.errorMessage || '')}">${i.status}</span>
-        ${i.errorMessage && i.status !== 'SUBMITTED' ? `<div class="text-xs ${i.status === 'UNCERTAIN' ? 'text-orange-800' : 'text-red-700'} max-w-xs">${esc(i.errorMessage)}</div>` : ''}</td>
-      <td class="font-mono text-xs">${esc(i.fbrInvoiceNumber || '')}</td>
-      <td class="text-right whitespace-nowrap">
-        ${invoiceActions(i)}
-      </td></tr>`).join('') || '<tr><td colspan="8" class="py-3 text-slate-500">No invoices yet.</td></tr>';
-  } catch (err) { toast(err.message); }
-}
-async function openInvoice(id) {
-  try { const d = await api('/api/invoices/' + id); renderReceipt(d.invoice, d.seller); } catch (err) { toast(err.message); }
-}
-async function retryInvoice(id, btn, uncertain = false) {
-  if (uncertain && !confirm('Resubmit only if this invoice is NOT in IRIS. If FBR already has it, resubmitting creates a duplicate in your sales and in the buyer\'s ledger.\n\nI checked IRIS and it is not there — resubmit?')) return;
-  const label = btn.textContent;
-  btn.disabled = true; btn.textContent = '…';
-  try { handleResult(await api(`/api/invoices/${id}/retry`, { method: 'POST', body: uncertain ? { confirmUncertain: true } : {} })); }
-  catch (err) { toast(err.message); btn.disabled = false; btn.textContent = label; loadInvoices(); }
-}
-async function cancelInvoice(id, pastWindow) {
-  const h = S.meta.editWindowHours;
-  const msg = pastWindow
-    ? `More than ${h} hours have passed, so FBR needs Commissioner approval to cancel.\n\nAfter the cancellation is approved and done in IRIS, enter the approval reference:`
-    : `First cancel this invoice in IRIS (allowed within ${h} hours of filing). The app cannot cancel at FBR.\n\nDone in IRIS? Optional note:`;
-  const note = prompt(msg, '');
-  if (note === null) return;
-  try { await api(`/api/invoices/${id}/cancel`, { method: 'POST', body: { note } }); toast('Marked cancelled; it is left out of reports', true); loadInvoices(); }
-  catch (err) { toast(err.message); }
-}
-async function resolveInvoice(id, btn) {
-  const no = prompt('Enter the FBR invoice number exactly as shown in IRIS for this invoice:');
-  if (!no) return;
-  btn.disabled = true;
-  try { const d = await api(`/api/invoices/${id}/resolve`, { method: 'POST', body: { fbrInvoiceNumber: no } }); toast('Marked as filed with FBR', true); handleResult(d, false); }
-  catch (err) { toast(err.message); btn.disabled = false; }
-}
-
-/* ---------- Receipt ---------- */
-function renderReceipt(inv, seller) {
-  const line = '<div style="border-top:1px dashed #000;margin:4px 0"></div>';
-  const row = (a, b, bold) => `<div style="display:flex;justify-content:space-between;${bold ? 'font-weight:bold' : ''}"><span>${a}</span><span>${b}</span></div>`;
-  $('#receipt').innerHTML = `
-    <div style="text-align:center">
-      <div style="font-size:13px;font-weight:bold">${esc(seller.sellerBusinessName)}</div>
-      <div>${esc(seller.sellerAddress)}</div>
-      <div>NTN/CNIC: ${esc(seller.sellerNtnCnic)}</div>
-      ${seller.sellerStrn ? `<div>STRN: ${esc(seller.sellerStrn)}</div>` : ''}
-      <div style="margin-top:2px;font-weight:bold">${esc(inv.invoiceType.toUpperCase())}</div>
-    </div>${line}
-    ${row('Invoice #', inv.localNo)}${row('Date', esc(inv.invoiceDate))}
-    ${row('Buyer', esc(inv.buyerBusinessName))}
-    ${inv.buyerNtnCnic ? row('Buyer NTN/CNIC', esc(inv.buyerNtnCnic)) : ''}
-    ${row('Buyer type', inv.endConsumer ? 'End consumer' : esc(inv.buyerRegistrationType))}
-    ${inv.invoiceRefNo ? row('Ref invoice', esc(inv.invoiceRefNo)) : ''}
-    ${inv.reason ? row('Reason', esc(inv.reason + (inv.reasonRemarks ? ' — ' + inv.reasonRemarks : ''))) : ''}
-    ${line}
-    ${inv.items.map(it => `
-      <div>${esc(it.productDescription)} <span style="color:#555">(${esc(it.hsCode)})</span></div>
-      ${row(`${Number(it.quantity)} ${esc(it.uoM)} × ${money(it.unitPrice)}`, money(it.valueSalesExcludingST))}
-      ${row(`  ST ${esc(it.rate)}`, money(it.salesTaxApplicable))}
-      ${Number(it.furtherTax) ? row('  Further tax', money(it.furtherTax)) : ''}
-      ${Number(it.extraTax) ? row('  Extra tax', money(it.extraTax)) : ''}
-      ${Number(it.fedPayable) ? row('  FED', money(it.fedPayable)) : ''}`).join('')}
-    ${line}
-    ${row('Value excl. ST', money(inv.totalExclST))}
-    ${row('Sales tax', money(inv.totalST))}
-    ${Number(inv.totalFurtherTax) ? row('Further tax', money(inv.totalFurtherTax)) : ''}
-    ${row('TOTAL (Rs)', money(inv.totalAmount), true)}
-    ${line}
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
-      <img src="/fbr-di-logo.jpg" alt="FBR Digital Invoicing" style="width:1in;height:auto" onerror="this.replaceWith(Object.assign(document.createElement('div'),{textContent:'FBR Digital Invoicing System',style:'font-size:9px;font-weight:bold;width:1in;text-align:center'}))">
-      <div class="qr" id="qrBox"></div>
-    </div>
-    <div style="text-align:center;margin-top:4px">FBR Invoice No.</div>
-    <div style="text-align:center;font-weight:bold;word-break:break-all">${esc(inv.fbrInvoiceNumber)}</div>
-    ${inv.fbrEnv === 'SANDBOX' ? '<div style="text-align:center;margin-top:4px">*** SANDBOX TEST — NOT A TAX INVOICE ***</div>' : ''}
-    <div style="text-align:center;margin-top:4px;color:#555">Verify on the FBR Tax Asaan app</div>`;
-  // QR v2 (25×25) holds the 22-28 char FBR number at error level L; printed at 1×1 inch
-  new QRCode($('#qrBox'), { text: inv.fbrInvoiceNumber, width: 96, height: 96, correctLevel: QRCode.CorrectLevel.L });
-  $('#receipt').classList.remove('hidden');
-  $('#receiptEmpty').classList.add('hidden');
-  $('#printBtn').classList.remove('hidden');
-}
-
-// A free Render instance sleeps after 15 idle minutes; wake it before the user needs it
-async function wakeServer() {
-  const slow = setTimeout(() => $('#wakeBanner').classList.remove('hidden'), 2500);
-  const until = Date.now() + 120000;
-  while (Date.now() < until) {
-    try {
-      const r = await fetch('/api/health', { cache: 'no-store' });
-      if (r.ok) break;
-    } catch {}
-    await new Promise(res => setTimeout(res, 3000));
-  }
-  clearTimeout(slow);
-  $('#wakeBanner').classList.add('hidden');
-}
-
-wakeServer().then(show);
+  const bits = [s.phone, s.email, s.city].filter(Boolean);
+  document.querySelectorAll('[data-contact]').forEach(el => el.textContent = bits.join(' · '));
+}).catch(() => {});
 </script>
 </body>
 </html>
