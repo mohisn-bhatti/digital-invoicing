@@ -243,11 +243,17 @@ test('counted units need a whole-number quantity; KG may have decimals', () => {
     assert.strictEqual(calcInvoice([{ ...base, uoM: 'KG', quantity: 1.5, unitPrice: 10, rate: '18%' }], ctx).totals.totalExclST, 15);
 });
 
-test('HS tax rules: longest matching prefix wins, otherwise none', () => {
-    const { matchRule } = require('../src/hsTaxRules');
-    const rules = [{ prefix: '2309', saleType: 'Goods at Reduced Rate' }, { prefix: '23091000', saleType: 'Goods at standard rate (default)' }, { prefix: '01', saleType: 'Exempt Goods' }];
-    assert.strictEqual(matchRule(rules, '2309.9000').prefix, '2309');
-    assert.strictEqual(matchRule(rules, '2309.1000').prefix, '23091000');
-    assert.strictEqual(matchRule(rules, '0101.2100').prefix, '01');
-    assert.strictEqual(matchRule(rules, '8471.3010'), null);
+test('HS tax rules: every matching rule, most specific first; fill in only an unconditional most-specific rule', () => {
+    const { matchRules, autoRule } = require('../src/hsTaxRules');
+    const rules = [{ prefix: '3402', condition: '', saleType: '3rd Schedule Goods' },
+        { prefix: '34029000', condition: 'pesticide ingredient', saleType: 'Exempt Goods' },
+        { prefix: '0401', condition: 'sold in retail packing', saleType: '3rd Schedule Goods' },
+        { prefix: '0401', condition: 'not branded', saleType: 'Exempt Goods' }, { prefix: '01', condition: '', saleType: 'Exempt Goods' }];
+    assert.deepStrictEqual(matchRules(rules, '3402.9000').map(r => r.prefix), ['34029000', '3402']);
+    assert.strictEqual(autoRule(matchRules(rules, '3402.9000')), null); // conditional rule on top: ask
+    assert.strictEqual(autoRule(matchRules(rules, '3402.1100')).prefix, '3402');
+    assert.strictEqual(matchRules(rules, '0401.1000').length, 2);
+    assert.strictEqual(autoRule(matchRules(rules, '0401.1000')), null);
+    assert.strictEqual(autoRule(matchRules(rules, '0101.2100')).prefix, '01');
+    assert.deepStrictEqual(matchRules(rules, '8471.3010'), []);
 });

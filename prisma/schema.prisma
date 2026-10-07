@@ -299,18 +299,25 @@ model StockEntry {
   @@index([tenantId, hsCode])
 }
 
-// HS code → sale type / rate, from the Sales Tax Act schedules (CA's Document 1). Platform-wide, edited by the admin.
-// The invoice form suggests the rule with the longest prefix that matches the HS code; the user can still change it.
+// HS code → sale type / rate, from the Sales Tax Act schedules. Platform-wide, edited by the admin.
+// The invoice form uses the rules with the longest prefix that matches the HS code. One code can have several rules,
+// each with its own condition (e.g. "not in retail packing under a brand name" → exempt); the user then picks one.
 model HsTaxRule {
   id              String   @id @default(uuid())
-  prefix          String   @unique // HS code digits, e.g. "3402" (heading) or "84713010" (one tariff line)
+  prefix          String   // HS code digits, e.g. "3402" (heading) or "84713010" (one tariff line)
+  condition       String   @default("") // when this rule applies; "" = always for this code
   saleType        String
   rate            String   @default("") // "" = keep the rate the user entered (e.g. fixed-amount regimes)
   sroScheduleNo   String   @default("")
   sroItemSerialNo String   @default("")
   note            String   @default("")
+  source          String   @default("manual") // "manual", or where it was extracted from, e.g. "Sales Tax Act 30-06-2026"
+  reviewed        Boolean  @default(false)    // checked by the CA
   updatedBy       String   @default("system")
   updatedAt       DateTime @updatedAt
+
+  @@unique([prefix, condition])
+  @@index([prefix])
 }
 
 // An invoice form saved before filing. Not an invoice: no number is used and nothing goes to FBR.

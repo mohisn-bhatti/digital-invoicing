@@ -238,15 +238,21 @@
         <label><span>Rate <span class="text-slate-400">(empty = keep)</span></span><input name="rate" list="rateList" autocomplete="off"></label>
         <label><span>SRO / Schedule no.</span><input name="sroScheduleNo" list="sroList" autocomplete="off"></label>
         <label><span>Item Sr. No.</span><input name="sroItemSerialNo" autocomplete="off"></label>
-        <label class="sm:col-span-4"><span>Note shown on the invoice form</span><input name="note" maxlength="300" autocomplete="off" placeholder="e.g. Detergents — Third Schedule: tax on printed retail price"></label>
+        <label class="sm:col-span-3"><span>Condition <span class="text-slate-400">(empty = always for this code; several rules per code allowed)</span></span><input name="condition" maxlength="300" autocomplete="off" placeholder="e.g. Not sold in retail packing under a brand name"></label>
+        <label class="sm:col-span-3"><span>Note shown on the invoice form</span><input name="note" maxlength="300" autocomplete="off" placeholder="e.g. Detergents — Third Schedule: tax on printed retail price"></label>
+        <label class="sm:col-span-2 flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" name="reviewed" style="width:auto"> Checked by the CA</label>
         <div class="sm:col-span-2 flex items-center gap-3">
           <button id="ruleSubmit" class="bg-emerald-700 text-white rounded px-3 py-2">Add rule</button>
           <button type="button" onclick="clearRuleForm()" class="text-xs text-slate-600 underline">Clear</button>
         </div>
       </form>
-      <label class="block max-w-sm"><span>Search</span><input id="ruleQ" placeholder="HS code, sale type or note" autocomplete="off"></label>
+      <div class="flex flex-wrap items-end gap-3">
+        <label class="block max-w-sm"><span>Search</span><input id="ruleQ" placeholder="HS code, sale type, condition or note" autocomplete="off"></label>
+        <label><span>Show</span><select id="ruleShow"><option value="">All rules</option><option value="unchecked">Not checked by the CA</option><option value="checked">Checked</option></select></label>
+        <span id="ruleCount" class="text-xs text-slate-500 pb-2"></span>
+      </div>
       <div class="overflow-x-auto"><table class="w-full text-xs">
-        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">HS code</th><th>Sale type</th><th>Rate</th><th>SRO / Schedule</th><th>Item Sr.</th><th>Note</th><th>Updated</th><th></th></tr></thead>
+        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">HS code</th><th>Condition</th><th>Sale type</th><th>Rate</th><th>SRO / Schedule</th><th>Item Sr.</th><th>Note / source</th><th>Checked</th><th></th></tr></thead>
         <tbody id="ruleRows"></tbody></table></div>
     </div>
     <div class="bg-white rounded-xl shadow p-5 text-sm">
@@ -928,11 +934,15 @@ async function loadTaxRules() {
 }
 function renderRules() {
   const q = $('#ruleQ').value.trim().toLowerCase(), qd = q.replace(/\D/g, '');
-  const rows = (S.rules || []).filter(r => !q || (qd && (r.prefix.startsWith(qd) || qd.startsWith(r.prefix))) || [r.saleType, r.note, r.sroScheduleNo].some(v => v.toLowerCase().includes(q)));
+  const show = $('#ruleShow').value;
+  const rows = (S.rules || []).filter(r => (!show || (show === 'checked') === r.reviewed)
+    && (!q || (qd && (r.prefix.startsWith(qd) || qd.startsWith(r.prefix))) || [r.saleType, r.note, r.condition, r.sroScheduleNo, r.source].some(v => v.toLowerCase().includes(q))));
+  $('#ruleCount').textContent = `${rows.length} of ${(S.rules || []).length} rules · ${(S.rules || []).filter(r => !r.reviewed).length} not checked yet`;
   $('#ruleRows').innerHTML = rows.map(r => `<tr class="border-b last:border-0 align-top">
-    <td class="py-1 font-mono whitespace-nowrap">${esc(fmtPrefix(r.prefix))}</td><td>${esc(r.saleType)}</td><td>${esc(r.rate || 'keep')}</td>
-    <td>${esc(r.sroScheduleNo)}</td><td>${esc(r.sroItemSerialNo)}</td><td class="max-w-xs">${esc(r.note)}</td>
-    <td class="whitespace-nowrap text-slate-500">${fmtDate(r.updatedAt)}<div>${esc(r.updatedBy)}</div></td>
+    <td class="py-1 font-mono whitespace-nowrap">${esc(fmtPrefix(r.prefix))}</td><td class="max-w-[12rem]">${esc(r.condition) || '<span class="text-slate-400">always</span>'}</td>
+    <td>${esc(r.saleType)}</td><td>${esc(r.rate || 'keep')}</td>
+    <td>${esc(r.sroScheduleNo)}</td><td>${esc(r.sroItemSerialNo)}</td><td class="max-w-xs">${esc(r.note)}<div class="text-slate-400">${esc(r.source)}</div></td>
+    <td class="whitespace-nowrap">${r.reviewed ? '<span class="text-emerald-700">✔ checked</span>' : '<span class="text-amber-700">not yet</span>'}<div class="text-slate-400">${fmtDate(r.updatedAt)}</div></td>
     <td class="text-right whitespace-nowrap"><button class="text-emerald-700 mr-2" onclick="editRule('${r.id}')">Edit</button><button class="text-red-600" onclick="deleteRule('${r.id}')">Delete</button></td></tr>`).join('')
     || '<tr><td colspan="8" class="py-2 text-slate-500">No rules match.</td></tr>';
 }
@@ -941,10 +951,12 @@ function setupRuleForm() {
   const f = $('#ruleForm');
   $('#ruleSaleType').innerHTML = SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('');
   $('#ruleQ').addEventListener('input', renderRules);
+  $('#ruleShow').addEventListener('change', renderRules);
   f.addEventListener('submit', async e => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(f));
     if (!body.id) delete body.id;
+    body.reviewed = f.reviewed.checked;
     try {
       const r = await api('/api/admin/tax-rules', { method: 'POST', body });
       toast(`Rule ${fmtPrefix(r.prefix)} saved`, true); clearRuleForm(); loadTaxRules();
@@ -954,7 +966,8 @@ function setupRuleForm() {
 function clearRuleForm() { const f = $('#ruleForm'); f.reset(); f.id.value = ''; $('#ruleSubmit').textContent = 'Add rule'; }
 function editRule(id) {
   const r = S.rules.find(x => x.id === id), f = $('#ruleForm');
-  for (const k of ['id', 'rate', 'sroScheduleNo', 'sroItemSerialNo', 'note']) f[k].value = r[k] ?? '';
+  for (const k of ['id', 'rate', 'sroScheduleNo', 'sroItemSerialNo', 'note', 'condition']) f[k].value = r[k] ?? '';
+  f.reviewed.checked = r.reviewed;
   f.prefix.value = fmtPrefix(r.prefix).replace('chapter ', '');
   setSelect(f.saleType, r.saleType);
   $('#ruleSubmit').textContent = 'Update rule';
@@ -1401,7 +1414,7 @@ function ensureDatalists() {
   document.body.insertAdjacentHTML('beforeend',
     `<datalist id="uomList">${(S.lists.uoms || S.meta.uoms).map(u => `<option value="${esc(u)}">`).join('')}</datalist>
      <datalist id="rateList">${S.meta.rates.map(r => `<option value="${esc(r)}">`).join('')}</datalist>
-     <datalist id="sroList"><option value="6th Schedule Table I"><option value="6th Schedule Table II"><option value="8th Schedule Table 1"><option value="5th Schedule"><option value="SRO 297(I)/2023"></datalist>`);
+     <datalist id="sroList"><option value="6th Schd Table I"><option value="6th Schd Table II"><option value="8th Schd Table 1"><option value="5th Schd"><option value="SRO 297(I)/2023"></datalist>`);
 }
 
 function setupInvoiceForm() {
@@ -1724,40 +1737,50 @@ function pickRecent(row, r) {
 
 // "3402" → "3402", "84713010" → "8471.3010", "01" → "chapter 01"
 const fmtPrefix = p => p.length <= 2 ? 'chapter ' + p : p.length > 4 ? p.slice(0, 4) + '.' + p.slice(4) : p;
-// Sale type / rate for the HS code from the admin's tax rules (CA's Document 1); standard 18% when no rule matches.
-// apply = fill them in (a new code was picked); otherwise only show the hint.
+// Sale type / rate for the HS code from the admin's tax rules (Sales Tax Act schedules); standard 18% when no rule matches.
+// One rule without a condition is filled in. Rules with conditions (e.g. loose vs branded packing) are offered as choices
+// and the line stays at the standard rate until the user picks one — wrongly exempting is the costlier mistake.
+// apply = fill in (a new code was picked); otherwise only show the hint.
 async function suggestTax(row, code, apply) {
   row.dataset.taxFor = code;
   const hint = row.querySelector('.tax-hint');
   const d = await api(`/api/hs/${encodeURIComponent(code)}/tax`).catch(() => null);
   if (!d || row.querySelector('[name=hsCode]').value !== code) return;
-  const sg = d.suggestion, f = n => row.querySelector(`[name=${n}]`);
+  const opts = d.options, only = d.auto >= 0 ? opts[d.auto] : null;
   const scenario = !$('#scenarioRow').classList.contains('hidden') && $('#scenarioSel').value; // sandbox test: the scenario decides
-  if (apply) {
-    if (!scenario) setSelect(f('saleType'), sg.saleType);
-    if (sg.rate) f('rate').value = sg.rate;
-    f('sroScheduleNo').value = sg.sroScheduleNo || ''; f('sroItemSerialNo').value = sg.sroItemSerialNo || '';
-  }
+  if (apply) setTax(row, only || d.standard, scenario);
+  const f = n => row.querySelector(`[name=${n}]`);
   const cur = { saleType: f('saleType').value, rate: f('rate').value };
   const differs = x => x && (x.saleType !== cur.saleType || (x.rate && x.rate !== cur.rate));
-  const parts = [sg.source === 'rule'
-    ? `<span class="text-sky-800">Tax rule ${esc(fmtPrefix(sg.prefix))}: ${esc(sg.note || sg.saleType)}${sg.rate ? '' : ' — check the rate'}</span>`
-    : '<span class="text-slate-500">No schedule found for this code, so standard rate 18%. Change the sale type if it is exempt, zero-rated, reduced or 3rd schedule.</span>'];
-  if (!apply && differs(sg)) parts.push(`<span class="text-amber-700">The rule now says ${esc(sg.saleType)}${sg.rate ? ', ' + esc(sg.rate) : ''}</span> <button type="button" class="tax-use underline text-emerald-700" data-which="suggestion">use the rule</button>`);
-  if (apply && differs(d.last)) parts.push(`<span class="text-amber-700">Last time you used ${esc(d.last.saleType)}, ${esc(d.last.rate)} (${esc(d.last.invoiceDate)})</span> <button type="button" class="tax-use underline text-emerald-700" data-which="last">use that</button>`);
-  if (scenario && sg.saleType !== cur.saleType) parts.push('<span class="text-slate-500">sale type kept from the sandbox scenario</span>');
+  const unchecked = r => r.reviewed ? '' : ' <span class="text-slate-400">(from the Sales Tax Act, not yet checked by the CA)</span>';
+  const btn = (key, label) => `<button type="button" class="tax-use border rounded px-2 py-0.5 mr-1 mt-1 bg-white hover:border-emerald-600" data-which="${key}">${label}</button>`;
+  const parts = [];
+  if (only) parts.push(`<span class="text-sky-800">Tax rule ${esc(fmtPrefix(only.prefix))}: ${esc(only.note || only.saleType)}${only.rate ? '' : ' — check the rate'}</span>${unchecked(only)}`
+    + (!apply && differs(only) ? ' ' + btn(String(d.auto), 'use the rule') : '')
+    + (opts.length > 1 ? `<div class="text-slate-500 mt-0.5">Other entries for this code: ${opts.filter(o => o !== only).map((o, i) => btn(String(opts.indexOf(o)), `${esc(o.condition || o.note)} → ${esc(o.saleType)}${o.rate ? ', ' + esc(o.rate) : ''}`)).join('')}</div>` : ''));
+  else if (opts.length) parts.push(`<div class="text-amber-800 font-medium">This code has special tax treatment in some cases — which applies? (standard 18% until you choose)${unchecked(opts[0])}</div>`
+    + opts.map((o, i) => btn(String(i), `${esc(o.condition || o.note)} → ${esc(o.saleType)}${o.rate ? ', ' + esc(o.rate) : ''}`)).join('')
+    + btn('standard', 'None of these → standard 18%'));
+  else parts.push('<span class="text-slate-500">No schedule found for this code, so standard rate 18%. Change the sale type if it is exempt, zero-rated, reduced or 3rd schedule.</span>');
+  if (apply && differs(d.last)) parts.push(`<span class="text-amber-700">Last time you used ${esc(d.last.saleType)}, ${esc(d.last.rate)} (${esc(d.last.invoiceDate)})</span> ${btn('last', 'use that')}`);
+  if (scenario && only && only.saleType !== cur.saleType) parts.push('<span class="text-slate-500">sale type kept from the sandbox scenario</span>');
   hint.innerHTML = parts.join(' · ');
   hint._d = d;
   recalc();
 }
-function useTax(btn) {
-  const row = btn.closest('.item'), x = row.querySelector('.tax-hint')._d?.[btn.dataset.which];
-  if (!x) return;
+function setTax(row, x, keepSaleType) {
   const f = n => row.querySelector(`[name=${n}]`);
-  setSelect(f('saleType'), x.saleType);
+  if (!keepSaleType) setSelect(f('saleType'), x.saleType);
   if (x.rate) f('rate').value = x.rate;
   f('sroScheduleNo').value = x.sroScheduleNo || ''; f('sroItemSerialNo').value = x.sroItemSerialNo || '';
-  btn.previousElementSibling?.remove(); btn.remove();
+}
+function useTax(btn) {
+  const row = btn.closest('.item'), d = row.querySelector('.tax-hint')._d, w = btn.dataset.which;
+  const x = w === 'standard' ? d?.standard : w === 'last' ? d?.last : d?.options[Number(w)];
+  if (!x) return;
+  setTax(row, x);
+  btn.parentElement.querySelectorAll('.tax-use').forEach(b => b.classList.toggle('!border-emerald-700', b === btn));
+  btn.parentElement.querySelectorAll('.tax-use').forEach(b => b.classList.toggle('!bg-emerald-50', b === btn));
   recalc();
 }
 

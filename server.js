@@ -552,20 +552,23 @@ app.get('/api/hs/recent', authenticateToken, requireTenant, async (req, res) => 
     res.json(rows.map(({ createdAt, ...r }) => r));
 });
 
-// Suggested sale type / rate for an HS code: the admin's tax rule (Sales Tax Act schedules), else standard rate.
+// Suggested sale type / rate for an HS code: the admin's tax rules (Sales Tax Act schedules), else standard rate.
+// options: every rule for the code (several when they depend on a condition, e.g. packaging); standard: the 18% fallback.
 // `last` is what this client used for the same code last time, so the form can point out a difference.
 app.get('/api/hs/:code/tax', authenticateToken, requireTenant, async (req, res) => {
     const code = hs.normalizeCode(req.params.code);
     if (!hs.HS_FORMAT.test(code)) throw new HttpError(400, 'HS code must look like 0101.2100');
-    const rule = taxRules.matchRule(await taxRules.loadRules(prisma), code);
+    const rules = taxRules.matchRules(await taxRules.loadRules(prisma), code);
     const last = await prisma.invoiceItem.findFirst({
         where: { hsCode: code, invoice: { tenantId: req.user.tenantId, status: 'SUBMITTED' } },
         orderBy: { invoice: { createdAt: 'desc' } },
         select: { saleType: true, rate: true, sroScheduleNo: true, sroItemSerialNo: true, invoice: { select: { invoiceDate: true } } },
     });
-    const pick = r => r && { saleType: r.saleType, rate: r.rate, sroScheduleNo: r.sroScheduleNo, sroItemSerialNo: r.sroItemSerialNo, note: r.note };
     res.json({
-        suggestion: rule ? { ...pick(rule), prefix: rule.prefix, source: 'rule' } : { ...taxRules.STANDARD, source: 'standard' },
+        options: rules.map(r => ({ prefix: r.prefix, condition: r.condition, saleType: r.saleType, rate: r.rate, sroScheduleNo: r.sroScheduleNo,
+            sroItemSerialNo: r.sroItemSerialNo, note: r.note, reviewed: r.reviewed })),
+        auto: rules.indexOf(taxRules.autoRule(rules)), // index into options to fill in without asking, or -1
+        standard: taxRules.STANDARD,
         last: last && { saleType: last.saleType, rate: last.rate, sroScheduleNo: last.sroScheduleNo, sroItemSerialNo: last.sroItemSerialNo, invoiceDate: last.invoice.invoiceDate },
     });
 });
@@ -600,11 +603,13 @@ app.post('/api/admin/tax-rules', authenticateToken, ADMIN, async (req, res) => {
     const b = req.body || {};
     const d = {
         prefix: taxRules.digitsOf(b.prefix),
+        condition: String(b.condition || '').trim().slice(0, 300),
         saleType: String(b.saleType || '').trim(),
         rate: String(b.rate || '').trim().slice(0, 60),
         sroScheduleNo: String(b.sroScheduleNo || '').trim().slice(0, 100),
         sroItemSerialNo: String(b.sroItemSerialNo || '').trim().slice(0, 50),
         note: String(b.note || '').trim().slice(0, 300),
+        reviewed: b.reviewed === true || b.reviewed === 'on' || b.reviewed === 'true',
         updatedBy: req.user.email,
     };
     if (d.prefix.length < 2 || d.prefix.length > 8) throw new HttpError(400, 'HS code (or its start) must be 2 to 8 digits, e.g. 3402 or 8471.3010.');
@@ -614,10 +619,11 @@ app.post('/api/admin/tax-rules', authenticateToken, ADMIN, async (req, res) => {
             ? await prisma.hsTaxRule.update({ where: { id: String(b.id) }, data: d })
             : await prisma.hsTaxRule.create({ data: d });
         taxRules.clearCache();
-        await audit(req, { tenantId: null, action: 'taxrule.save', entityType: 'HsTaxRule', entityId: r.id, summary: `Tax rule ${r.prefix} → ${r.saleType}${r.rate ? ', ' + r.rate : ''}` });
+        await audit(req, { tenantId: null, action: 'taxrule.save', entityType: 'HsTaxRule', entityId: r.id,
+            summary: `Tax rule ${r.prefix}${r.condition ? ` (${r.condition})` : ''} → ${r.saleType}${r.rate ? ', ' + r.rate : ''}${r.reviewed ? ' · checked' : ''}` });
         res.json(r);
     } catch (err) {
-        if (err.code === 'P2002') throw new HttpError(400, `There is already a rule for ${d.prefix}.`);
+        if (err.code === 'P2002') throw new HttpError(400, `There is already a rule for ${d.prefix} with the same condition.`);
         if (err.code === 'P2025') throw new HttpError(404, 'Rule not found.');
         throw err;
     }
