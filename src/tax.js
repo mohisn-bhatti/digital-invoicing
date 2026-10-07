@@ -14,6 +14,9 @@
 const NO_FURTHER_TAX_SALE_TYPES = new Set(['3rd Schedule Goods', 'Exempt Goods', 'Goods at zero-rate']);
 // Exempt / concessionary lines must name the schedule/SRO and its serial (e.g. "6th Schedule Table I", "176(i)")
 const SRO_REQUIRED_SALE_TYPES = new Set(['Exempt Goods', 'Goods at Reduced Rate', 'Goods as per SRO.297(|)/2023']);
+// Counted units can't be sold in fractions (CA feedback: quantity should be a round number); KG, litre etc. can
+const WHOLE_NUMBER_UOMS = new Set(['numbers, pieces, units', 'pair', 'dozen', 'set', 'bag', 'carton', 'packs', 'thousand unit', 'timber logs']);
+const isWholeNumberUom = uom => WHOLE_NUMBER_UOMS.has(String(uom || '').trim().toLowerCase());
 
 function round2(n) {
     return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -50,6 +53,9 @@ function calcItem(raw, { buyerRegistrationType, furtherTaxRate, endConsumer = fa
         if (Number.isNaN(v) || v < 0) throw new Error(`Item ${raw.sNo || ''}: ${k} must be a non-negative number`);
     }
     if (quantity <= 0) throw new Error(`Item ${raw.sNo || ''}: quantity must be greater than 0`);
+    if (isWholeNumberUom(raw.uoM) && !Number.isInteger(quantity)) {
+        throw new Error(`Item ${raw.sNo || ''}: quantity must be a whole number for "${String(raw.uoM).trim()}"`);
+    }
 
     const valueSalesExcludingST = round2(quantity * unitPrice - discount);
     if (valueSalesExcludingST < 0) throw new Error(`Item ${raw.sNo || ''}: discount exceeds value`);
@@ -111,4 +117,4 @@ function calcInvoice(items, ctx) {
     };
 }
 
-module.exports = { calcInvoice, calcItem, ratePercent, round2, SRO_REQUIRED_SALE_TYPES };
+module.exports = { calcInvoice, calcItem, ratePercent, round2, SRO_REQUIRED_SALE_TYPES, WHOLE_NUMBER_UOMS, isWholeNumberUom };

@@ -84,6 +84,7 @@ model Tenant {
   buyers             Buyer[]
   importBatches      ImportBatch[]
   stockEntries       StockEntry[]
+  drafts             InvoiceDraft[]
   createdAt          DateTime  @default(now())
 }
 
@@ -296,4 +297,33 @@ model StockEntry {
 
   @@index([tenantId, entryDate])
   @@index([tenantId, hsCode])
+}
+
+// HS code → sale type / rate, from the Sales Tax Act schedules (CA's Document 1). Platform-wide, edited by the admin.
+// The invoice form suggests the rule with the longest prefix that matches the HS code; the user can still change it.
+model HsTaxRule {
+  id              String   @id @default(uuid())
+  prefix          String   @unique // HS code digits, e.g. "3402" (heading) or "84713010" (one tariff line)
+  saleType        String
+  rate            String   @default("") // "" = keep the rate the user entered (e.g. fixed-amount regimes)
+  sroScheduleNo   String   @default("")
+  sroItemSerialNo String   @default("")
+  note            String   @default("")
+  updatedBy       String   @default("system")
+  updatedAt       DateTime @updatedAt
+}
+
+// An invoice form saved before filing. Not an invoice: no number is used and nothing goes to FBR.
+model InvoiceDraft {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  title       String   @default("") // buyer name, for the list
+  data        Json     // the form as the browser had it
+  totalAmount Decimal  @default(0) @db.Decimal(14, 2)
+  createdBy   String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, updatedAt])
 }

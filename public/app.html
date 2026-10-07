@@ -10,6 +10,10 @@
   input, select { border: 1px solid #cbd5e1; border-radius: .375rem; padding: .4rem .55rem; width: 100%; font-size: .875rem; background: #fff; }
   input:focus, select:focus { outline: 2px solid #059669; outline-offset: -1px; }
   label > span { display: block; font-size: .75rem; color: #475569; margin-bottom: .15rem; }
+  input[list] { padding-right: 1.75rem; background-repeat: no-repeat; background-position: right .5rem center; background-size: .8rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%23475569'%3E%3Cpath d='M5.2 7.2a1 1 0 011.4 0L10 10.6l3.4-3.4a1 1 0 111.4 1.4l-4.1 4.1a1 1 0 01-1.4 0L5.2 8.6a1 1 0 010-1.4z'/%3E%3C/svg%3E"); }
+  input[list]::-webkit-calendar-picker-indicator { opacity: 0; cursor: pointer; } /* still opens the list where our arrow is drawn */
+  .fbr-sent { color: #dc2626; font-weight: 600; }
   body.cashier .save-product { display: none; }
   #receipt { width: 80mm; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #000; }
   #receipt .qr { padding: 0.12in; background: #fff; } /* quiet zone so scanners can find the code */
@@ -88,6 +92,7 @@
     </header>
 
     <main class="flex-1 p-4 md:p-6">
+<nav id="moduleTabs" class="hidden flex flex-wrap gap-2 text-sm font-medium mb-4"></nav>
 <!-- Super admin pages -->
 <section id="adminView" class="hidden">
   <div data-page="a-dashboard" class="page hidden space-y-6">
@@ -131,30 +136,52 @@
     </div>
     <section>
       <h3 class="font-semibold mb-2">FBR settings <span id="settingsHint" class="ml-2 text-xs font-normal text-amber-700"></span></h3>
-      <form id="settingsForm" class="grid sm:grid-cols-3 gap-3">
-      <label><span>Seller NTN / CNIC <span class="text-slate-400">(sent to FBR)</span></span><input name="sellerNtnCnic" inputmode="numeric" placeholder="7 or 13 digits" autocomplete="off"></label>
-      <label><span>Seller STRN <span class="text-slate-400">(printed on invoice)</span></span><input name="sellerStrn" inputmode="numeric" placeholder="13 digits, optional" autocomplete="off"></label>
-      <label><span>Seller business name</span><input name="sellerBusinessName" autocomplete="off"></label>
-      <label><span>Seller province</span><select name="sellerProvince" data-list="provinces"></select></label>
-      <label class="sm:col-span-2"><span>Seller address</span><input name="sellerAddress" autocomplete="off"></label>
-      <label><span>Environment</span>
-        <select name="fbrEnv"><option value="SANDBOX">Sandbox (testing)</option><option value="PRODUCTION">Production (live)</option></select>
-      </label>
-      <label class="sm:col-span-2"><span>PRAL security token <span id="tokenMasked" class="text-slate-400"></span></span>
-        <input name="fbrToken" type="password" placeholder="Leave empty to keep current token" autocomplete="new-password" data-lpignore="true" data-1p-ignore></label>
-      <label><span>Further tax % (unregistered buyers)</span><input name="furtherTaxRate" type="number" step="0.01" min="0" max="100"></label>
-      <label><span>Invoice number format <span class="text-slate-400">{YYYY} {YY} {MM} {NNNN}</span></span><input name="invoiceNumberFormat" maxlength="40" placeholder="INV-{YYYY}-{NNNN}" autocomplete="off"></label>
-      <label><span>Software registration no. <span class="text-slate-400">(from PRAL, printed)</span></span><input name="softwareRegNo" maxlength="60" autocomplete="off"></label>
-      <label><span>Authorization letter (STR-13) received on</span><input name="authLetterAt" type="date"></label>
-      <label><span>Authorization letter reference</span><input name="authLetterRef" maxlength="100" autocomplete="off" placeholder="e.g. file no. / scan name"></label>
-      <div class="sm:col-span-2"><span class="block text-xs text-slate-600 mb-1">Business nature — same as chosen in IRIS (tick all that apply)</span>
-        <div id="bizActs" class="flex flex-wrap gap-x-4 gap-y-1 text-sm"></div></div>
-      <label><span>Sector (as in IRIS)</span><select name="sector"></select></label>
-      <div class="sm:col-span-3 flex flex-wrap items-center gap-4">
-        <button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button>
-        <span class="text-xs text-slate-600">HS codes: <span id="hsStats">…</span></span>
-        <button type="button" id="hsSyncBtn" onclick="syncHs()" class="text-xs text-emerald-700 underline">Sync HS codes from FBR</button>
-      </div>
+      <form id="settingsForm" class="space-y-4">
+      <fieldset class="border rounded-lg p-4">
+        <legend class="px-1 text-sm font-semibold">1. Must match the FBR DI panel (IRIS) exactly</legend>
+        <p class="text-xs text-slate-500 mb-3">Copy these from the client's IRIS profile. Fields marked <span class="fbr-sent">(Sent to FBR)</span> go on every invoice; FBR rejects the invoice if they differ from IRIS.</p>
+        <div class="grid sm:grid-cols-3 gap-3">
+          <label><span>Seller STRN <span class="text-slate-400">(printed on invoice)</span></span><input name="sellerStrn" inputmode="numeric" placeholder="13 digits" autocomplete="off"></label>
+          <label><span>Taxpayer (Seller) NTN / CNIC <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerNtnCnic" inputmode="numeric" placeholder="7 or 13 digits" autocomplete="off"></label>
+          <label><span>Seller business name <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerBusinessName" autocomplete="off"></label>
+          <label><span>Seller province <span class="fbr-sent">(Sent to FBR)</span></span><select name="sellerProvince" data-list="provinces"></select></label>
+          <label class="sm:col-span-2"><span>Seller address <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerAddress" autocomplete="off"></label>
+          <div class="sm:col-span-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <button type="button" onclick="checkSellerFbr()" class="text-emerald-700 underline">Check registration with FBR</button>
+            <span id="sellerCheck" class="text-slate-500"></span>
+            <span class="text-slate-500">· Name and address are not available from FBR's API — look them up in
+              <a href="https://iris.fbr.gov.pk/" target="_blank" rel="noopener" class="text-emerald-700 underline">IRIS</a> → Online Verifications → Taxpayer Profile Inquiry, then copy them here.</span>
+          </div>
+          <div class="sm:col-span-2"><span class="block text-xs text-slate-600 mb-1">Business nature — same as chosen in IRIS (tick all that apply)</span>
+            <div id="bizActs" class="flex flex-wrap gap-x-4 gap-y-1 text-sm"></div></div>
+          <label><span>Sector (as in IRIS)</span><select name="sector"></select></label>
+        </div>
+      </fieldset>
+      <fieldset class="border rounded-lg p-4">
+        <legend class="px-1 text-sm font-semibold">2. Received from FBR / PRAL</legend>
+        <p class="text-xs text-slate-500 mb-3">Issued by FBR in IRIS (Digital Invoicing → API Integration). HS codes and UOMs are picked up from FBR automatically once the token works.</p>
+        <div class="grid sm:grid-cols-3 gap-3">
+          <label><span>Environment</span>
+            <select name="fbrEnv"><option value="SANDBOX">Sandbox (testing)</option><option value="PRODUCTION">Production (live)</option></select>
+          </label>
+          <label class="sm:col-span-2"><span>PRAL security token <span id="tokenMasked" class="text-slate-400"></span></span>
+            <input name="fbrToken" type="password" placeholder="Leave empty to keep current token" autocomplete="new-password" data-lpignore="true" data-1p-ignore></label>
+          <label><span>Software registration no. <span class="text-slate-400">(from PRAL, printed)</span></span><input name="softwareRegNo" maxlength="60" autocomplete="off"></label>
+          <div class="sm:col-span-2 text-xs text-slate-600 self-end pb-2">Auto from FBR — HS codes: <span id="hsStats">…</span>
+            <button type="button" id="hsSyncBtn" onclick="syncHs()" class="ml-2 text-emerald-700 underline">Sync HS codes from FBR</button></div>
+        </div>
+      </fieldset>
+      <fieldset class="border rounded-lg p-4">
+        <legend class="px-1 text-sm font-semibold">3. Entered by you (used inside Raseed)</legend>
+        <div class="grid sm:grid-cols-3 gap-3">
+          <label><span>Further tax % (unregistered buyers)</span><input name="furtherTaxRate" type="number" step="0.01" min="0" max="100"></label>
+          <div><label><span>Invoice number format</span><input name="invoiceNumberFormat" maxlength="40" placeholder="INV-{YYYY}-{NNNN}" autocomplete="off"></label>
+            <p class="text-xs text-slate-500 mt-1">Note: {YYYY} = year, {YY} = short year, {MM} = month, {NNNN} = running number. <span id="fmtExample"></span></p></div>
+          <label><span>Authorization letter (STR-13) received on</span><input name="authLetterAt" type="date"></label>
+          <label><span>Authorization letter reference</span><input name="authLetterRef" maxlength="100" autocomplete="off" placeholder="e.g. file no. / scan name"></label>
+        </div>
+      </fieldset>
+      <button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button>
     </form>
     </section>
     <section id="mpUsers">
@@ -199,6 +226,41 @@
         <span class="text-xs text-slate-500">Supplies come from invoices filed with FBR; purchases, imports, opening stock and adjustments from the client's Stock page.</span>
       </div>
       <div id="ahSummary" class="text-sm overflow-x-auto"></div>
+    </div>
+  </div>
+  <div data-page="a-taxrules" class="page hidden space-y-6">
+    <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
+      <h2 class="font-semibold">HS code → sale type and rate <span class="text-xs font-normal text-slate-500">— suggested on the invoice form when an HS code is chosen (CA's Document 1). Codes with no rule get the standard rate, 18%. The client can still change it.</span></h2>
+      <form id="ruleForm" class="grid sm:grid-cols-6 gap-2 items-end bg-slate-50 border rounded p-3">
+        <input type="hidden" name="id">
+        <label><span>HS code or its start</span><input name="prefix" required autocomplete="off" placeholder="e.g. 3402 or 8471.3010"></label>
+        <label class="sm:col-span-2"><span>Sale type</span><select name="saleType" id="ruleSaleType"></select></label>
+        <label><span>Rate <span class="text-slate-400">(empty = keep)</span></span><input name="rate" list="rateList" autocomplete="off"></label>
+        <label><span>SRO / Schedule no.</span><input name="sroScheduleNo" list="sroList" autocomplete="off"></label>
+        <label><span>Item Sr. No.</span><input name="sroItemSerialNo" autocomplete="off"></label>
+        <label class="sm:col-span-4"><span>Note shown on the invoice form</span><input name="note" maxlength="300" autocomplete="off" placeholder="e.g. Detergents — Third Schedule: tax on printed retail price"></label>
+        <div class="sm:col-span-2 flex items-center gap-3">
+          <button id="ruleSubmit" class="bg-emerald-700 text-white rounded px-3 py-2">Add rule</button>
+          <button type="button" onclick="clearRuleForm()" class="text-xs text-slate-600 underline">Clear</button>
+        </div>
+      </form>
+      <label class="block max-w-sm"><span>Search</span><input id="ruleQ" placeholder="HS code, sale type or note" autocomplete="off"></label>
+      <div class="overflow-x-auto"><table class="w-full text-xs">
+        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">HS code</th><th>Sale type</th><th>Rate</th><th>SRO / Schedule</th><th>Item Sr.</th><th>Note</th><th>Updated</th><th></th></tr></thead>
+        <tbody id="ruleRows"></tbody></table></div>
+    </div>
+    <div class="bg-white rounded-xl shadow p-5 text-sm">
+      <h2 class="font-semibold mb-2">Where the rules come from <span class="text-xs font-normal text-slate-500">— check these when FBR issues something new</span></h2>
+      <ul class="space-y-1.5">
+        <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://download1.fbr.gov.pk/Docs/2017112112112348253CustomsTariff2017-18Ch1-99.pdf">Customs Tariff (PCT / HS codes)</a> <span class="text-slate-500">— 2017 edition; the HS list in Raseed comes from it</span></li>
+        <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://www.fbr.gov.pk/categ/sales-tax-act/301">Sales Tax Act, 1990</a> <span class="text-slate-500">— updated every year (budget)</span></li>
+        <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://www.fbr.gov.pk/categ/sales-tax-rules-2006/302">Sales Tax Rules, 2006</a> <span class="text-slate-500">— updated every year</span></li>
+        <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://www.fbr.gov.pk/ShowSROs?Department=Sales%20Tax">Sales tax SROs</a> <span class="text-slate-500">— can be issued at any time</span></li>
+        <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://www.fbr.gov.pk/Orders/Sales-Tax-Circulars/180">Sales tax circulars</a> <span class="text-slate-500">— can be issued at any time</span></li>
+        <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://www.fbr.gov.pk/Orders/Sales-Tax-General-Orders/151">Sales tax general orders</a> <span class="text-slate-500">— can be issued at any time</span></li>
+        <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://www.fbr.gov.pk/categ/admin-notice-board/444">FBR notice board</a> <span class="text-slate-500">— new updates to the sales tax law</span></li>
+        <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://www.fbr.gov.pk/act-rules-ordinances/131226">All tax laws</a></li>
+      </ul>
     </div>
   </div>
   <div data-page="a-activity" class="page hidden space-y-6">
@@ -262,59 +324,84 @@
   </div>
   </div>
   <div data-page="c-new" class="page hidden space-y-6">
-    <form id="invoiceForm" class="bg-white rounded-xl shadow p-5 space-y-4">
-      <div class="flex items-center justify-between">
-        <h2 class="font-semibold">Invoice details</h2>
+    <form id="invoiceForm" class="bg-white rounded-xl shadow p-5 space-y-5">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="font-semibold">Sales invoice <span id="draftBadge" class="hidden ml-2 px-2 py-0.5 rounded bg-slate-200 text-slate-700 text-xs font-normal"></span></h2>
+        <button type="button" id="newFormBtn" onclick="startNewInvoice()" class="hidden text-sm text-slate-600 underline">Start a new invoice</button>
       </div>
 
       <div id="scenarioRow" class="hidden bg-amber-50 border border-amber-200 rounded p-3">
         <label><span>Sandbox scenario (required in sandbox)</span><select name="scenarioId" id="scenarioSel"></select></label>
       </div>
 
-      <div class="grid sm:grid-cols-3 gap-3">
-        <label><span>Document type</span>
-          <select name="invoiceType" id="invoiceType"><option>Sale Invoice</option><option>Debit Note</option></select></label>
-        <label><span>Invoice date</span><input name="invoiceDate" type="date" required></label>
-        <label id="refNoWrap" class="hidden"><span>Original FBR invoice no.</span><input name="invoiceRefNo" autocomplete="off" placeholder="e.g. 7000007DI1747119701593"></label>
-        <label class="debit-only hidden"><span>Reason</span><select name="reason"></select></label>
-        <label class="debit-only hidden sm:col-span-2"><span>Remarks <span id="remarksReq" class="text-red-600 hidden">*</span></span><input name="reasonRemarks" maxlength="500" autocomplete="off"></label>
+      <div class="flex flex-wrap items-end gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+        <label class="flex-1 min-w-[16rem]"><span>Customer</span><select id="customerSel"></select></label>
+        <button type="button" id="addCustomerBtn" onclick="openCustomer()" class="bg-white border border-emerald-600 text-emerald-800 rounded px-3 py-1.5 text-sm font-medium">+ Add new customer</button>
       </div>
 
-      <div class="grid sm:grid-cols-3 gap-3">
-        <div>
-          <label><span>Buyer type</span>
-            <select name="buyerRegistrationType" id="buyerType"><option>Unregistered</option><option>Registered</option></select></label>
-          <label id="endConsumerWrap" class="flex items-center gap-1.5 mt-1.5 text-xs text-slate-700 cursor-pointer">
-            <input type="checkbox" name="endConsumer" checked style="width:auto"> End consumer / walk-in — no further tax</label>
-          <label id="nonAtlWrap" class="hidden flex items-center gap-1.5 mt-1.5 text-xs text-slate-700 cursor-pointer">
-            <input type="checkbox" name="buyerNonAtl" style="width:auto"> Not active with FBR (non-ATL) — further tax applies</label>
+      <section>
+        <h3 class="font-medium text-sm mb-2">Particulars of Document</h3>
+        <div class="grid sm:grid-cols-3 gap-3">
+          <label><span>Invoice Type</span>
+            <select name="invoiceType" id="invoiceType"><option>Sale Invoice</option><option>Debit Note</option></select></label>
+          <label><span>Invoice Date</span><input name="invoiceDate" type="date" required></label>
+          <div><span class="block text-xs text-slate-600 mb-0.5">Sale Origination Province</span><div id="originProvince" class="py-1.5 text-sm font-medium">—</div></div>
+          <label id="refNoWrap" class="hidden"><span>Original FBR invoice no.</span><input name="invoiceRefNo" autocomplete="off" placeholder="e.g. 7000007DI1747119701593"></label>
+          <label class="debit-only hidden"><span>Reason</span><select name="reason"></select></label>
+          <label class="debit-only hidden sm:col-span-2"><span>Remarks <span id="remarksReq" class="text-red-600 hidden">*</span></span><input name="reasonRemarks" maxlength="500" autocomplete="off"></label>
         </div>
-        <div>
-          <label><span>Buyer NTN / CNIC <span id="ntnReq" class="text-red-600 hidden">*</span></span><input name="buyerNtnCnic" inputmode="numeric" autocomplete="off" placeholder="Type to search saved buyers"></label>
-          <div class="flex items-center gap-2 mt-1 text-xs"><button type="button" onclick="checkBuyerFbr()" class="text-emerald-700 underline">Check with FBR</button><span id="buyerCheck" class="text-slate-500"></span></div>
-        </div>
-        <label><span>Buyer name</span><input name="buyerBusinessName" placeholder="Walk-in Customer — or type to search saved" autocomplete="off"></label>
-        <label><span>Buyer province</span><select name="buyerProvince" data-list="provinces"></select></label>
-        <label class="sm:col-span-2"><span>Buyer address</span><input name="buyerAddress" placeholder="Defaults to seller address"></label>
-      </div>
+      </section>
 
-      <div>
+      <section>
+        <h3 class="font-medium text-sm mb-2">Particulars of Buyer</h3>
+        <div class="grid sm:grid-cols-3 gap-3">
+          <div>
+            <label><span>Buyer Type</span>
+              <select name="buyerRegistrationType" id="buyerType"><option>Unregistered</option><option>Registered</option></select></label>
+            <label id="endConsumerWrap" class="flex items-center gap-1.5 mt-1.5 text-xs text-slate-700 cursor-pointer">
+              <input type="checkbox" name="endConsumer" checked style="width:auto"> End consumer / walk-in — no further tax</label>
+            <label id="nonAtlWrap" class="hidden flex items-center gap-1.5 mt-1.5 text-xs text-slate-700 cursor-pointer">
+              <input type="checkbox" name="buyerNonAtl" style="width:auto"> Not active with FBR (non-ATL) — further tax applies</label>
+          </div>
+          <div>
+            <label><span>Registration No. (NTN / CNIC) <span id="ntnReq" class="text-red-600 hidden">*</span></span><input name="buyerNtnCnic" inputmode="numeric" autocomplete="off" placeholder="Type to search saved buyers"></label>
+            <div class="flex items-center gap-2 mt-1 text-xs"><button type="button" onclick="checkBuyerFbr()" class="text-emerald-700 underline">Check with FBR</button><span id="buyerCheck" class="text-slate-500"></span></div>
+          </div>
+          <label><span>Name</span><input name="buyerBusinessName" placeholder="Walk-in Customer — or type to search saved" autocomplete="off"></label>
+          <label><span>Destination Province</span><select name="buyerProvince" data-list="provinces"></select></label>
+          <label class="sm:col-span-2"><span>Address</span><input name="buyerAddress" placeholder="Defaults to seller address"></label>
+        </div>
+      </section>
+
+      <section>
         <div class="flex items-center justify-between mb-2">
-          <h3 class="font-medium text-sm">Items</h3>
+          <h3 class="font-medium text-sm">Invoice Details <span class="text-xs font-normal text-slate-500">— one box per item</span></h3>
           <button type="button" onclick="addItem()" class="text-sm text-emerald-700 font-medium">+ Add item</button>
         </div>
         <div id="items" class="space-y-3"></div>
-      </div>
+      </section>
 
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm bg-slate-50 rounded p-3">
-        <div>Value excl. ST<div id="tExcl" class="font-semibold">0.00</div></div>
-        <div>Sales tax<div id="tST" class="font-semibold">0.00</div></div>
-        <div>Further tax<div id="tFT" class="font-semibold">0.00</div></div>
+        <div>Value of Sales Excl. ST<div id="tExcl" class="font-semibold">0.00</div></div>
+        <div>Sales Tax / FED in ST<div id="tST" class="font-semibold">0.00</div></div>
+        <div>Further Tax<div id="tFT" class="font-semibold">0.00</div></div>
         <div>Total<div id="tTotal" class="font-bold text-emerald-700 text-base">0.00</div></div>
       </div>
 
-      <button id="submitBtn" class="w-full bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded py-2.5 font-medium">Submit to FBR</button>
+      <div class="flex flex-col sm:flex-row gap-2">
+        <button type="button" id="draftBtn" onclick="saveDraft()" class="sm:w-48 border border-slate-400 bg-white hover:bg-slate-50 rounded py-2.5 font-medium">Save as draft</button>
+        <button id="submitBtn" class="flex-1 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded py-2.5 font-medium">Submit to FBR</button>
+      </div>
     </form>
+  </div>
+  <div data-page="c-drafts" class="page hidden space-y-6">
+    <div class="bg-white rounded-xl shadow overflow-x-auto">
+      <h2 class="p-4 pb-2 font-semibold">Drafts <span class="text-xs font-normal text-slate-500">— saved invoice forms, not filed with FBR yet. They don't use an invoice number.</span></h2>
+      <table class="w-full text-sm">
+        <thead class="text-left text-slate-500 border-b bg-slate-50"><tr><th class="py-2 px-4">Saved</th><th>Buyer</th><th>Type</th><th class="text-right">Items</th><th class="text-right">Total</th><th>By</th><th class="pr-4"></th></tr></thead>
+        <tbody id="draftRows"></tbody>
+      </table>
+    </div>
   </div>
   <div data-page="c-invoices" class="page hidden space-y-6">
   <div class="bg-white rounded-xl shadow p-4 space-y-3">
@@ -395,7 +482,7 @@
         <label><span>Description</span><input name="description" maxlength="200" autocomplete="off"></label>
         <label><span>Quantity</span><input name="quantity" type="number" step="0.0001" min="0" required></label>
         <label><span>UOM</span><input name="uoM" list="uomList" required value="Numbers, pieces, units"></label>
-        <label><span>Value excl. tax (Rs)</span><input name="value" type="number" step="0.01" min="0" value="0"></label>
+        <label><span>Value excl. tax (Rs)</span><input name="value" type="number" step="0.01" min="0" placeholder="0"></label>
         <label><span>Supplier invoice / GD no.</span><input name="reference" maxlength="100"></label>
         <label class="sm:col-span-2"><span>Supplier</span><input name="partyName" maxlength="150"></label>
         <label><span>Notes</span><input name="notes" maxlength="500"></label>
@@ -453,6 +540,22 @@
 </section>
     </main>
   </div>
+</div>
+
+<!-- Add a customer from the invoice form -->
+<div id="customerModal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4" onclick="if (event.target === this) closeCustomer()">
+  <form id="customerForm" class="bg-white rounded-xl shadow-xl p-6 mt-16 w-full max-w-lg grid sm:grid-cols-2 gap-3">
+    <h2 class="sm:col-span-2 font-semibold text-lg">Add new customer</h2>
+    <label class="sm:col-span-2"><span>Name</span><input name="businessName" required maxlength="200" autocomplete="off"></label>
+    <label><span>Buyer Type</span><select name="registrationType"><option>Unregistered</option><option>Registered</option></select></label>
+    <label><span>Registration No. (NTN / CNIC)</span><input name="ntnCnic" inputmode="numeric" autocomplete="off" placeholder="7, 9 or 13 digits"></label>
+    <label><span>Province</span><select name="province" data-list="provinces"></select></label>
+    <label><span>Address</span><input name="address" autocomplete="off"></label>
+    <div class="sm:col-span-2 flex gap-2 pt-1">
+      <button class="flex-1 bg-emerald-700 text-white rounded py-2 font-medium">Save and use on this invoice</button>
+      <button type="button" onclick="closeCustomer()" class="border rounded px-4">Cancel</button>
+    </div>
+  </form>
 </div>
 
 <!-- Change password (also forced after a reset / first login) -->
@@ -545,9 +648,11 @@ const ICON = {
 const NAV = {
   client: [
     { id: 'c-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
-    { id: 'c-new', label: 'New Invoice', icon: 'plus', crumb: 'Sales' },
-    { id: 'c-invoices', label: 'Sales Invoices', icon: 'list', crumb: 'Sales' },
-    { id: 'c-import', label: 'Bulk Import', icon: 'upload', crumb: 'Sales', roles: ['OWNER', 'ACCOUNTANT'] },
+    // The left menu lists modules only; a module's own screens are tabs inside it (parent)
+    { id: 'c-invoices', label: 'Sales Invoices', icon: 'list', crumb: 'Sales', tab: 'Invoices' },
+    { id: 'c-new', label: 'New Invoice', crumb: 'Sales', parent: 'c-invoices', tab: '+ New invoice' },
+    { id: 'c-drafts', label: 'Drafts', crumb: 'Sales', parent: 'c-invoices', tab: 'Drafts' },
+    { id: 'c-import', label: 'Bulk Import', crumb: 'Sales', parent: 'c-invoices', tab: 'Bulk import', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'c-products', label: 'Products', icon: 'box', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'c-buyers', label: 'Buyers', icon: 'users', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'c-stock', label: 'Stock', icon: 'layers', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
@@ -556,15 +661,17 @@ const NAV = {
   admin: [
     { id: 'a-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
     { id: 'a-clients', label: 'Clients', icon: 'building', crumb: 'Clients' },
+    { id: 'a-client', label: 'Manage client', crumb: 'Clients', parent: 'a-clients' },
     { id: 'a-reports', label: 'Reports (Annex-C)', icon: 'chart', crumb: 'Reports' },
+    { id: 'a-taxrules', label: 'Tax Rules', icon: 'layers', crumb: 'Compliance' },
     { id: 'a-activity', label: 'Activity Log', icon: 'clock', crumb: 'Compliance' },
     { id: 'a-leads', label: 'Website Enquiries', icon: 'mail', crumb: 'Website' },
     { id: 'a-system', label: 'System', icon: 'cog', crumb: 'Settings' },
   ],
 };
-const HIDDEN_PAGES = { 'a-client': { label: 'Manage client', crumb: 'Clients', parent: 'a-clients' } };
 const PAGE_ENTER = {
   'c-dashboard': () => loadDashboard(), 'c-invoices': () => loadInvoices(), 'c-import': () => loadBatches(),
+  'c-drafts': () => loadDrafts(), 'a-taxrules': () => loadTaxRules(),
   'c-products': () => loadSaved(), 'c-buyers': () => loadSaved(), 'c-users': () => loadUsers('c'), 'c-stock': () => loadStock(),
   'a-dashboard': () => loadAdminDash(), 'a-clients': () => loadClients(), 'a-reports': () => fillReportClients(),
   'a-activity': () => loadAudit('a'), 'a-leads': () => loadLeads(), 'a-system': () => loadSystem(),
@@ -572,7 +679,7 @@ const PAGE_ENTER = {
 const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : NAV.client.filter(n => !n.roles || n.roles.includes(S.tenantRole || 'OWNER'));
 const canManage = () => ['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER'); // cashier can't
 function renderNav() {
-  $('#nav').innerHTML = navList().map(n => `<a href="#/${n.id}" data-nav="${n.id}" class="flex items-center gap-3 mx-3 my-0.5 px-3 py-2 rounded-lg hover:bg-white/10">
+  $('#nav').innerHTML = navList().filter(n => !n.parent).map(n => `<a href="#/${n.id}" data-nav="${n.id}" class="flex items-center gap-3 mx-3 my-0.5 px-3 py-2 rounded-lg hover:bg-white/10">
     <svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[n.icon]}"/></svg>${esc(n.label)}</a>`).join('');
 }
 function toggleNav(open) {
@@ -584,18 +691,23 @@ function route() {
   if (!S.token) return;
   const list = navList(), view = S.role === 'SUPER_ADMIN' ? '#adminView' : '#clientView';
   let id = location.hash.replace(/^#\/?/, '');
-  const meta = list.find(n => n.id === id) || HIDDEN_PAGES[id];
+  const meta = list.find(n => n.id === id);
   if (!meta || !document.querySelector(`${view} [data-page="${id}"]`) || (id === 'a-client' && !S.manageId)) {
     id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : (S.adminSession ? 'c-new' : 'c-dashboard');
     history.replaceState(null, '', '#/' + id);
   }
-  const m = list.find(n => n.id === id) || HIDDEN_PAGES[id];
+  const m = list.find(n => n.id === id);
   document.querySelectorAll(`${view} .page`).forEach(pg => pg.classList.toggle('hidden', pg.dataset.page !== id));
   const active = m.parent || id;
   document.querySelectorAll('#nav [data-nav]').forEach(a => {
     const on = a.dataset.nav === active;
     a.classList.toggle('bg-emerald-600', on); a.classList.toggle('text-white', on); a.classList.toggle('hover:bg-white/10', !on);
   });
+  // Tabs of the current module (e.g. Sales: Invoices · New invoice · Drafts · Bulk import)
+  const tabs = list.filter(n => n.tab && (n.id === active || n.parent === active));
+  const bar = $('#moduleTabs');
+  bar.classList.toggle('hidden', tabs.length < 2);
+  bar.innerHTML = tabs.map(n => `<a href="#/${n.id}" class="px-3 py-1.5 rounded-lg border ${n.id === id ? 'bg-emerald-700 border-emerald-700 text-white' : 'bg-white hover:border-emerald-600'}">${esc(n.tab)}</a>`).join('');
   $('#pageTitle').textContent = id === 'a-client' && S.managed ? S.managed.companyName : m.label;
   $('#crumbs').textContent = `${m.crumb} / ${m.label}`;
   toggleNav(false);
@@ -809,6 +921,51 @@ for (const prefix of ['c', 'a']) {
   });
 }
 
+/* ---------- Admin: tax rules (HS code → sale type / rate) ---------- */
+async function loadTaxRules() {
+  setupRuleForm();
+  try { S.rules = await api('/api/admin/tax-rules'); renderRules(); } catch (err) { toast(err.message); }
+}
+function renderRules() {
+  const q = $('#ruleQ').value.trim().toLowerCase(), qd = q.replace(/\D/g, '');
+  const rows = (S.rules || []).filter(r => !q || (qd && (r.prefix.startsWith(qd) || qd.startsWith(r.prefix))) || [r.saleType, r.note, r.sroScheduleNo].some(v => v.toLowerCase().includes(q)));
+  $('#ruleRows').innerHTML = rows.map(r => `<tr class="border-b last:border-0 align-top">
+    <td class="py-1 font-mono whitespace-nowrap">${esc(fmtPrefix(r.prefix))}</td><td>${esc(r.saleType)}</td><td>${esc(r.rate || 'keep')}</td>
+    <td>${esc(r.sroScheduleNo)}</td><td>${esc(r.sroItemSerialNo)}</td><td class="max-w-xs">${esc(r.note)}</td>
+    <td class="whitespace-nowrap text-slate-500">${fmtDate(r.updatedAt)}<div>${esc(r.updatedBy)}</div></td>
+    <td class="text-right whitespace-nowrap"><button class="text-emerald-700 mr-2" onclick="editRule('${r.id}')">Edit</button><button class="text-red-600" onclick="deleteRule('${r.id}')">Delete</button></td></tr>`).join('')
+    || '<tr><td colspan="8" class="py-2 text-slate-500">No rules match.</td></tr>';
+}
+function setupRuleForm() {
+  if (S.ruleReady) return; S.ruleReady = true;
+  const f = $('#ruleForm');
+  $('#ruleSaleType').innerHTML = SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('');
+  $('#ruleQ').addEventListener('input', renderRules);
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(f));
+    if (!body.id) delete body.id;
+    try {
+      const r = await api('/api/admin/tax-rules', { method: 'POST', body });
+      toast(`Rule ${fmtPrefix(r.prefix)} saved`, true); clearRuleForm(); loadTaxRules();
+    } catch (err) { toast(err.message); }
+  });
+}
+function clearRuleForm() { const f = $('#ruleForm'); f.reset(); f.id.value = ''; $('#ruleSubmit').textContent = 'Add rule'; }
+function editRule(id) {
+  const r = S.rules.find(x => x.id === id), f = $('#ruleForm');
+  for (const k of ['id', 'rate', 'sroScheduleNo', 'sroItemSerialNo', 'note']) f[k].value = r[k] ?? '';
+  f.prefix.value = fmtPrefix(r.prefix).replace('chapter ', '');
+  setSelect(f.saleType, r.saleType);
+  $('#ruleSubmit').textContent = 'Update rule';
+  f.scrollIntoView({ behavior: 'smooth' });
+}
+async function deleteRule(id) {
+  const r = S.rules.find(x => x.id === id);
+  if (!confirm(`Delete the rule for ${fmtPrefix(r.prefix)}? Invoices already filed are not affected.`)) return;
+  try { await api('/api/admin/tax-rules/' + id, { method: 'DELETE' }); loadTaxRules(); } catch (err) { toast(err.message); }
+}
+
 /* ---------- Admin: website enquiries ---------- */
 const LEAD_BADGE = { NEW: 'bg-amber-100 text-amber-900', CONTACTED: 'bg-sky-100 text-sky-800', CLIENT: 'bg-emerald-100 text-emerald-800', CLOSED: 'bg-slate-200 text-slate-600' };
 async function loadLeads() {
@@ -839,6 +996,7 @@ async function initAdmin() {
   try {
     if (!S.meta) S.meta = await api('/api/meta');
     if (!S.lists.provinces) await loadLists();
+    ensureDatalists();
   } catch (err) { toast(err.message); }
   route();
 }
@@ -995,6 +1153,7 @@ async function initClient() {
     if (!clientReady) setupInvoiceForm();
     clientReady = true;
     applyEnv();
+    $('#originProvince').textContent = S.settings.sellerProvince || '—';
     route();
   } catch (err) { toast(err.message); }
 }
@@ -1028,12 +1187,35 @@ function fillSettings(s) {
   for (const cb of f.querySelectorAll('[name=businessActivities]')) cb.checked = (s.businessActivities || []).includes(cb.value);
   f.sector.value = s.sector || '';
   $('#tokenMasked').textContent = s.fbrTokenMasked ? `(saved: ${s.fbrTokenMasked})` : '(not set)';
+  $('#sellerCheck').textContent = '';
+  showFmtExample();
   const sellerMissing = !s.sellerNtnCnic || !s.sellerBusinessName || !s.sellerProvince || !s.sellerAddress;
   const tokenMissing = !s.fbrTokenMasked && !S.meta.mock;
   const missing = sellerMissing || tokenMissing;
   $('#settingsHint').textContent = sellerMissing && tokenMissing ? 'Complete seller details and token before invoicing'
     : sellerMissing ? 'Complete seller details before invoicing'
     : tokenMissing ? 'Add the PRAL token before invoicing' : '';
+}
+
+// Same rule as formatInvoiceNo() on the server
+function showFmtExample() {
+  const f = $('#settingsForm').invoiceNumberFormat.value.trim() || 'INV-{YYYY}-{NNNN}', [y, m] = pkDate().split('-');
+  const ex = f.replace(/\{YYYY\}/g, y).replace(/\{YY\}/g, y.slice(2)).replace(/\{MM\}/g, m).replace(/\{(N+)\}/g, (_, n) => '42'.padStart(n.length, '0'));
+  $('#fmtExample').textContent = /\{N+\}/.test(f) ? `Example: ${f} → ${ex}` : 'It must contain {NNNN}.';
+}
+$('#settingsForm').invoiceNumberFormat.addEventListener('input', showFmtExample);
+
+// FBR's STATL / Get_Reg_Type with this client's token: registered? active (ATL)?
+async function checkSellerFbr() {
+  const f = $('#settingsForm'), out = $('#sellerCheck');
+  const reg = (f.sellerNtnCnic.value || f.sellerStrn.value).replace(/\D/g, '');
+  out.className = 'text-slate-500'; out.textContent = 'Checking…';
+  try {
+    const r = await api(`/api/admin/clients/${S.manageId}/check-registration?reg=${reg}`);
+    if (!r.live) { out.textContent = S.meta.mock ? 'Not checked (mock mode)' : 'FBR did not answer — save the token and whitelist the IP first'; return; }
+    out.className = r.registrationType === 'Registered' && r.active !== false ? 'text-emerald-700' : 'text-amber-700';
+    out.textContent = `FBR: ${r.registrationType || 'registration unknown'} · ${r.active === true ? 'Active (ATL)' : r.active === false ? 'Not active' : 'ATL unknown'}`;
+  } catch (err) { out.className = 'text-red-700'; out.textContent = err.message; }
 }
 
 function applyEnv() {
@@ -1086,41 +1268,54 @@ $('#settingsForm').addEventListener('submit', async e => {
 /* ---------- Invoice form ---------- */
 const SALE_TYPES = () => [...new Set(S.meta.scenarios.map(s => s.saleType))];
 
+// One box per item: the item itself on the left, SRO references and extra / further tax on the right.
+// Labels follow FBR's Annex-C headings. Amount boxes start empty (placeholder 0) so there is no 0 to delete first.
 function itemRow() {
   const div = document.createElement('div');
-  div.className = 'item border rounded p-3 grid grid-cols-2 sm:grid-cols-6 gap-2 relative';
+  div.className = 'item border rounded-lg p-3 relative';
   div.innerHTML = `
     <button type="button" class="absolute top-1 right-2 text-slate-400 hover:text-red-600" title="Remove" onclick="removeItem(this)">✕</button>
-    <label class="col-span-2 relative"><span>HS code</span>
-      <input name="hsCode" class="hs-input" placeholder="Type code or product, e.g. laptop" autocomplete="off" required>
-      <div class="hs-list hidden absolute z-30 left-0 top-full mt-1 w-[34rem] max-w-[85vw] max-h-72 overflow-auto bg-white border rounded shadow-lg text-xs"></div>
-    </label>
-    <label class="col-span-2"><span>Description (what you sell)</span><input name="productDescription" required autocomplete="off" placeholder="Type to search saved products"></label>
-    <label class="col-span-2"><span>Sale type</span><select name="saleType">${SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('')}</select></label>
-    <div class="hs-desc col-span-2 sm:col-span-6 text-xs text-slate-500 -mt-1"></div>
-    <label><span>Qty</span><input name="quantity" type="number" step="0.0001" min="0" value="1" required></label>
-    <label><span>UOM</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
-    <label><span>Unit price</span><input name="unitPrice" type="number" step="0.01" min="0" required></label>
-    <label><span>Rate</span><input name="rate" list="rateList" value="18%" required></label>
-    <label><span>Discount</span><input name="discount" type="number" step="0.01" min="0" value="0"></label>
-    <label title="3rd schedule / notified goods: total retail (or notified) value of the whole line, not per unit. Sales tax is charged on this."><span>Retail value, line total (3rd sch.)</span><input name="fixedNotifiedValueOrRetailPrice" type="number" step="0.01" min="0" value="0"></label>
-    <details class="col-span-2 sm:col-span-6 text-xs">
-      <summary class="cursor-pointer text-slate-500">More: SRO, overrides, extra tax, FED, ST withheld</summary>
-      <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 mt-2">
-        <label><span>SRO / Schedule no.</span><input name="sroScheduleNo" list="sroList" placeholder="e.g. 6th Schedule Table I"></label>
-        <label><span>SRO item serial</span><input name="sroItemSerialNo" placeholder="e.g. 176(i)"></label>
-        <label><span>Sales tax (override)</span><input name="salesTaxApplicable" type="number" step="0.01" min="0" placeholder="auto"></label>
-        <label><span>Further tax (override)</span><input name="furtherTax" type="number" step="0.01" min="0" placeholder="auto"></label>
-        <label><span>Extra tax</span><input name="extraTax" type="number" step="0.01" min="0" value="0"></label>
-        <label><span>FED payable</span><input name="fedPayable" type="number" step="0.01" min="0" value="0"></label>
-        <label><span>ST withheld at source</span><input name="salesTaxWithheldAtSource" type="number" step="0.01" min="0" value="0"></label>
+    <div class="grid lg:grid-cols-3 gap-3">
+      <div class="lg:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-2 content-start">
+        <div class="col-span-2 sm:col-span-4 text-xs font-semibold text-slate-700">Item</div>
+        <label class="col-span-2 relative"><span>HS Code</span>
+          <input name="hsCode" class="hs-input" placeholder="Type code or product, e.g. laptop" autocomplete="off" required>
+          <div class="hs-list hidden absolute z-30 left-0 top-full mt-1 w-[34rem] max-w-[85vw] max-h-80 overflow-auto bg-white border rounded shadow-lg text-xs"></div>
+        </label>
+        <label class="col-span-2"><span>Description (what you sell)</span><input name="productDescription" required autocomplete="off" placeholder="Type to search saved products"></label>
+        <div class="hs-desc col-span-2 sm:col-span-4 text-xs text-slate-500 -mt-1"></div>
+        <div class="tax-hint col-span-2 sm:col-span-4 text-xs -mt-1"></div>
+        <label class="col-span-2"><span>Sale Type</span><select name="saleType">${SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('')}</select></label>
+        <label><span>Rate</span><input name="rate" list="rateList" value="18%" required></label>
+        <label><span>Quantity</span><input name="quantity" type="number" step="1" min="1" value="1" required></label>
+        <label class="col-span-2"><span>UOM</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
+        <label><span>Unit Price</span><input name="unitPrice" type="number" step="0.01" min="0" placeholder="0.00" required></label>
+        <label><span>Discount</span><input name="discount" type="number" step="0.01" min="0" placeholder="0"></label>
+        <label class="col-span-2" title="3rd schedule / notified goods: total retail (or notified) value of the whole line, not per unit. Sales tax is charged on this."><span>Fixed / Notified Value or Retail Price <span class="text-slate-400">(line total)</span></span><input name="fixedNotifiedValueOrRetailPrice" type="number" step="0.01" min="0" placeholder="0"></label>
       </div>
-    </details>
-    <div class="col-span-2 sm:col-span-6 flex flex-wrap items-center justify-between gap-2">
+      <div class="bg-slate-50 border rounded-lg p-2 grid grid-cols-2 gap-2 content-start">
+        <div class="col-span-2 text-xs font-semibold text-slate-700">More: SRO reference, extra &amp; further tax</div>
+        <label><span>SRO No. / Schedule</span><input name="sroScheduleNo" list="sroList" placeholder="e.g. 6th Schedule Table I"></label>
+        <label><span>Item Sr. No.</span><input name="sroItemSerialNo" placeholder="e.g. 176(i)"></label>
+        <label><span>Sales Tax / FED in ST <span class="text-slate-400">(override)</span></span><input name="salesTaxApplicable" type="number" step="0.01" min="0" placeholder="auto"></label>
+        <label><span>Further Tax <span class="text-slate-400">(override)</span></span><input name="furtherTax" type="number" step="0.01" min="0" placeholder="auto"></label>
+        <label><span>Extra Tax</span><input name="extraTax" type="number" step="0.01" min="0" placeholder="0"></label>
+        <label><span>FED Payable</span><input name="fedPayable" type="number" step="0.01" min="0" placeholder="0"></label>
+        <label class="col-span-2"><span>ST Withheld as WH Agent</span><input name="salesTaxWithheldAtSource" type="number" step="0.01" min="0" placeholder="0"></label>
+      </div>
+    </div>
+    <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
       <div class="text-xs text-slate-600 line-calc"></div>
       <button type="button" class="save-product text-xs text-emerald-700 hover:underline">★ Save as product</button>
     </div>`;
   return div;
+}
+
+// Counted units (pieces, dozen, …) take whole numbers only; KG, litre etc. may have decimals
+const wholeUom = uom => (S.meta.wholeNumberUoms || []).includes(String(uom || '').trim().toLowerCase());
+function applyQtyStep(row) {
+  const q = row.querySelector('[name=quantity]'), whole = wholeUom(row.querySelector('[name=uoM]').value);
+  q.step = whole ? '1' : '0.0001'; q.min = whole ? '1' : '0.0001';
 }
 
 function addItem() {
@@ -1128,7 +1323,9 @@ function addItem() {
   const sc = S.meta.scenarios.find(s => s.id === $('#scenarioSel').value);
   if (sc) row.querySelector('[name=saleType]').value = sc.saleType;
   $('#items').appendChild(row);
+  applyQtyStep(row);
   recalc();
+  return row;
 }
 function removeItem(btn) {
   if ($('#items').children.length > 1) btn.closest('.item').remove();
@@ -1160,9 +1357,12 @@ function recalc() {
     const st = it.salesTaxApplicable !== '' ? r2(it.salesTaxApplicable) : r2(base * pct / 100);
     const ft = it.furtherTax !== '' ? r2(it.furtherTax) : (unreg && pct > 0 && !NO_FT.has(it.saleType) ? r2(excl * ftRate / 100) : 0);
     const total = r2(excl + st + ft + Number(it.extraTax || 0) + Number(it.fedPayable || 0));
-    const sroMissing = SRO_SALE_TYPES.has(it.saleType) && (!it.sroScheduleNo || !it.sroItemSerialNo);
-    row.querySelector('.line-calc').innerHTML = esc(`Excl. ST ${money(excl)} · ST ${money(st)} · Further ${money(ft)} · Line total ${money(total)}`)
-      + (sroMissing ? ' <span class="text-red-700">· needs SRO / Schedule no. and item serial (under More)</span>' : '');
+    const warn = [];
+    if (SRO_SALE_TYPES.has(it.saleType) && (!it.sroScheduleNo || !it.sroItemSerialNo)) warn.push('needs SRO No. / Schedule and Item Sr. No. (in the More box)');
+    if (wholeUom(it.uoM) && it.quantity !== '' && !Number.isInteger(Number(it.quantity))) warn.push(`quantity must be a whole number for ${it.uoM}`);
+    if (it.saleType === '3rd Schedule Goods' && !(Number(it.fixedNotifiedValueOrRetailPrice) > 0)) warn.push('enter the retail price (line total) — tax is charged on it');
+    row.querySelector('.line-calc').innerHTML = esc(`Value of Sales Excl. ST ${money(excl)} · Sales Tax ${money(st)} · Further Tax ${money(ft)} · Total ${money(total)}`)
+      + warn.map(w => ` <span class="text-red-700">· ${esc(w)}</span>`).join('');
     t.excl += excl; t.st += st; t.ft += ft; t.total += total;
   });
   $('#tExcl').textContent = money(t.excl); $('#tST').textContent = money(t.st);
@@ -1172,6 +1372,7 @@ function recalc() {
   const needNtn = regd || !f0.endConsumer.checked || t.total > limit;
   $('#ntnReq').classList.toggle('hidden', !needNtn);
   $('#ntnReq').title = !regd && f0.endConsumer.checked ? `Required above Rs ${limit.toLocaleString('en-PK')}` : 'Required';
+  return t;
 }
 const SRO_SALE_TYPES = new Set(['Exempt Goods', 'Goods at Reduced Rate', 'Goods as per SRO.297(|)/2023']);
 
@@ -1194,11 +1395,17 @@ async function checkBuyerFbr() {
   } catch (err) { out.className = 'text-red-700'; out.textContent = err.message; }
 }
 
-function setupInvoiceForm() {
+// Suggestion lists shared by the client's invoice form and the admin's tax rules
+function ensureDatalists() {
+  if ($('#rateList')) return;
   document.body.insertAdjacentHTML('beforeend',
-    `<datalist id="uomList">${S.lists.uoms.map(u => `<option value="${esc(u)}">`).join('')}</datalist>
+    `<datalist id="uomList">${(S.lists.uoms || S.meta.uoms).map(u => `<option value="${esc(u)}">`).join('')}</datalist>
      <datalist id="rateList">${S.meta.rates.map(r => `<option value="${esc(r)}">`).join('')}</datalist>
      <datalist id="sroList"><option value="6th Schedule Table I"><option value="6th Schedule Table II"><option value="8th Schedule Table 1"><option value="5th Schedule"><option value="SRO 297(I)/2023"></datalist>`);
+}
+
+function setupInvoiceForm() {
+  ensureDatalists();
   $('#scenarioSel').innerHTML = '<option value="">— select scenario —</option>' +
     S.meta.scenarios.map(s => `<option value="${s.id}">${s.id} — ${esc(s.desc)}</option>`).join('');
   $('#scenarioSel').addEventListener('change', e => {
@@ -1219,40 +1426,68 @@ function setupInvoiceForm() {
   $('#invoiceForm').reason.innerHTML = '<option value="">— select reason —</option>' + S.meta.debitReasons.map(r => `<option>${esc(r)}</option>`).join('');
   $('#invoiceType').addEventListener('change', applyDocType);
   $('#invoiceForm').reason.addEventListener('change', () => $('#remarksReq').classList.toggle('hidden', $('#invoiceForm').reason.value !== 'Others'));
+  $('#customerSel').addEventListener('change', e => {
+    const b = (S.saved?.buyers || []).find(x => x.id === e.target.value);
+    if (b) fillBuyer(b); else clearBuyer();
+  });
+  $('#items').addEventListener('input', e => { if (e.target.name === 'uoM') applyQtyStep(e.target.closest('.item')); });
   setupHsSearch();
   setupSaved();
   setupSavedForms();
+  setupCustomerForm();
   setupImport();
   $('#invoiceForm').addEventListener('input', recalc);
   $('#invoiceForm').addEventListener('change', recalc);
-  $('#invoiceForm').invoiceDate.value = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
+  $('#invoiceForm').invoiceDate.value = pkDate();
   addItem();
+  loadSaved(); // fills the Customer list
 
   $('#invoiceForm').addEventListener('submit', async e => {
     e.preventDefault();
-    const f = e.target, btn = $('#submitBtn');
-    const body = {
-      invoiceType: f.invoiceType.value, invoiceDate: f.invoiceDate.value, invoiceRefNo: f.invoiceRefNo.value,
-      reason: f.reason.value, reasonRemarks: f.reasonRemarks.value,
-      scenarioId: f.scenarioId.value, buyerRegistrationType: f.buyerRegistrationType.value,
-      endConsumer: f.buyerRegistrationType.value === 'Unregistered' && f.endConsumer.checked,
-      buyerNonAtl: f.buyerRegistrationType.value === 'Registered' && f.buyerNonAtl.checked,
-      buyerNtnCnic: f.buyerNtnCnic.value, buyerBusinessName: f.buyerBusinessName.value,
-      buyerProvince: f.buyerProvince.value, buyerAddress: f.buyerAddress.value, items: readItems(),
-      clientRequestId: formRequestId,
-    };
+    const btn = $('#submitBtn');
+    const body = { ...readForm(), clientRequestId: formRequestId, draftId: S.draftId || undefined };
     btn.disabled = true; btn.textContent = 'Sending to FBR…';
     try {
       const d = await api('/api/invoices', { method: 'POST', body });
       // An invoice now exists for this id (filed or not); the next submit is a new invoice.
       // If the request never got a reply we keep the id, so resending can't create a duplicate.
       formRequestId = newRequestId();
+      setDraft(null); // the server removed the draft it came from
       if (d.duplicate) toast(`This invoice was already sent (#${d.invoice.localNo}). Showing it instead of sending again.`, true);
       handleResult(d, !d.duplicate);
       if (d.invoice.status === 'SUBMITTED') resetForm();
     } catch (err) { toast(err.message); }
     finally { btn.disabled = false; btn.textContent = 'Submit to FBR'; }
   });
+}
+
+// The whole form as plain data: the invoice request body, and what a draft stores
+function readForm() {
+  const f = $('#invoiceForm');
+  return {
+    invoiceType: f.invoiceType.value, invoiceDate: f.invoiceDate.value, invoiceRefNo: f.invoiceRefNo.value,
+    reason: f.reason.value, reasonRemarks: f.reasonRemarks.value,
+    scenarioId: f.scenarioId.value, buyerRegistrationType: f.buyerRegistrationType.value,
+    endConsumer: f.buyerRegistrationType.value === 'Unregistered' && f.endConsumer.checked,
+    buyerNonAtl: f.buyerRegistrationType.value === 'Registered' && f.buyerNonAtl.checked,
+    buyerNtnCnic: f.buyerNtnCnic.value, buyerBusinessName: f.buyerBusinessName.value,
+    buyerProvince: f.buyerProvince.value, buyerAddress: f.buyerAddress.value, items: readItems(),
+  };
+}
+const NUM_FIELDS = ['quantity', 'unitPrice', 'discount', 'fixedNotifiedValueOrRetailPrice', 'extraTax', 'fedPayable', 'salesTaxWithheldAtSource'];
+// Put item rows back into the form (debit note from an invoice, or an opened draft). Zero amounts stay empty.
+function fillItems(items, note) {
+  $('#items').innerHTML = '';
+  for (const it of items.length ? items : [{}]) {
+    const row = addItem();
+    for (const k of ['hsCode', 'productDescription', 'uoM', 'rate', 'sroScheduleNo', 'sroItemSerialNo', 'salesTaxApplicable', 'furtherTax'])
+      if (it[k] != null) row.querySelector(`[name=${k}]`).value = it[k];
+    if (it.saleType) setSelect(row.querySelector('[name=saleType]'), it.saleType);
+    for (const k of NUM_FIELDS) if (it[k] != null && it[k] !== '') row.querySelector(`[name=${k}]`).value = Number(it[k]) || (k === 'quantity' ? 1 : '');
+    if (note) row.querySelector('.hs-desc').textContent = note;
+    applyQtyStep(row);
+  }
+  recalc();
 }
 
 // One id per invoice form; the server returns the existing invoice if the same id arrives twice
@@ -1273,39 +1508,118 @@ function applyDocType() {
 async function startDebitNote(id) {
   try {
     const { invoice: inv } = await api('/api/invoices/' + id);
+    go('c-new');
+    setDraft(null);
     const f = $('#invoiceForm');
     f.invoiceType.value = 'Debit Note'; applyDocType();
     f.invoiceRefNo.value = inv.fbrInvoiceNumber;
     f.reason.value = ''; f.reasonRemarks.value = '';
-    f.invoiceDate.value = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
+    f.invoiceDate.value = pkDate();
     fillBuyer({ businessName: inv.buyerBusinessName, ntnCnic: inv.buyerNtnCnic, registrationType: inv.buyerRegistrationType, province: inv.buyerProvince, address: inv.buyerAddress, endConsumer: inv.endConsumer });
-    $('#items').innerHTML = '';
-    for (const it of inv.items) {
-      addItem();
-      const row = $('#items').lastElementChild;
-      const st = row.querySelector('[name=saleType]');
-      if (![...st.options].some(o => o.value === it.saleType)) st.insertAdjacentHTML('beforeend', `<option>${esc(it.saleType)}</option>`);
-      for (const k of ['hsCode', 'productDescription', 'uoM', 'rate', 'saleType', 'sroScheduleNo', 'sroItemSerialNo'])
-        row.querySelector(`[name=${k}]`).value = it[k] ?? '';
-      for (const k of ['quantity', 'unitPrice', 'discount', 'fixedNotifiedValueOrRetailPrice', 'extraTax', 'fedPayable', 'salesTaxWithheldAtSource'])
-        row.querySelector(`[name=${k}]`).value = Number(it[k] ?? 0);
-      row.querySelector('.hs-desc').textContent = `From original invoice #${inv.localNo}`;
-    }
+    fillItems(inv.items.map(({ salesTaxApplicable, furtherTax, ...it }) => it), `From original invoice #${inv.localNo}`);
     formRequestId = newRequestId();
-    recalc();
-    $('#invoiceForm').scrollIntoView({ behavior: 'smooth' });
     toast(`Debit note against invoice #${inv.localNo}: choose the reason, then change quantities/values to the amount being adjusted.`, true);
   } catch (err) { toast(err.message); }
 }
 
-function resetForm() {
+function clearBuyer() {
   const f = $('#invoiceForm');
-  for (const n of ['buyerNtnCnic', 'buyerBusinessName', 'buyerAddress', 'invoiceRefNo', 'reasonRemarks']) f[n].value = '';
-  f.invoiceType.value = 'Sale Invoice'; f.reason.value = ''; applyDocType();
+  for (const n of ['buyerNtnCnic', 'buyerBusinessName', 'buyerAddress']) f[n].value = '';
+  f.buyerProvince.value = '';
   f.buyerRegistrationType.value = 'Unregistered'; f.endConsumer.checked = true;
   f.buyerRegistrationType.dispatchEvent(new Event('change'));
+  $('#customerSel').value = ''; $('#buyerCheck').textContent = '';
+}
+function resetForm() {
+  const f = $('#invoiceForm');
+  clearBuyer();
+  for (const n of ['invoiceRefNo', 'reasonRemarks']) f[n].value = '';
+  f.invoiceType.value = 'Sale Invoice'; f.reason.value = ''; applyDocType();
+  f.invoiceDate.value = pkDate();
   $('#items').innerHTML = ''; addItem();
   formRequestId = newRequestId();
+  setDraft(null);
+}
+function startNewInvoice() {
+  if (S.draftId && !confirm('Start a new invoice? Unsaved changes to this draft will be lost (the saved draft stays in Drafts).')) return;
+  resetForm();
+}
+
+/* ---------- Drafts ---------- */
+function setDraft(id, savedAt) {
+  S.draftId = id;
+  $('#draftBadge').classList.toggle('hidden', !id);
+  $('#newFormBtn').classList.toggle('hidden', !id);
+  if (id) $('#draftBadge').textContent = 'Draft' + (savedAt ? ' · saved ' + new Date(savedAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' }) : '');
+}
+async function saveDraft() {
+  const btn = $('#draftBtn'); btn.disabled = true;
+  try {
+    const d = await api('/api/drafts', { method: 'POST', body: { id: S.draftId || undefined, data: readForm(), totalAmount: recalc().total } });
+    setDraft(d.id, d.updatedAt);
+    toast('Draft saved — find it under Sales Invoices → Drafts', true);
+  } catch (err) { toast(err.message); }
+  finally { btn.disabled = false; }
+}
+async function loadDrafts() {
+  try {
+    const list = await api('/api/drafts');
+    $('#draftRows').innerHTML = list.map(d => `<tr class="border-b last:border-0">
+      <td class="py-2 px-4 whitespace-nowrap">${new Date(d.updatedAt).toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
+      <td>${esc(d.title)}</td><td class="text-xs">${esc(d.invoiceType)}</td><td class="text-right">${d.items}</td><td class="text-right">${money(d.totalAmount)}</td>
+      <td class="text-xs text-slate-500">${esc(d.createdBy)}</td>
+      <td class="text-right whitespace-nowrap pr-4"><button class="text-emerald-700 mr-3" onclick="openDraft('${d.id}')">Open</button><button class="text-red-600 text-xs" onclick="deleteDraft('${d.id}')">Delete</button></td></tr>`).join('')
+      || '<tr><td colspan="7" class="py-6 px-4 text-slate-500">No drafts. Use "Save as draft" on a new invoice to finish it later.</td></tr>';
+  } catch (err) { toast(err.message); }
+}
+async function openDraft(id) {
+  try {
+    const d = await api('/api/drafts/' + id), v = d.data, f = $('#invoiceForm');
+    go('c-new');
+    f.invoiceType.value = v.invoiceType || 'Sale Invoice'; applyDocType();
+    f.invoiceDate.value = v.invoiceDate || pkDate();
+    f.invoiceRefNo.value = v.invoiceRefNo || ''; f.reason.value = v.reason || ''; f.reasonRemarks.value = v.reasonRemarks || '';
+    if (v.scenarioId) { f.scenarioId.value = v.scenarioId; }
+    fillBuyer({ businessName: v.buyerBusinessName || '', ntnCnic: v.buyerNtnCnic, registrationType: v.buyerRegistrationType || 'Unregistered',
+      province: v.buyerProvince, address: v.buyerAddress, endConsumer: v.endConsumer });
+    f.buyerNonAtl.checked = Boolean(v.buyerNonAtl);
+    fillItems(v.items || []);
+    formRequestId = newRequestId();
+    setDraft(d.id, d.updatedAt);
+  } catch (err) { toast(err.message); loadDrafts(); }
+}
+async function deleteDraft(id) {
+  if (!confirm('Delete this draft? This cannot be undone.')) return;
+  try { await api('/api/drafts/' + id, { method: 'DELETE' }); if (S.draftId === id) setDraft(null); loadDrafts(); } catch (err) { toast(err.message); }
+}
+
+/* ---------- Customer (top of the invoice form) ---------- */
+function fillCustomerList() {
+  const sel = $('#customerSel'), cur = sel.value;
+  sel.innerHTML = '<option value="">Walk-in customer (end consumer)</option>' + (S.saved?.buyers || []).map(b =>
+    `<option value="${b.id}">${esc(b.businessName)}${b.ntnCnic ? ' — ' + esc(b.ntnCnic) : ''} · ${esc(b.registrationType)}</option>`).join('');
+  sel.value = cur;
+  $('#addCustomerBtn').classList.toggle('hidden', !canManage());
+}
+function openCustomer() {
+  const f = $('#customerForm');
+  f.reset();
+  $('#customerModal').classList.remove('hidden');
+  f.businessName.focus();
+}
+function closeCustomer() { $('#customerModal').classList.add('hidden'); }
+function setupCustomerForm() {
+  $('#customerForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      const b = await api('/api/buyers', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      closeCustomer();
+      await loadSaved();
+      $('#customerSel').value = b.id;
+      fillBuyer(b);
+      toast(`Customer "${b.businessName}" saved`, true);
+    } catch (err) { toast(err.message); }
+  });
 }
 
 function handleResult(d, announce = true) {
@@ -1340,19 +1654,28 @@ async function syncHs() {
 }
 
 let hsTimer;
+// Codes this client already invoiced come first, then the HS list. On an empty box only the used codes show.
 async function hsSuggest(inp) {
   const box = inp.parentElement.querySelector('.hs-list');
   const q = inp.value.trim();
-  if (q.length < 2) return box.classList.add('hidden');
-  const rows = await api('/api/hs?q=' + encodeURIComponent(q)).catch(() => []);
-  if (inp.value.trim() !== q) return; // user kept typing
-  box.innerHTML = rows.length
-    ? rows.map(r => `<button type="button" class="hs-opt block w-full text-left px-3 py-2 hover:bg-emerald-50 border-b last:border-0"
+  const [recent, rows] = await Promise.all([
+    api('/api/hs/recent?q=' + encodeURIComponent(q)).catch(() => []),
+    q.length >= 2 ? api('/api/hs?q=' + encodeURIComponent(q)).catch(() => []) : [],
+  ]);
+  if (inp.value.trim() !== q || document.activeElement !== inp) return; // user kept typing or left the box
+  if (!recent.length && q.length < 2) return box.classList.add('hidden');
+  const used = new Set(recent.map(r => r.hsCode));
+  const head = t => `<div class="px-3 py-1 bg-slate-100 text-slate-600 font-semibold sticky top-0">${t}</div>`;
+  const opt = 'hs-opt block w-full text-left px-3 py-2 hover:bg-emerald-50 border-b last:border-0';
+  box._recent = recent;
+  box.innerHTML = (recent.length ? head('Used in your invoices before') + recent.map((r, i) => `<button type="button" class="${opt}" data-recent="${i}">
+        <span class="font-mono font-semibold">${esc(r.hsCode)}</span> <span class="ml-1 text-sky-700">${esc(r.saleType)} · ${esc(r.rate)} · ${esc(r.uoM)}</span>
+        <div class="text-slate-600">${esc(r.productDescription)} <span class="text-slate-400">— used ${r.times}×, last on ${esc(r.invoiceDate)}</span></div></button>`).join('') : '')
+    + (q.length >= 2 ? head('HS codes') + (rows.filter(r => !used.has(r.code)).map(r => `<button type="button" class="${opt}"
         data-code="${esc(r.code)}" data-desc="${esc(r.description)}">
         <span class="font-mono font-semibold">${esc(r.code)}</span>
         ${r.source === 'FBR' ? '<span class="ml-1 text-emerald-700 font-semibold">FBR</span>' : '<span class="ml-1 text-slate-400">PCT 2017</span>'}
-        <div class="text-slate-600">${esc(r.description)}</div></button>`).join('')
-    : '<div class="px-3 py-2 text-slate-500">No matching HS code</div>';
+        <div class="text-slate-600">${esc(r.description)}</div></button>`).join('') || '<div class="px-3 py-2 text-slate-500">No other matching HS code</div>') : '');
   box.classList.remove('hidden');
 }
 // "Milk and cream › … › Yogurt" -> "Yogurt"; "Men's shirts › Of cotton › Other" -> "Of cotton (other)"
@@ -1364,6 +1687,16 @@ function shortHsDesc(desc) {
   const text = i < parts.length - 1 ? `${parts[i]} (other)` : parts[i];
   return text.length > 150 ? text.slice(0, 147).replace(/\s+\S*$/, '') + '…' : text;
 }
+// FBR rejects a UOM that doesn't belong to the HS code; use its list when the token works
+async function fbrUom(row, code) {
+  const u = await api('/api/hs/' + encodeURIComponent(code) + '/uom').catch(() => null);
+  const uom = row.querySelector('[name=uoM]');
+  if (u?.data?.length) {
+    if (!u.data.includes(uom.value)) uom.value = u.data[0];
+    uom.title = 'FBR accepts for this HS code: ' + u.data.join(', ');
+    applyQtyStep(row);
+  }
+}
 async function pickHs(row, code, desc) {
   row.querySelector('[name=hsCode]').value = code;
   row.querySelector('.hs-list').classList.add('hidden');
@@ -1371,30 +1704,91 @@ async function pickHs(row, code, desc) {
   // Fill "what you sell" unless the user typed their own text
   const pd = row.querySelector('[name=productDescription]');
   if (!pd.value.trim() || pd.dataset.auto === '1') { pd.value = shortHsDesc(desc); pd.dataset.auto = '1'; }
-  // FBR rejects a UOM that doesn't belong to the HS code; use its list when the token works
-  const u = await api('/api/hs/' + encodeURIComponent(code) + '/uom').catch(() => null);
-  const uom = row.querySelector('[name=uoM]');
-  if (u?.data?.length) {
-    if (!u.data.includes(uom.value)) uom.value = u.data[0];
-    uom.title = 'FBR accepts for this HS code: ' + u.data.join(', ');
-  }
+  await Promise.all([fbrUom(row, code), suggestTax(row, code, true)]);
   recalc();
 }
+// Picked from "Used in your invoices before": repeat what was filed last time with this code
+function pickRecent(row, r) {
+  const f = n => row.querySelector(`[name=${n}]`);
+  f('hsCode').value = r.hsCode;
+  row.querySelector('.hs-list').classList.add('hidden');
+  if (!f('productDescription').value.trim() || f('productDescription').dataset.auto === '1') { f('productDescription').value = r.productDescription; f('productDescription').dataset.auto = '1'; }
+  setSelect(f('saleType'), r.saleType);
+  f('rate').value = r.rate; f('uoM').value = r.uoM;
+  f('sroScheduleNo').value = r.sroScheduleNo || ''; f('sroItemSerialNo').value = r.sroItemSerialNo || '';
+  row.querySelector('.hs-desc').textContent = `Same as your invoice of ${r.invoiceDate}`;
+  applyQtyStep(row);
+  suggestTax(row, r.hsCode, false); // only points out a difference with the current tax rule
+  recalc();
+}
+
+// "3402" → "3402", "84713010" → "8471.3010", "01" → "chapter 01"
+const fmtPrefix = p => p.length <= 2 ? 'chapter ' + p : p.length > 4 ? p.slice(0, 4) + '.' + p.slice(4) : p;
+// Sale type / rate for the HS code from the admin's tax rules (CA's Document 1); standard 18% when no rule matches.
+// apply = fill them in (a new code was picked); otherwise only show the hint.
+async function suggestTax(row, code, apply) {
+  row.dataset.taxFor = code;
+  const hint = row.querySelector('.tax-hint');
+  const d = await api(`/api/hs/${encodeURIComponent(code)}/tax`).catch(() => null);
+  if (!d || row.querySelector('[name=hsCode]').value !== code) return;
+  const sg = d.suggestion, f = n => row.querySelector(`[name=${n}]`);
+  const scenario = !$('#scenarioRow').classList.contains('hidden') && $('#scenarioSel').value; // sandbox test: the scenario decides
+  if (apply) {
+    if (!scenario) setSelect(f('saleType'), sg.saleType);
+    if (sg.rate) f('rate').value = sg.rate;
+    f('sroScheduleNo').value = sg.sroScheduleNo || ''; f('sroItemSerialNo').value = sg.sroItemSerialNo || '';
+  }
+  const cur = { saleType: f('saleType').value, rate: f('rate').value };
+  const differs = x => x && (x.saleType !== cur.saleType || (x.rate && x.rate !== cur.rate));
+  const parts = [sg.source === 'rule'
+    ? `<span class="text-sky-800">Tax rule ${esc(fmtPrefix(sg.prefix))}: ${esc(sg.note || sg.saleType)}${sg.rate ? '' : ' — check the rate'}</span>`
+    : '<span class="text-slate-500">No schedule found for this code, so standard rate 18%. Change the sale type if it is exempt, zero-rated, reduced or 3rd schedule.</span>'];
+  if (!apply && differs(sg)) parts.push(`<span class="text-amber-700">The rule now says ${esc(sg.saleType)}${sg.rate ? ', ' + esc(sg.rate) : ''}</span> <button type="button" class="tax-use underline text-emerald-700" data-which="suggestion">use the rule</button>`);
+  if (apply && differs(d.last)) parts.push(`<span class="text-amber-700">Last time you used ${esc(d.last.saleType)}, ${esc(d.last.rate)} (${esc(d.last.invoiceDate)})</span> <button type="button" class="tax-use underline text-emerald-700" data-which="last">use that</button>`);
+  if (scenario && sg.saleType !== cur.saleType) parts.push('<span class="text-slate-500">sale type kept from the sandbox scenario</span>');
+  hint.innerHTML = parts.join(' · ');
+  hint._d = d;
+  recalc();
+}
+function useTax(btn) {
+  const row = btn.closest('.item'), x = row.querySelector('.tax-hint')._d?.[btn.dataset.which];
+  if (!x) return;
+  const f = n => row.querySelector(`[name=${n}]`);
+  setSelect(f('saleType'), x.saleType);
+  if (x.rate) f('rate').value = x.rate;
+  f('sroScheduleNo').value = x.sroScheduleNo || ''; f('sroItemSerialNo').value = x.sroItemSerialNo || '';
+  btn.previousElementSibling?.remove(); btn.remove();
+  recalc();
+}
+
 function setupHsSearch() {
   const items = $('#items');
   items.addEventListener('input', e => {
     if (e.target.name === 'productDescription') e.target.dataset.auto = ''; // typed by the user: don't overwrite on next pick
     if (!e.target.matches('.hs-input')) return;
-    e.target.closest('.item').querySelector('.hs-desc').textContent = '';
+    const row = e.target.closest('.item');
+    row.querySelector('.hs-desc').textContent = ''; row.querySelector('.tax-hint').textContent = ''; row.dataset.taxFor = '';
     clearTimeout(hsTimer);
     hsTimer = setTimeout(() => hsSuggest(e.target), 250);
+  });
+  items.addEventListener('focusin', e => { if (e.target.matches('.hs-input')) hsSuggest(e.target); });
+  // Typed a full code without picking from the list: still suggest its sale type and rate
+  items.addEventListener('change', async e => {
+    if (!e.target.matches('.hs-input')) return;
+    const row = e.target.closest('.item'), code = e.target.value.trim();
+    if (!/^\d{4}\.\d{4}$/.test(code) || row.dataset.taxFor === code) return;
+    const hit = (await api('/api/hs?q=' + encodeURIComponent(code)).catch(() => [])).find(r => r.code === code);
+    if (hit) pickHs(row, code, hit.description); else { fbrUom(row, code); suggestTax(row, code, true); }
   });
   items.addEventListener('mousedown', e => {
     const opt = e.target.closest('.hs-opt');
     if (!opt) return;
     e.preventDefault(); // keep focus so the list doesn't close before the pick
-    pickHs(opt.closest('.item'), opt.dataset.code, opt.dataset.desc);
+    const row = opt.closest('.item');
+    if (opt.dataset.recent) pickRecent(row, opt.closest('.hs-list')._recent[Number(opt.dataset.recent)]);
+    else pickHs(row, opt.dataset.code, opt.dataset.desc);
   });
+  items.addEventListener('click', e => { const b = e.target.closest('.tax-use'); if (b) useTax(b); });
   items.addEventListener('focusout', e => {
     if (e.target.matches('.hs-input')) setTimeout(() => e.target.parentElement.querySelector('.hs-list').classList.add('hidden'), 150);
   });
@@ -1428,6 +1822,7 @@ document.addEventListener('focusout', e => {
   const box = e.target.parentElement?.querySelector(':scope > .sg-list');
   if (box) setTimeout(() => box.classList.add('hidden'), 150);
 });
+document.addEventListener('focusin', e => { if (e.target.matches?.('input[type=number]')) e.target.select(); });
 const sgTimers = new WeakMap();
 function debounced(input, fn) {
   clearTimeout(sgTimers.get(input));
@@ -1443,6 +1838,9 @@ function fillRowFromProduct(row, p) {
   set('sroScheduleNo', p.sroScheduleNo); set('sroItemSerialNo', p.sroItemSerialNo);
   row.querySelector('[name=productDescription]').dataset.auto = '';
   row.querySelector('.hs-desc').textContent = 'From saved product';
+  row.querySelector('.tax-hint').textContent = '';
+  row.dataset.taxFor = p.hsCode;
+  applyQtyStep(row);
   recalc();
 }
 
@@ -1453,11 +1851,10 @@ function fillBuyer(b) {
   f.buyerRegistrationType.value = b.registrationType;
   f.buyerRegistrationType.dispatchEvent(new Event('change'));
   f.endConsumer.checked = b.endConsumer ?? false; // saved buyers are businesses
-  if (b.province) {
-    if (![...f.buyerProvince.options].some(o => o.value === b.province)) f.buyerProvince.insertAdjacentHTML('beforeend', `<option>${esc(b.province)}</option>`);
-    f.buyerProvince.value = b.province;
-  }
+  setSelect(f.buyerProvince, b.province || '');
   f.buyerAddress.value = b.address || '';
+  const saved = (S.saved?.buyers || []).find(x => x.id === b.id || (b.ntnCnic && x.ntnCnic === b.ntnCnic));
+  $('#customerSel').value = saved ? saved.id : '';
   recalc();
 }
 
@@ -1512,6 +1909,7 @@ async function loadSaved() {
   try {
     const [products, buyers] = await Promise.all([api('/api/products'), api('/api/buyers')]);
     S.saved = { products, buyers };
+    if (S.role !== 'SUPER_ADMIN') fillCustomerList();
     $('#productRows').innerHTML = products.map(p => `<tr class="border-b last:border-0">
       <td class="py-1">${esc(p.name)}</td><td class="font-mono text-xs">${esc(p.hsCode)}</td><td>${esc(p.rate)}</td><td class="text-xs">${esc(p.uoM)}</td>
       <td class="text-right">${p.unitPrice != null ? money(p.unitPrice) : ''}</td>
@@ -1904,8 +2302,8 @@ function renderReceipt(inv, seller) {
     <div style="text-align:center">
       <div style="font-size:13px;font-weight:bold">${esc(seller.sellerBusinessName)}</div>
       <div>${esc(seller.sellerAddress)}</div>
-      <div>NTN/CNIC: ${esc(seller.sellerNtnCnic)}</div>
       ${seller.sellerStrn ? `<div>STRN: ${esc(seller.sellerStrn)}</div>` : ''}
+      <div>NTN/CNIC: ${esc(seller.sellerNtnCnic)}</div>
       <div style="margin-top:2px;font-weight:bold">${esc(inv.invoiceType.toUpperCase())}</div>
     </div>${line}
     ${row('Invoice #', esc(inv.invoiceNo || inv.localNo))}${row('Date', esc(inv.invoiceDate))}
@@ -1978,7 +2376,7 @@ function renderA4(inv, seller) {
       <div>
         <div style="font-size:20px;font-weight:bold">${esc(seller.sellerBusinessName)}</div>
         <div>${esc(seller.sellerAddress)}${seller.sellerProvince ? ', ' + esc(seller.sellerProvince) : ''}</div>
-        <div>NTN/CNIC: <b>${esc(seller.sellerNtnCnic)}</b>${seller.sellerStrn ? ` &nbsp;·&nbsp; STRN: <b>${esc(seller.sellerStrn)}</b>` : ''}</div>
+        <div>${seller.sellerStrn ? `STRN: <b>${esc(seller.sellerStrn)}</b> &nbsp;·&nbsp; ` : ''}NTN/CNIC: <b>${esc(seller.sellerNtnCnic)}</b></div>
       </div>
       <div style="text-align:right">
         <div style="font-size:18px;font-weight:bold;letter-spacing:.5px">${inv.invoiceType === 'Debit Note' ? 'DEBIT NOTE' : 'SALES TAX INVOICE'}</div>

@@ -6,7 +6,8 @@ const { PrismaClient } = require('@prisma/client');
 
 const { createAuth, requireRole, requireTenant, requireTenantRole, signToken, signWorkspaceToken } = require('./src/auth');
 const { encrypt, decrypt, mask } = require('./src/crypto');
-const { calcInvoice } = require('./src/tax');
+const { calcInvoice, WHOLE_NUMBER_UOMS } = require('./src/tax');
+const taxRules = require('./src/hsTaxRules');
 const fbr = require('./src/fbr');
 const hs = require('./src/hscodes');
 const annexC = require('./src/annexc');
@@ -256,7 +257,7 @@ app.get('/api/meta', authenticateToken, (req, res) => {
     res.json({
         scenarios: SCENARIOS, provinces: PROVINCES, uoms: UOMS, rates: RATES, mock: process.env.FBR_MOCK === 'true',
         debitReasons: DEBIT_REASONS, editWindowHours: IRIS_EDIT_WINDOW_HOURS, debitNoteMaxDays: DEBIT_NOTE_MAX_DAYS,
-        businessActivities: BUSINESS_ACTIVITIES, sectors: SECTORS,
+        businessActivities: BUSINESS_ACTIVITIES, sectors: SECTORS, wholeNumberUoms: [...WHOLE_NUMBER_UOMS],
     });
 });
 
@@ -524,6 +525,51 @@ app.get('/api/hs/stats', authenticateToken, async (req, res) => {
     res.json(await hs.stats(prisma));
 });
 
+// HS codes this client already filed invoices with, newest first, with what they used last time.
+// q narrows it like the HS search (code prefix, or words in the description).
+app.get('/api/hs/recent', authenticateToken, requireTenant, async (req, res) => {
+    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId }, select: { fbrEnv: true } });
+    const q = String(req.query.q || '').trim();
+    const code = /^[\d.\s]+$/.test(q) ? hs.normalizeCode(q) : '';
+    const like = q && !code ? `%${q}%` : null;
+    const rows = await prisma.$queryRaw`
+        WITH used AS (
+            SELECT DISTINCT ON (ii."hsCode") ii."hsCode", ii."productDescription", ii."saleType", ii."rate", ii."uoM",
+                   ii."sroScheduleNo", ii."sroItemSerialNo", i."invoiceDate", i."createdAt"
+            FROM "InvoiceItem" ii JOIN "Invoice" i ON i."id" = ii."invoiceId"
+            WHERE i."tenantId" = ${req.user.tenantId} AND i."status" = 'SUBMITTED' AND i."fbrEnv"::text = ${t.fbrEnv}
+            ORDER BY ii."hsCode", i."createdAt" DESC
+        ), counts AS (
+            SELECT ii."hsCode", count(*)::int AS "times"
+            FROM "InvoiceItem" ii JOIN "Invoice" i ON i."id" = ii."invoiceId"
+            WHERE i."tenantId" = ${req.user.tenantId} AND i."status" = 'SUBMITTED' AND i."fbrEnv"::text = ${t.fbrEnv}
+            GROUP BY ii."hsCode"
+        )
+        SELECT used.*, counts."times" FROM used JOIN counts USING ("hsCode")
+        WHERE (${code} = '' OR used."hsCode" LIKE ${code + '%'})
+          AND (${like}::text IS NULL OR used."productDescription" ILIKE ${like})
+        ORDER BY used."createdAt" DESC LIMIT 15`;
+    res.json(rows.map(({ createdAt, ...r }) => r));
+});
+
+// Suggested sale type / rate for an HS code: the admin's tax rule (Sales Tax Act schedules), else standard rate.
+// `last` is what this client used for the same code last time, so the form can point out a difference.
+app.get('/api/hs/:code/tax', authenticateToken, requireTenant, async (req, res) => {
+    const code = hs.normalizeCode(req.params.code);
+    if (!hs.HS_FORMAT.test(code)) throw new HttpError(400, 'HS code must look like 0101.2100');
+    const rule = taxRules.matchRule(await taxRules.loadRules(prisma), code);
+    const last = await prisma.invoiceItem.findFirst({
+        where: { hsCode: code, invoice: { tenantId: req.user.tenantId, status: 'SUBMITTED' } },
+        orderBy: { invoice: { createdAt: 'desc' } },
+        select: { saleType: true, rate: true, sroScheduleNo: true, sroItemSerialNo: true, invoice: { select: { invoiceDate: true } } },
+    });
+    const pick = r => r && { saleType: r.saleType, rate: r.rate, sroScheduleNo: r.sroScheduleNo, sroItemSerialNo: r.sroItemSerialNo, note: r.note };
+    res.json({
+        suggestion: rule ? { ...pick(rule), prefix: rule.prefix, source: 'rule' } : { ...taxRules.STANDARD, source: 'standard' },
+        last: last && { saleType: last.saleType, rate: last.rate, sroScheduleNo: last.sroScheduleNo, sroItemSerialNo: last.sroItemSerialNo, invoiceDate: last.invoice.invoiceDate },
+    });
+});
+
 // Valid UOMs FBR accepts for this HS code (needs a working token)
 app.get('/api/hs/:code/uom', authenticateToken, requireTenant, async (req, res) => {
     const code = hs.normalizeCode(req.params.code);
@@ -543,6 +589,94 @@ app.post('/api/admin/clients/:id/hs-sync', authenticateToken, requireRole('SUPER
     if (n === null) throw new HttpError(502, 'Could not get the HS code list from FBR. Check the token and IP whitelisting.');
     await audit(req, { tenantId: null, action: 'hs.sync', summary: `Synced ${n} HS codes from FBR (token of ${t.companyName})` });
     res.json({ synced: n });
+});
+
+// ---------- Tax rules (HS code → sale type / rate), admin only ----------
+const SALE_TYPES = [...new Set(SCENARIOS.map(s => s.saleType))];
+app.get('/api/admin/tax-rules', authenticateToken, ADMIN, async (req, res) => {
+    res.json(await prisma.hsTaxRule.findMany({ orderBy: { prefix: 'asc' } }));
+});
+app.post('/api/admin/tax-rules', authenticateToken, ADMIN, async (req, res) => {
+    const b = req.body || {};
+    const d = {
+        prefix: taxRules.digitsOf(b.prefix),
+        saleType: String(b.saleType || '').trim(),
+        rate: String(b.rate || '').trim().slice(0, 60),
+        sroScheduleNo: String(b.sroScheduleNo || '').trim().slice(0, 100),
+        sroItemSerialNo: String(b.sroItemSerialNo || '').trim().slice(0, 50),
+        note: String(b.note || '').trim().slice(0, 300),
+        updatedBy: req.user.email,
+    };
+    if (d.prefix.length < 2 || d.prefix.length > 8) throw new HttpError(400, 'HS code (or its start) must be 2 to 8 digits, e.g. 3402 or 8471.3010.');
+    if (!SALE_TYPES.includes(d.saleType)) throw new HttpError(400, 'Choose a sale type from the list.');
+    try {
+        const r = b.id
+            ? await prisma.hsTaxRule.update({ where: { id: String(b.id) }, data: d })
+            : await prisma.hsTaxRule.create({ data: d });
+        taxRules.clearCache();
+        await audit(req, { tenantId: null, action: 'taxrule.save', entityType: 'HsTaxRule', entityId: r.id, summary: `Tax rule ${r.prefix} → ${r.saleType}${r.rate ? ', ' + r.rate : ''}` });
+        res.json(r);
+    } catch (err) {
+        if (err.code === 'P2002') throw new HttpError(400, `There is already a rule for ${d.prefix}.`);
+        if (err.code === 'P2025') throw new HttpError(404, 'Rule not found.');
+        throw err;
+    }
+});
+app.delete('/api/admin/tax-rules/:id', authenticateToken, ADMIN, async (req, res) => {
+    const r = await prisma.hsTaxRule.delete({ where: { id: req.params.id } }).catch(() => null);
+    if (!r) throw new HttpError(404, 'Rule not found.');
+    taxRules.clearCache();
+    await audit(req, { tenantId: null, action: 'taxrule.delete', entityType: 'HsTaxRule', entityId: r.id, summary: `Tax rule ${r.prefix} (${r.saleType}) deleted` });
+    res.json({ deleted: true });
+});
+
+// Check a seller NTN/CNIC/STRN with FBR (registered? active?) using that client's token
+app.get('/api/admin/clients/:id/check-registration', authenticateToken, ADMIN, async (req, res) => {
+    const reg = String(req.query.reg || '').replace(/\D/g, '');
+    if (!NTN_LENGTHS.includes(reg.length)) throw new HttpError(400, 'Enter a 7/9-digit NTN, 13-digit CNIC or 13-digit STRN first.');
+    const t = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+    if (!t) throw new HttpError(404, 'Client not found.');
+    res.json(await fbr.checkBuyer(reg, todayPKT(), tenantToken(t)));
+});
+
+// ---------- Invoice drafts ----------
+// Saved forms, not invoices: they use no invoice number and are never sent to FBR. Every role may keep drafts.
+const MAX_DRAFTS = 200;
+app.get('/api/drafts', authenticateToken, requireTenant, async (req, res) => {
+    const list = await prisma.invoiceDraft.findMany({ where: { tenantId: req.user.tenantId }, orderBy: { updatedAt: 'desc' } });
+    res.json(list.map(d => ({ id: d.id, title: d.title, totalAmount: Number(d.totalAmount), items: Array.isArray(d.data?.items) ? d.data.items.length : 0,
+        invoiceType: d.data?.invoiceType || 'Sale Invoice', createdBy: d.createdBy, updatedAt: d.updatedAt })));
+});
+app.get('/api/drafts/:id', authenticateToken, requireTenant, async (req, res) => {
+    const d = await prisma.invoiceDraft.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
+    if (!d) throw new HttpError(404, 'Draft not found — it may have been filed or deleted.');
+    res.json(d);
+});
+app.post('/api/drafts', authenticateToken, requireTenant, async (req, res) => {
+    const b = req.body || {}, tenantId = req.user.tenantId;
+    if (!b.data || typeof b.data !== 'object' || !Array.isArray(b.data.items)) throw new HttpError(400, 'Nothing to save.');
+    if (JSON.stringify(b.data).length > 200000) throw new HttpError(400, 'This draft is too large to save.');
+    const total = Number(b.totalAmount);
+    const d = { title: String(b.data.buyerBusinessName || '').trim().slice(0, 200) || 'Walk-in Customer', data: b.data,
+        totalAmount: Number.isFinite(total) && total >= 0 && total < 1e12 ? Math.round(total * 100) / 100 : 0 };
+    let draft;
+    if (b.id) {
+        const { count } = await prisma.invoiceDraft.updateMany({ where: { id: String(b.id), tenantId }, data: d });
+        if (!count) throw new HttpError(404, 'Draft not found — it may have been filed or deleted. Save again to keep a new copy.');
+        draft = await prisma.invoiceDraft.findUnique({ where: { id: String(b.id) } });
+    } else {
+        if (await prisma.invoiceDraft.count({ where: { tenantId } }) >= MAX_DRAFTS) throw new HttpError(400, `You have ${MAX_DRAFTS} drafts. File or delete some first.`);
+        draft = await prisma.invoiceDraft.create({ data: { ...d, tenantId, createdBy: req.user.email } });
+    }
+    await audit(req, { action: 'invoice.draft_save', entityType: 'InvoiceDraft', entityId: draft.id, summary: `Draft saved — ${draft.title}, Rs ${Number(draft.totalAmount).toFixed(2)}` });
+    res.json({ id: draft.id, updatedAt: draft.updatedAt });
+});
+app.delete('/api/drafts/:id', authenticateToken, requireTenant, async (req, res) => {
+    const d = await prisma.invoiceDraft.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId }, select: { id: true, title: true } });
+    if (!d) throw new HttpError(404, 'Draft not found.');
+    await prisma.invoiceDraft.delete({ where: { id: d.id } });
+    await audit(req, { action: 'invoice.draft_delete', entityType: 'InvoiceDraft', entityId: d.id, summary: `Draft deleted — ${d.title}` });
+    res.json({ deleted: true });
 });
 
 // ---------- Invoices ----------
@@ -856,6 +990,8 @@ app.post('/api/invoices', authenticateToken, requireTenant, async (req, res) => 
         throw err;
     }
 
+    // Filed from a draft: the invoice now exists (filed or retryable), so the draft goes
+    if (b.draftId) await prisma.invoiceDraft.deleteMany({ where: { id: String(b.draftId), tenantId: tenant.id } });
     await audit(req, {
         action: 'invoice.create', entityType: 'Invoice', entityId: created.id,
         summary: `${created.invoiceType} #${created.localNo} created — ${created.buyerBusinessName}, Rs ${Number(created.totalAmount).toFixed(2)}${created.invoiceRefNo ? `, against ${created.invoiceRefNo}` : ''}`,

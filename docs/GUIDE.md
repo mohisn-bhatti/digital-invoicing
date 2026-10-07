@@ -39,9 +39,10 @@ so the first page can take about a minute to load.
 |---|---|
 | Dashboard | Go-live progress for every client, this month's invoices and totals, invoices that need attention |
 | Clients | Add a client (business details + its first login), open a client to manage it |
-| Client page | FBR settings (token, STRN, environment), Business Nature / Sector → scenarios, go-live checklist, users |
+| Client page | FBR settings in three groups (must match IRIS · received from FBR · entered in Raseed), Business Nature / Sector → scenarios, go-live checklist, users |
 | Workspace (inside a client) | "Enter" the client's account for 2 hours, e.g. to run sandbox scenarios on their behalf |
 | Reports | Annex-C (sales) CSV and Annex-H1 (stock statement) per client and month |
+| Tax Rules | HS code → sale type / rate / SRO reference, suggested on the invoice form (CA's Document 1), plus links to the FBR law pages |
 | Activity | Audit log of every action. It can't be edited or deleted. CSV export |
 | Enquiries | Messages sent from the website's contact form |
 | System | HS code sync with FBR, server egress IP |
@@ -50,9 +51,7 @@ so the first page can take about a minute to load.
 | Menu | What it does |
 |---|---|
 | Dashboard | Today / this month's totals, latest invoices |
-| New invoice | Buyer, items (HS code search fills in the description and UOM), live tax totals, submit to FBR |
-| Invoices | Filter by date, status, type or text; print, retry, debit note, mark "found in IRIS", cancel |
-| Import | Upload many invoices from Excel/CSV (template provided), preview errors, then queue them |
+| Sales Invoices | Tabs: **Invoices** (filter by date, status, type or text; print, retry, debit note, mark "found in IRIS", cancel) · **New invoice** (customer, buyer, items; choosing an HS code fills the sale type and rate from the Tax Rules; live tax totals; save as draft or submit to FBR) · **Drafts** · **Bulk import** (Excel/CSV, preview errors, then queue) |
 | Products / Buyers | Saved lists so the invoice form fills itself |
 | Stock | Opening stock, purchases, imports and adjustments (feeds Annex-H1) |
 | Users | Owner adds Accountant / Cashier logins |

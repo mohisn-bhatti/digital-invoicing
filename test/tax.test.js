@@ -217,3 +217,37 @@ test('review fixes: CSV formula injection, header value on a later row', () => {
     assert.strictEqual(g.invoices[0].body.buyerRegistrationType, 'Registered');
     assert.strictEqual(g.invoices[0].body.buyerNtnCnic, '1234567');
 });
+
+// CA's Document 1, "Practical Example of How to Calculate Any Transaction"
+test('Document 1 scenario A: standard goods, registered vs unregistered buyer', () => {
+    const steel = { ...base, hsCode: '7214.9990', uoM: 'KG', quantity: 1000, unitPrice: 1000, rate: '18%' };
+    const reg = calcInvoice([steel], { buyerRegistrationType: 'Registered', furtherTaxRate: 4 });
+    assert.strictEqual(reg.totals.totalST, 180000);
+    assert.strictEqual(reg.totals.totalAmount, 1180000);
+    const unreg = calcInvoice([steel], { buyerRegistrationType: 'Unregistered', furtherTaxRate: 4 });
+    assert.strictEqual(unreg.totals.totalFurtherTax, 40000);
+    assert.strictEqual(unreg.totals.totalAmount, 1220000);
+});
+
+test('Document 1 scenario B: 3rd schedule detergent taxed on retail price, no further tax', () => {
+    const { totals } = calcInvoice([{ ...base, hsCode: '3402.9000', saleType: '3rd Schedule Goods', quantity: 1000, unitPrice: 800, rate: '18%', fixedNotifiedValueOrRetailPrice: 1000000 }],
+        { buyerRegistrationType: 'Unregistered', furtherTaxRate: 4 });
+    assert.strictEqual(totals.totalST, 180000);
+    assert.strictEqual(totals.totalFurtherTax, 0);
+    assert.strictEqual(totals.totalAmount, 980000);
+});
+
+test('counted units need a whole-number quantity; KG may have decimals', () => {
+    const ctx = { buyerRegistrationType: 'Registered', furtherTaxRate: 4 };
+    assert.throws(() => calcInvoice([{ ...base, quantity: 1.5, unitPrice: 10, rate: '18%' }], ctx), /whole number/);
+    assert.strictEqual(calcInvoice([{ ...base, uoM: 'KG', quantity: 1.5, unitPrice: 10, rate: '18%' }], ctx).totals.totalExclST, 15);
+});
+
+test('HS tax rules: longest matching prefix wins, otherwise none', () => {
+    const { matchRule } = require('../src/hsTaxRules');
+    const rules = [{ prefix: '2309', saleType: 'Goods at Reduced Rate' }, { prefix: '23091000', saleType: 'Goods at standard rate (default)' }, { prefix: '01', saleType: 'Exempt Goods' }];
+    assert.strictEqual(matchRule(rules, '2309.9000').prefix, '2309');
+    assert.strictEqual(matchRule(rules, '2309.1000').prefix, '23091000');
+    assert.strictEqual(matchRule(rules, '0101.2100').prefix, '01');
+    assert.strictEqual(matchRule(rules, '8471.3010'), null);
+});

@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last updated: 2026-10-07_ · summary: [GUIDE.md](GUIDE.md)
+_Last updated: 2026-10-07 (CA feedback)_ · summary: [GUIDE.md](GUIDE.md)
 
 ## Done
 **Phase 1: filing invoices with FBR**
@@ -41,6 +41,18 @@ _Last updated: 2026-10-07_ · summary: [GUIDE.md](GUIDE.md)
 - Encrypted backup and restore scripts, tested end-to-end against both the local DB and Supabase (docs/backups.md)
 - Stock entries and the Annex-H1 stock statement
 
+**CA feedback, Phase 1 sheet (done 2026-10-07)**
+- Admin FBR settings in three groups: must match IRIS / received from FBR / entered in Raseed. STRN first,
+  "(Sent to FBR)" in red, invoice number format explained as a note, "Check registration with FBR" for the seller
+- Tax Rules (admin): HS code → sale type, rate and SRO reference from the CA's Document 1 (50 starting rules,
+  longest prefix wins, standard 18% otherwise). The invoice form fills them in when an HS code is chosen and shows why
+- HS code box lists the codes the client already invoiced (with last sale type / rate / UOM) before the HS list
+- Invoice drafts (no invoice number used until filed); "Add new customer" at the top of the invoice
+- Left menu shows modules only; New invoice, Drafts and Bulk import are tabs inside Sales Invoices
+- Invoice form headings follow FBR's Annex-C; each item has an Item box and a "More" box (SRO, extra / further tax)
+- Amount boxes start empty (no 0 to delete); whole-number quantity for counted units (pieces, dozen, …), decimals for KG etc.
+- Suggestion-list boxes (UOM, rate, SRO) always show their arrow
+
 ## Waiting on others
 - **PRAL / IRIS:** sandbox token, assigned scenarios, IP whitelisting. Then run every scenario, then get the production token.
 - **CA answers** (list sent 2026-10-06):
@@ -58,6 +70,15 @@ _Last updated: 2026-10-07_ · summary: [GUIDE.md](GUIDE.md)
   12. What must a printed invoice show?
   13. Is there a newer PCT / HS code list?
   14. Do branches in different provinces need handling?
+- **CA, from the feedback sheet:**
+  1. Tax Rules: left out because the heading is too broad or conditional — 2106 (syrups), 9018 (diagnostic kits),
+     electric vehicles (8702/8704/8711), hybrid vehicles. Which exact tariff lines should be added?
+  2. Further tax on petroleum fuels (SRO 648 serial 3) and utilities: which sale types / HS codes are exempt?
+  3. "Quantity should be a round number": whole numbers are now enforced only for counted units (pieces, dozen, pair…).
+     Is that right, or should KG / litre also be whole numbers?
+  4. Auto-filling seller details from IRIS isn't possible (IRIS has a captcha and FBR's API gives no name/address).
+     FBR's API only confirms registered / active — is that enough?
+  5. A Purchase Invoice module: is it needed (purchases are recorded under Stock today)?
 
 ## Phase 2 — remaining
 - **Buyer check.** Look up NTN status and registration type through FBR's STATL / Get_Reg_Type. Code can be written now;
