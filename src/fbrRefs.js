@@ -55,12 +55,18 @@ async function sync(prisma) {
         try {
             const rows = (await job()).filter(r => r.url && r.title);
             const seen = new Map(rows.map(r => [r.url, r])); // FBR lists a few documents twice
-            const now = new Date(), ops = [...seen.values()].map(r => prisma.legalReference.upsert({
-                where: { source_url: { source, url: r.url } },
-                update: { refNo: r.refNo, title: r.title.slice(0, 500), issuedOn: r.issuedOn, fetchedAt: now },
-                create: { ...r, title: r.title.slice(0, 500), fetchedAt: now },
-            }));
-            for (let i = 0; i < ops.length; i += 200) await prisma.$transaction(ops.slice(i, i + 200));
+            // Only new or changed rows are written: the database is far from the server, so 3,000 upserts a day are slow
+            const now = new Date(), title = r => r.title.slice(0, 500);
+            const have = new Map((await prisma.legalReference.findMany({ where: { source }, select: { id: true, url: true, refNo: true, title: true, issuedOn: true } })).map(x => [x.url, x]));
+            const fresh = [], changed = [];
+            for (const r of seen.values()) {
+                const old = have.get(r.url);
+                if (!old) fresh.push({ ...r, title: title(r), fetchedAt: now });
+                else if (old.refNo !== r.refNo || old.title !== title(r) || String(old.issuedOn) !== String(r.issuedOn)) changed.push({ id: old.id, refNo: r.refNo, title: title(r), issuedOn: r.issuedOn });
+            }
+            for (let i = 0; i < fresh.length; i += 500) await prisma.legalReference.createMany({ data: fresh.slice(i, i + 500), skipDuplicates: true });
+            for (const c of changed) await prisma.legalReference.update({ where: { id: c.id }, data: { refNo: c.refNo, title: c.title, issuedOn: c.issuedOn } });
+            await prisma.legalReference.updateMany({ where: { source }, data: { fetchedAt: now } });
             result[source] = seen.size;
         } catch (err) {
             result[source] = `failed: ${err.message}`;
