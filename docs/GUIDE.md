@@ -42,7 +42,6 @@ so the first page can take about a minute to load.
 | Client page | FBR settings in three groups (must match IRIS · received from FBR · entered in Raseed), Business Nature / Sector → scenarios, go-live checklist, users |
 | Workspace (inside a client) | "Enter" the client's account for 2 hours, e.g. to run sandbox scenarios on their behalf |
 | Reports | Annex-C (sales) CSV and Annex-H1 (stock statement) per client and month |
-| Tax Rules | HS code → sale type / rate / SRO reference, suggested on the invoice form (CA's Document 1), plus links to the FBR law pages |
 | Activity | Audit log of every action. It can't be edited or deleted. CSV export |
 | Enquiries | Messages sent from the website's contact form |
 | System | HS code sync with FBR, server egress IP |
@@ -51,8 +50,13 @@ so the first page can take about a minute to load.
 | Menu | What it does |
 |---|---|
 | Dashboard | Today / this month's totals, latest invoices |
-| Sales Invoices | Tabs: **Invoices** (filter by date, status, type or text; print, retry, debit note, mark "found in IRIS", cancel) · **New invoice** (customer, buyer, items; choosing an HS code fills the sale type and rate from the Tax Rules; live tax totals; save as draft or submit to FBR) · **Drafts** · **Bulk import** (Excel/CSV, preview errors, then queue) |
-| Products / Buyers | Saved lists so the invoice form fills itself |
+| + New Invoice | Customer, then items (only items with a tax rule; picking one fills the tax), quantity and price; live totals; save as draft or submit to FBR |
+| Draft Invoices | Invoices saved but not filed yet: open, finish and submit, or delete |
+| Issued Invoices | Filed with FBR (status "Issued"). Filters show Pending Submission, Submission Failed and Check IRIS too; print, retry, debit note, mark cancelled |
+| Bulk Import | Many invoices from Excel/CSV: preview errors, then queue them |
+| Items | The client's items (name, HS code, UOM, price), marked Official or Customer-created HS code. An item appears on invoices only once it has a tax rule |
+| Tax Rules Against Items | The client sets each item's sale type, rate (box or 0–100% slider), fixed / notified value % (normally 100%), SRO / schedule and serial no. Date/time and industry are recorded automatically; old rules stay as history. Guideline buttons open the Sales Tax Act (30-06-2026) schedules, SROs, circulars and the HS code list. Raseed does not decide the tax (Phase 1) |
+| Buyers / Customers | NTN, CNIC and STRN kept separately (FBR gets the NTN, else the CNIC); "Check registration with FBR"; the same number can't be saved twice |
 | Stock | Opening stock, purchases, imports and adjustments (feeds Annex-H1) |
 | Users | Owner adds Accountant / Cashier logins |
 

@@ -6,7 +6,7 @@ const { PrismaClient } = require('@prisma/client');
 
 const { createAuth, requireRole, requireTenant, requireTenantRole, signToken, signWorkspaceToken } = require('./src/auth');
 const { encrypt, decrypt, mask } = require('./src/crypto');
-const { calcInvoice, WHOLE_NUMBER_UOMS } = require('./src/tax');
+const { calcInvoice, WHOLE_NUMBER_UOMS, SRO_REQUIRED_SALE_TYPES } = require('./src/tax');
 const taxRules = require('./src/hsTaxRules');
 const fbr = require('./src/fbr');
 const hs = require('./src/hscodes');
@@ -70,6 +70,9 @@ function tenantToken(tenant) {
     return tenant.fbrTokenEnc ? decrypt(tenant.fbrTokenEnc) : null;
 }
 
+// Business nature and sector as chosen in IRIS, e.g. "Retailer · Wholesale / Retails"
+const industryOf = t => [t.businessActivities.join(', '), t.sector].filter(Boolean).join(' · ');
+
 // What a client (and its receipts) may see: no token, no IRIS profile
 function clientTenant(t) {
     return {
@@ -83,6 +86,7 @@ function clientTenant(t) {
         fbrEnv: t.fbrEnv,
         furtherTaxRate: Number(t.furtherTaxRate),
         cnicRequiredAbove: CNIC_REQUIRED_ABOVE,
+        industry: industryOf(t), // shown on the Tax Rules page
         // Ready = the client may file (same rule as assertCanInvoice, minus the sandbox check)
         ready: Boolean(sellerReady(t) && (t.fbrTokenEnc || process.env.FBR_MOCK === 'true')),
     };
@@ -424,7 +428,8 @@ app.get('/api/admin/egress-ip', authenticateToken, requireRole('SUPER_ADMIN'), a
 // Read-only for clients; only the super admin changes FBR settings
 app.get('/api/client/settings', authenticateToken, requireTenant, async (req, res) => {
     const t = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId } });
-    res.json({ ...clientTenant(t), workspace: Boolean(req.user.impersonatedBy), tenantRole: req.user.tenantRole });
+    res.json({ ...clientTenant(t), workspace: Boolean(req.user.impersonatedBy), tenantRole: req.user.tenantRole,
+        nextInvoiceNo: formatInvoiceNo(t.invoiceNumberFormat, t.invoiceSeq + 1, todayPKT()) }); // shown on the form; taken only when the invoice is created
 });
 
 app.get('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
@@ -1423,91 +1428,195 @@ app.get('/api/buyers/check', authenticateToken, requireTenant, async (req, res) 
     res.json(r);
 });
 
-// ---------- Saved products ----------
-function productData(b) {
+// ---------- Guideline buttons on the client's Tax Rules page (admin edits them) ----------
+app.get('/api/guidelines', authenticateToken, async (req, res) => {
+    const [links, note] = await Promise.all([
+        prisma.guideLink.findMany({ orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }] }),
+        prisma.appSetting.findUnique({ where: { key: 'guidelinesNote' } }),
+    ]);
+    res.json({ links, note: note?.value || '' });
+});
+app.post('/api/admin/guidelines', authenticateToken, ADMIN, async (req, res) => {
+    const b = req.body || {};
+    const d = { label: String(b.label || '').trim().slice(0, 80), url: String(b.url || '').trim().slice(0, 1000),
+        sortOrder: Number.isFinite(Number(b.sortOrder)) ? Math.round(Number(b.sortOrder)) : 0, updatedBy: req.user.email };
+    if (!d.label) throw new HttpError(400, 'Enter the button text.');
+    if (!/^https?:\/\/[^\s]+$/i.test(d.url)) throw new HttpError(400, 'The link must start with https:// (or http://).');
+    const g = b.id
+        ? await prisma.guideLink.update({ where: { id: String(b.id) }, data: d }).catch(() => { throw new HttpError(404, 'Guideline not found.'); })
+        : await prisma.guideLink.create({ data: d });
+    await audit(req, { tenantId: null, action: 'admin.guideline_save', entityType: 'GuideLink', entityId: g.id, summary: `Guideline "${g.label}" → ${g.url}` });
+    res.json(g);
+});
+app.delete('/api/admin/guidelines/:id', authenticateToken, ADMIN, async (req, res) => {
+    const g = await prisma.guideLink.delete({ where: { id: req.params.id } }).catch(() => null);
+    if (!g) throw new HttpError(404, 'Guideline not found.');
+    await audit(req, { tenantId: null, action: 'admin.guideline_delete', entityType: 'GuideLink', entityId: g.id, summary: `Guideline "${g.label}" deleted` });
+    res.json({ deleted: true });
+});
+app.put('/api/admin/guidelines/note', authenticateToken, ADMIN, async (req, res) => {
+    const value = String(req.body?.value || '').trim().slice(0, 1000);
+    await prisma.appSetting.upsert({ where: { key: 'guidelinesNote' }, update: { value, updatedBy: req.user.email }, create: { key: 'guidelinesNote', value, updatedBy: req.user.email } });
+    await audit(req, { tenantId: null, action: 'admin.guideline_note', summary: 'Guideline note changed', details: { note: value } });
+    res.json({ value });
+});
+
+// ---------- Items and their tax rules ----------
+// Phase 1: the client sets the tax on each item; Raseed doesn't decide it from the HS code. Only items with a tax rule
+// are offered on the invoice form.
+function itemData(b) {
     const d = {
         name: String(b.name || '').trim(),
         hsCode: hs.normalizeCode(b.hsCode || ''),
         uoM: String(b.uoM || '').trim(),
-        rate: String(b.rate || '').trim(),
-        saleType: String(b.saleType || '').trim(),
-        sroScheduleNo: String(b.sroScheduleNo || '').trim(),
-        sroItemSerialNo: String(b.sroItemSerialNo || '').trim(),
         unitPrice: b.unitPrice === '' || b.unitPrice == null ? null : Number(b.unitPrice),
     };
-    if (!d.name || d.name.length > 200) throw new HttpError(400, 'Product name is required (max 200 characters).');
+    if (!d.name || d.name.length > 200) throw new HttpError(400, 'Item name is required (max 200 characters).');
     if (!hs.HS_FORMAT.test(d.hsCode)) throw new HttpError(400, 'HS code must look like 0101.2100');
-    for (const f of ['uoM', 'rate', 'saleType']) if (!d[f]) throw new HttpError(400, `${f} is required.`);
+    if (!d.uoM) throw new HttpError(400, 'UOM is required.');
     if (d.unitPrice !== null && (!Number.isFinite(d.unitPrice) || d.unitPrice < 0)) throw new HttpError(400, 'Unit price must be a non-negative number.');
     return d;
 }
+function taxRuleData(b, saleTypes) {
+    const pct = b.notifiedPct === '' || b.notifiedPct == null ? 100 : Number(b.notifiedPct);
+    const r = {
+        saleType: String(b.saleType || '').trim(),
+        rate: String(b.rate || '').trim().slice(0, 60),
+        sroScheduleNo: String(b.sroScheduleNo || '').trim().slice(0, 100),
+        sroItemSerialNo: String(b.sroItemSerialNo || '').trim().slice(0, 50),
+        notifiedPct: Math.round(pct * 100) / 100,
+    };
+    if (!saleTypes.includes(r.saleType)) throw new HttpError(400, 'Choose a sale type from the list.');
+    if (!(pct > 0 && pct <= 100)) throw new HttpError(400, 'Fixed / notified value must be more than 0% and at most 100%.');
+    if (!r.rate) throw new HttpError(400, 'Enter the tax rate, e.g. 18%, 10% or Exempt.');
+    if (SRO_REQUIRED_SALE_TYPES.has(r.saleType) && (!r.sroScheduleNo || !r.sroItemSerialNo)) {
+        throw new HttpError(400, `"${r.saleType}" needs the SRO / Schedule no. and the item serial no.`);
+    }
+    return r;
+}
+// Sale types: FBR's own list (transtypecode) when the client's token works, else the DI spec's list
+async function saleTypeList(tenantId) {
+    const t = await prisma.tenant.findUnique({ where: { id: tenantId } });
+    let live = null;
+    try { live = await fbr.reference('transtypecode', t && tenantToken(t)); } catch { live = null; }
+    const names = (live || []).map(x => String(x.transactioN_DESC || x.transactionDesc || x.description || '').trim()).filter(Boolean);
+    return { live: names.length > 0, list: names.length ? [...new Set(names)] : SALE_TYPES };
+}
+app.get('/api/sale-types', authenticateToken, requireTenant, async (req, res) => res.json(await saleTypeList(req.user.tenantId)));
 
+// Codes found in the FBR / PCT list are Official; anything else was made up by the client
+async function hsSource(code) {
+    return (await prisma.hsCode.findUnique({ where: { code }, select: { code: true } })) ? 'OFFICIAL' : 'CUSTOMER';
+}
+// New current rule for an item; the previous one stays in the history
+async function setTaxRule(req, product, r) {
+    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: product.tenantId }, select: { businessActivities: true, sector: true } });
+    const [rule, updated] = await prisma.$transaction([
+        prisma.productTaxRule.create({ data: { ...r, tenantId: product.tenantId, productId: product.id, industry: industryOf(t), createdBy: req.user.email } }),
+        prisma.product.update({ where: { id: product.id }, data: { ...r, taxRuleAt: new Date() } }),
+    ]);
+    await audit(req, { action: 'product.tax_rule', entityType: 'Product', entityId: product.id,
+        summary: `Tax rule for "${product.name}": ${r.saleType}, ${r.rate}${r.notifiedPct < 100 ? `, on ${r.notifiedPct}% of the value` : ''}${r.sroScheduleNo ? `, ${r.sroScheduleNo} S.No ${r.sroItemSerialNo}` : ''}` });
+    return { rule, item: updated };
+}
+
+// q: name or HS code. withRule=1: only items that can go on an invoice. source=OFFICIAL|CUSTOMER
 app.get('/api/products', authenticateToken, requireTenant, async (req, res) => {
     const q = String(req.query.q || '').trim();
-    res.json(await prisma.product.findMany({
-        where: { tenantId: req.user.tenantId, ...(q && { OR: [{ name: { contains: q, mode: 'insensitive' } }, { hsCode: { startsWith: hs.normalizeCode(q) || q } }] }) },
-        orderBy: { name: 'asc' },
-        take: q ? 20 : 1000,
-    }));
+    const where = { tenantId: req.user.tenantId };
+    if (q) where.OR = [{ name: { contains: q, mode: 'insensitive' } }, { hsCode: { startsWith: hs.normalizeCode(q) || q } }];
+    if (req.query.withRule === '1') where.saleType = { not: '' };
+    if (['OFFICIAL', 'CUSTOMER'].includes(req.query.source)) where.source = req.query.source;
+    res.json(await prisma.product.findMany({ where, orderBy: { name: 'asc' }, take: q ? 20 : 1000 }));
 });
 
-// With id: edit that product. Without id: upsert by name, so saving "Yogurt 500g" again updates it.
+// Save an item. With id: edit it. Without id: add it, or update the one with the same name.
+// saleType + rate in the body (e.g. "Save as item" from an invoice row) also set its tax rule.
 app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
-    const d = productData(req.body || {});
-    const tenantId = req.user.tenantId;
+    const b = req.body || {}, tenantId = req.user.tenantId;
+    const d = itemData(b);
+    const rule = b.saleType || b.rate ? taxRuleData(b, (await saleTypeList(tenantId)).list) : null;
+    d.source = await hsSource(d.hsCode);
     try {
         let p;
-        if (req.body.id) {
-            const { count } = await prisma.product.updateMany({ where: { id: String(req.body.id), tenantId }, data: d });
-            if (!count) throw new HttpError(404, 'Product not found.');
-            p = await prisma.product.findUnique({ where: { id: String(req.body.id) } });
+        if (b.id) {
+            const { count } = await prisma.product.updateMany({ where: { id: String(b.id), tenantId }, data: d });
+            if (!count) throw new HttpError(404, 'Item not found.');
+            p = await prisma.product.findUnique({ where: { id: String(b.id) } });
         } else {
             p = await prisma.product.upsert({ where: { tenantId_name: { tenantId, name: d.name } }, update: d, create: { ...d, tenantId } });
         }
-        await audit(req, { action: 'product.save', entityType: 'Product', entityId: p.id, summary: `Product "${p.name}" saved (${p.hsCode}, ${p.rate}${p.unitPrice != null ? `, Rs ${p.unitPrice}` : ''})` });
+        await audit(req, { action: 'product.save', entityType: 'Product', entityId: p.id,
+            summary: `Item "${p.name}" saved (${p.hsCode}, ${p.source === 'CUSTOMER' ? 'customer-created code' : 'official code'}${p.unitPrice != null ? `, Rs ${p.unitPrice}` : ''})` });
+        const same = rule && p.saleType === rule.saleType && p.rate === rule.rate && p.sroScheduleNo === rule.sroScheduleNo
+            && p.sroItemSerialNo === rule.sroItemSerialNo && Number(p.notifiedPct) === rule.notifiedPct;
+        if (rule && !same) p = (await setTaxRule(req, p, rule)).item;
         res.json(p);
     } catch (err) {
-        if (err.code === 'P2002') throw new HttpError(400, `Another product is already named "${d.name}".`);
+        if (err.code === 'P2002') throw new HttpError(400, `Another item is already named "${d.name}".`);
         throw err;
     }
 });
 
+app.post('/api/products/:id/tax-rule', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
+    const p = await prisma.product.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
+    if (!p) throw new HttpError(404, 'Item not found.');
+    res.json(await setTaxRule(req, p, taxRuleData(req.body || {}, (await saleTypeList(req.user.tenantId)).list)));
+});
+app.get('/api/products/:id/tax-rules', authenticateToken, requireTenant, async (req, res) => {
+    const p = await prisma.product.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId }, select: { id: true } });
+    if (!p) throw new HttpError(404, 'Item not found.');
+    res.json(await prisma.productTaxRule.findMany({ where: { productId: p.id }, orderBy: { createdAt: 'desc' } }));
+});
+
 app.delete('/api/products/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const prod = await prisma.product.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId }, select: { name: true } });
-    const { count } = await prisma.product.deleteMany({ where: { id: req.params.id, tenantId: req.user.tenantId } });
-    if (!count) throw new HttpError(404, 'Product not found.');
-    await audit(req, { action: 'product.delete', entityType: 'Product', entityId: req.params.id, summary: `Product "${prod.name}" deleted` });
+    if (!prod) throw new HttpError(404, 'Item not found.');
+    await prisma.product.delete({ where: { id: req.params.id } });
+    await audit(req, { action: 'product.delete', entityType: 'Product', entityId: req.params.id, summary: `Item "${prod.name}" deleted (with its tax rule history)` });
     res.json({ deleted: true });
 });
 
 // ---------- Saved buyers ----------
+// NTN, CNIC and STRN are kept separately; FBR gets one number (buyerNTNCNIC): the NTN if there is one, else the CNIC.
 function buyerData(b) {
-    const ntn = String(b.ntnCnic ?? b.buyerNtnCnic ?? '').replace(/\D/g, '');
+    const digits = v => String(v ?? '').replace(/\D/g, '');
+    let ntn = digits(b.ntn), cnic = digits(b.cnic);
+    const legacy = digits(b.ntnCnic ?? b.buyerNtnCnic); // a single "NTN / CNIC" box (invoice form, import)
+    if (legacy && !ntn && !cnic) { if (legacy.length === 13) cnic = legacy; else ntn = legacy; }
     const d = {
         businessName: String(b.businessName ?? b.buyerBusinessName ?? '').trim(),
-        ntnCnic: ntn || null,
+        ntn, cnic, strn: digits(b.strn),
         registrationType: (b.registrationType ?? b.buyerRegistrationType) === 'Registered' ? 'Registered' : 'Unregistered',
         province: String(b.province ?? b.buyerProvince ?? '').trim(),
         address: String(b.address ?? b.buyerAddress ?? '').trim(),
     };
+    d.ntnCnic = d.ntn || d.cnic || null;
     if (!d.businessName || d.businessName.length > 200) throw new HttpError(400, 'Buyer name is required (max 200 characters).');
-    if (d.ntnCnic && !NTN_LENGTHS.includes(d.ntnCnic.length)) throw new HttpError(400, 'Buyer NTN must be 7 or 9 digits, or CNIC 13 digits.');
+    if (d.ntn && ![7, 9].includes(d.ntn.length)) throw new HttpError(400, 'NTN must be 7 or 9 digits.');
+    if (d.cnic && d.cnic.length !== 13) throw new HttpError(400, 'CNIC must be 13 digits.');
+    if (d.strn && ![7, 9, 13].includes(d.strn.length)) throw new HttpError(400, 'STRN must be 13 digits.');
     if (d.registrationType === 'Registered' && !d.ntnCnic) throw new HttpError(400, 'Registered buyer needs an NTN or CNIC.');
     return d;
 }
 
-async function saveBuyer(tenantId, d) {
-    if (d.ntnCnic) {
-        return prisma.buyer.upsert({ where: { tenantId_ntnCnic: { tenantId, ntnCnic: d.ntnCnic } }, update: d, create: { ...d, tenantId } });
-    }
-    const same = await prisma.buyer.findFirst({ where: { tenantId, ntnCnic: null, businessName: { equals: d.businessName, mode: 'insensitive' } } });
-    return same ? prisma.buyer.update({ where: { id: same.id }, data: d }) : prisma.buyer.create({ data: { ...d, tenantId } });
+// Another saved buyer with the same NTN, CNIC or STRN (or, with no numbers at all, the same name)
+function findDuplicateBuyer(tenantId, d, exceptId) {
+    const or = [
+        ...(d.ntn ? [{ ntn: d.ntn }, { ntnCnic: d.ntn }] : []),
+        ...(d.cnic ? [{ cnic: d.cnic }, { ntnCnic: d.cnic }] : []),
+        ...(d.strn ? [{ strn: d.strn }] : []),
+    ];
+    if (!or.length) or.push({ ntnCnic: null, ntn: '', cnic: '', strn: '', businessName: { equals: d.businessName, mode: 'insensitive' } });
+    return prisma.buyer.findFirst({ where: { tenantId, OR: or, ...(exceptId && { id: { not: exceptId } }) } });
 }
+const duplicateError = dup => new HttpError(409, `"${dup.businessName}" is already saved with this ${dup.ntn || dup.cnic || dup.strn ? 'NTN / CNIC / STRN' : 'name'}. Open it from the Buyers list to change it.`);
 
-// After a filed invoice: remember buyers that have an NTN/CNIC (walk-ins are not saved)
+// After a filed invoice: remember a new buyer that has an NTN/CNIC. An existing buyer is never changed.
 async function rememberBuyer(tenantId, inv) {
     if (!inv.buyerNtnCnic) return;
-    await saveBuyer(tenantId, buyerData(inv));
+    const d = buyerData(inv);
+    if (!(await findDuplicateBuyer(tenantId, d))) await prisma.buyer.create({ data: { ...d, tenantId } });
 }
 
 app.get('/api/buyers', authenticateToken, requireTenant, async (req, res) => {
@@ -1516,7 +1625,8 @@ app.get('/api/buyers', authenticateToken, requireTenant, async (req, res) => {
     res.json(await prisma.buyer.findMany({
         where: {
             tenantId: req.user.tenantId,
-            ...(q && { OR: [{ businessName: { contains: q, mode: 'insensitive' } }, ...(digits ? [{ ntnCnic: { startsWith: digits } }] : [])] }),
+            ...(q && { OR: [{ businessName: { contains: q, mode: 'insensitive' } },
+                ...(digits ? [{ ntnCnic: { startsWith: digits } }, { ntn: { startsWith: digits } }, { cnic: { startsWith: digits } }, { strn: { startsWith: digits } }] : [])] }),
         },
         orderBy: { businessName: 'asc' },
         take: q ? 20 : 1000,
@@ -1525,22 +1635,25 @@ app.get('/api/buyers', authenticateToken, requireTenant, async (req, res) => {
 
 app.post('/api/buyers', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const d = buyerData(req.body || {});
-    const tenantId = req.user.tenantId;
+    const tenantId = req.user.tenantId, id = req.body.id ? String(req.body.id) : null;
+    const dup = await findDuplicateBuyer(tenantId, d, id);
+    if (dup) throw duplicateError(dup);
+    let b;
     try {
-        let b;
-        if (req.body.id) {
-            const { count } = await prisma.buyer.updateMany({ where: { id: String(req.body.id), tenantId }, data: d });
+        if (id) {
+            const { count } = await prisma.buyer.updateMany({ where: { id, tenantId }, data: d });
             if (!count) throw new HttpError(404, 'Buyer not found.');
-            b = await prisma.buyer.findUnique({ where: { id: String(req.body.id) } });
+            b = await prisma.buyer.findUnique({ where: { id } });
         } else {
-            b = await saveBuyer(tenantId, d);
+            b = await prisma.buyer.create({ data: { ...d, tenantId } });
         }
-        await audit(req, { action: 'buyer.save', entityType: 'Buyer', entityId: b.id, summary: `Buyer "${b.businessName}" saved${b.ntnCnic ? ` (${b.ntnCnic})` : ''}` });
-        res.json(b);
     } catch (err) {
-        if (err.code === 'P2002') throw new HttpError(400, `Another saved buyer already has NTN/CNIC ${d.ntnCnic}.`);
+        if (err.code === 'P2002') throw new HttpError(409, `Another saved buyer already has NTN / CNIC ${d.ntnCnic}.`);
         throw err;
     }
+    await audit(req, { action: 'buyer.save', entityType: 'Buyer', entityId: b.id,
+        summary: `Buyer "${b.businessName}" ${id ? 'updated' : 'added'}${[b.ntn && 'NTN ' + b.ntn, b.cnic && 'CNIC ' + b.cnic, b.strn && 'STRN ' + b.strn].filter(Boolean).map(x => ' · ' + x).join('')}` });
+    res.json(b);
 });
 
 app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {

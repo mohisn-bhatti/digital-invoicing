@@ -158,31 +158,60 @@ model ImportBatch {
   @@index([tenantId, createdAt])
 }
 
-// Saved items: pick by name on the invoice form to fill HS code, UOM, rate, sale type, price
+// Items (the client's own list). An item appears on the invoice only once it has a tax rule; the current rule is
+// copied onto the item (saleType … sroItemSerialNo) and every rule ever set is kept in ProductTaxRule.
 model Product {
   id              String   @id @default(uuid())
   tenantId        String
   tenant          Tenant   @relation(fields: [tenantId], references: [id])
   name            String
   hsCode          String
+  source          String   @default("OFFICIAL") // OFFICIAL = picked from the FBR/PCT HS list; CUSTOMER = code typed by the client
   uoM             String
-  rate            String
-  saleType        String
   unitPrice       Decimal? @db.Decimal(14, 2)
+  // Current tax rule ("" = none yet: the item is not offered on invoices)
+  saleType        String   @default("")
+  rate            String   @default("")
   sroScheduleNo   String   @default("")
   sroItemSerialNo String   @default("")
+  notifiedPct     Decimal  @default(100) @db.Decimal(5, 2) // tax charged on this % of the line value (fixed / notified value)
+  taxRuleAt       DateTime?
+  taxRules        ProductTaxRule[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   @@unique([tenantId, name])
 }
 
-// Saved customers. ntnCnic is null for unregistered buyers without a number.
+// Tax rule set by the client against an item (Phase 1: the client decides, Raseed only links the FBR guidance).
+// Rules are never edited: a new rule replaces the current one and the old one stays as history.
+model ProductTaxRule {
+  id              String   @id @default(uuid())
+  tenantId        String
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  saleType        String
+  rate            String
+  sroScheduleNo   String   @default("")
+  sroItemSerialNo String   @default("")
+  notifiedPct     Decimal  @default(100) @db.Decimal(5, 2)
+  industry        String   @default("") // client's business nature / sector at the time (as chosen in IRIS)
+  createdBy       String   @default("")
+  createdAt       DateTime @default(now()) // date and time, picked automatically
+
+  @@index([productId, createdAt])
+}
+
+// Saved customers. NTN, CNIC and STRN are kept separately; ntnCnic is the one number sent to FBR
+// (the NTN if there is one, else the CNIC) and is null for unregistered buyers without a number.
 model Buyer {
   id               String   @id @default(uuid())
   tenantId         String
   tenant           Tenant   @relation(fields: [tenantId], references: [id])
   businessName     String
+  ntn              String   @default("")
+  cnic             String   @default("")
+  strn             String   @default("")
   ntnCnic          String?
   registrationType String   @default("Unregistered")
   province         String   @default("")
@@ -333,4 +362,22 @@ model InvoiceDraft {
   updatedAt   DateTime @updatedAt
 
   @@index([tenantId, updatedAt])
+}
+
+// Buttons on the client's Tax Rules page linking to the law (Act PDF, schedules, SROs …). Edited by the admin.
+model GuideLink {
+  id        String   @id @default(uuid())
+  label     String
+  url       String
+  sortOrder Int      @default(0)
+  updatedBy String   @default("system")
+  updatedAt DateTime @updatedAt
+}
+
+// Small platform-wide texts the admin can change, e.g. the note under the guideline buttons
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedBy String   @default("system")
+  updatedAt DateTime @updatedAt
 }
