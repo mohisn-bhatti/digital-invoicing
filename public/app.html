@@ -330,6 +330,11 @@
       <button class="bg-slate-800 text-white rounded px-3 py-1.5">Save note</button>
     </form>
   </div>
+  <div class="bg-white rounded-xl shadow p-5 space-y-2 text-sm">
+    <h2 class="font-semibold">FBR references <span class="text-xs font-normal text-slate-500">— SROs, circulars, general orders and notices copied from fbr.gov.pk once a day; clients search them on the Tax Rules page</span></h2>
+    <div id="legalStats" class="text-xs text-slate-600">…</div>
+    <button type="button" id="legalSyncBtn" onclick="syncLegal()" class="bg-slate-800 text-white rounded px-3 py-1.5">Refresh now</button>
+  </div>
   <div class="bg-white rounded-xl shadow p-5 text-sm">HS codes: <span id="sysHs">…</span> <span class="text-slate-500">— synced from FBR automatically every week once a client token works; per client under Clients → Manage.</span></div>
   </div>
 </section>
@@ -485,8 +490,10 @@
           <label class="col-span-2"><span>HS code <span class="text-slate-400">(pick from the official list, or type your own)</span></span><input name="hsCode" class="pf-hs" required autocomplete="off" placeholder="Type code or product, e.g. yogurt"></label>
           <label class="col-span-2"><span>Description / item name</span><input name="name" required maxlength="200" autocomplete="off" placeholder="e.g. Yogurt 500g"></label>
           <label><span>UOM</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
-          <label><span>Unit price</span><input name="unitPrice" type="number" step="0.01" min="0" placeholder="optional"></label>
-          <div class="col-span-2 flex flex-wrap items-center gap-3 self-end pb-1">
+          <div class="col-span-2 sm:col-span-3"><span class="block text-xs text-slate-600 mb-0.5">Prices <span class="text-slate-400">(as many as you need, e.g. A 150 · B 155 · C 180; chosen on the invoice)</span></span>
+            <div id="pfPrices" class="space-y-1"></div>
+            <button type="button" onclick="addPriceRow()" class="mt-1 text-xs text-emerald-700 underline">+ Add price</button></div>
+          <div class="col-span-2 sm:col-span-4 flex flex-wrap items-center gap-3">
             <button id="pfSubmit" class="bg-emerald-700 text-white rounded px-3 py-1.5">Save item</button>
             <button type="button" class="text-xs text-slate-600 underline" onclick="clearProductForm()">Clear</button>
             <span id="pfMode" class="text-xs text-slate-500"></span>
@@ -496,7 +503,7 @@
           <label><span>Show</span><select id="itemSource"><option value="">All items</option><option value="OFFICIAL">Official HS codes</option><option value="CUSTOMER">Customer-created codes</option></select></label>
           <label><span>Search</span><input id="itemQ" placeholder="Name or HS code" autocomplete="off"></label>
         </div>
-        <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Name</th><th>HS code</th><th>Source</th><th>UOM</th><th class="text-right">Price</th><th class="pl-3">Tax rule</th><th></th></tr></thead>
+        <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Name</th><th>HS code</th><th>Source</th><th>UOM</th><th>Prices</th><th class="pl-3">Tax rule</th><th></th></tr></thead>
           <tbody id="productRows"></tbody></table>
       </div>
   </div>
@@ -517,16 +524,21 @@
         <div class="sm:col-span-2"><label><span>3. Tax rate</span><input name="rate" list="rateList" required autocomplete="off" placeholder="e.g. 18%, 10%, Exempt"></label>
           <input type="range" id="trRateSlider" min="0" max="100" step="0.5" value="18" class="w-full !p-0 !border-0 mt-1 accent-emerald-700" aria-label="Tax rate slider">
           <div class="flex justify-between text-[10px] text-slate-400"><span>0%</span><span>applied on the invoice amount</span><span>100%</span></div></div>
-        <div class="sm:col-span-4"><span class="block text-xs text-slate-600 mb-0.5">4. Fixed / notified value: tax is charged on <b id="trPctOut">100%</b> of the amount <span class="text-slate-400">(normally 100%)</span></span>
-          <input type="range" name="notifiedPct" min="1" max="100" step="1" value="100" class="w-full !p-0 !border-0 accent-emerald-700" aria-label="Fixed or notified value percent">
-          <div id="trPctEx" class="text-xs text-slate-500"></div></div>
-        <label class="sm:col-span-2"><span>5. Exemption / zero / reduced rate reference <span class="text-slate-400">(SRO / Circular / General Order / Schedule no.)</span></span><input name="sroScheduleNo" list="sroList" autocomplete="off" placeholder="e.g. 6th Schd Table I"></label>
+        <div class="sm:col-span-4 grid sm:grid-cols-4 gap-2 items-start">
+          <label><span>4. Fixed / notified rate <span class="text-slate-400">(per unit; used on the invoice instead of the price; empty = none)</span></span><input name="notifiedRate" type="number" step="0.01" min="0" autocomplete="off" placeholder="e.g. 140"></label>
+          <div class="sm:col-span-3"><span class="block text-xs text-slate-600 mb-0.5">Move to set it below or above the item's price <b id="trPriceOut"></b></span>
+            <input type="range" id="trNotifiedSlider" min="50" max="150" step="1" value="100" class="w-full !p-0 !border-0 accent-emerald-700" aria-label="Notified rate compared with the price">
+            <div id="trPctEx" class="text-xs text-slate-500"></div></div>
+        </div>
+        <label class="sm:col-span-2 relative"><span>5. Exemption / zero / reduced rate reference <span class="text-slate-400">(search SROs, circulars, general orders, notices — or type a schedule)</span></span>
+          <input name="sroScheduleNo" id="trRef" autocomplete="off" placeholder="e.g. sugar, 1751, 6th Schd Table I">
+          <a id="trRefLink" class="hidden text-xs text-emerald-700 underline" target="_blank" rel="noopener">Open the document (PDF)</a></label>
         <label><span>6. Item serial no.</span><input name="sroItemSerialNo" autocomplete="off" placeholder="e.g. 19"></label>
         <button class="bg-emerald-700 text-white rounded px-3 py-2 self-end">Save tax rule</button>
       </form>
       <p class="text-xs text-slate-500">A new rule replaces the item's current one from now on. Invoices already filed keep the tax they were filed with; old rules stay in the history.</p>
       <div class="overflow-x-auto"><table class="w-full">
-        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Item</th><th>HS code</th><th>Sale type</th><th>Rate</th><th>On value</th><th>SRO / Schedule</th><th>Serial</th><th>Since</th><th></th></tr></thead>
+        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Item</th><th>HS code</th><th>Sale type</th><th>Rate</th><th>Notified rate</th><th>SRO / Schedule</th><th>Serial</th><th>Since</th><th></th></tr></thead>
         <tbody id="trRows"></tbody></table></div>
     </div>
   </div>
@@ -1141,8 +1153,26 @@ async function loadAdminDash() {
     $('#adAttention').innerHTML = items.length ? `<ul class="space-y-2">${items.join('')}</ul>` : '<div class="text-slate-500">All good — nothing needs attention.</div>';
   } catch (err) { toast(err.message); }
 }
+const LEGAL_NAMES = { SRO: 'SROs', CIRCULAR: 'Circulars', GENERAL_ORDER: 'General orders', NOTICE: 'Notices' };
+function showLegalStats(st) {
+  const keys = Object.keys(LEGAL_NAMES).filter(k => st[k]);
+  $('#legalStats').innerHTML = keys.length ? keys.map(k => `${LEGAL_NAMES[k]}: <b>${st[k].count.toLocaleString()}</b>`).join(' · ')
+    + ` <span class="text-slate-400">— last refreshed ${new Date(Math.max(...keys.map(k => new Date(st[k].fetchedAt)))).toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>`
+    : 'Not copied yet — press Refresh now.';
+}
+async function syncLegal() {
+  const btn = $('#legalSyncBtn'); btn.disabled = true; btn.textContent = 'Refreshing… (about 30 seconds)';
+  try {
+    const d = await api('/api/admin/legal-refs/sync', { method: 'POST' });
+    showLegalStats(d.stats);
+    const failed = Object.entries(d.result).filter(([, v]) => typeof v === 'string');
+    toast(failed.length ? `Some lists failed: ${failed.map(([k, v]) => `${LEGAL_NAMES[k]} (${v})`).join(', ')}` : 'FBR references refreshed', !failed.length);
+  } catch (err) { toast(err.message); }
+  finally { btn.disabled = false; btn.textContent = 'Refresh now'; }
+}
 async function loadSystem() {
   loadGuides();
+  api('/api/admin/legal-refs/stats').then(showLegalStats).catch(() => {});
   try {
     const st = await api('/api/hs/stats');
     $('#sysHs').textContent = st.FBR ? `${st.FBR.count.toLocaleString()} from FBR (last sync ${fmtDate(st.FBR.updatedAt)})` : `${(st['PCT-2017']?.count || 0).toLocaleString()} from the PCT 2017 list (not yet synced with FBR)`;
@@ -1412,7 +1442,8 @@ function itemRow() {
       <div class="lg:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-2 content-start">
         <div class="col-span-2 sm:col-span-4 text-xs font-semibold text-slate-700">Item</div>
         <label class="col-span-2 sm:col-span-4"><span>Item <span class="text-slate-400">(only items with a tax rule)</span></span><input name="productDescription" required autocomplete="off" placeholder="Type to search your items"></label>
-        <label><span>Amount <span class="text-slate-400">(per unit)</span></span><input name="unitPrice" type="number" step="0.01" min="0" placeholder="0.00" required></label>
+        <label><span>Rate <span class="text-slate-400">(per unit)</span></span><input name="unitPrice" type="number" step="0.01" min="0" placeholder="0.00" required>
+          <select class="price-pick hidden mt-1 !text-xs" aria-label="Choose the item's price"></select></label>
         <label class="col-span-2"><span>Unit of Measurement</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
         <label><span>Quantity</span><input name="quantity" type="number" step="1" min="1" value="1" required></label>
         <label class="col-span-2 relative"><span>HS Code <span class="text-slate-400">(from the item)</span></span>
@@ -1420,7 +1451,7 @@ function itemRow() {
           <div class="hs-list hidden absolute z-30 left-0 top-full mt-1 w-[34rem] max-w-[85vw] max-h-80 overflow-auto bg-white border rounded shadow-lg text-xs"></div>
         </label>
         <label><span>Sale Type</span><select name="saleType">${SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('')}</select></label>
-        <label><span>Rate</span><input name="rate" list="rateList" value="18%" required></label>
+        <label><span>Tax rate</span><input name="rate" list="rateList" value="18%" required></label>
         <div class="hs-desc col-span-2 sm:col-span-4 text-xs text-slate-500 -mt-1"></div>
         <div class="tax-hint col-span-2 sm:col-span-4 text-xs -mt-1"></div>
         <label><span>Discount</span><input name="discount" type="number" step="0.01" min="0" placeholder="0"></label>
@@ -1468,7 +1499,7 @@ function removeItem(btn) {
 function readItems() {
   return [...document.querySelectorAll('#items .item')].map(row => {
     const o = {};
-    for (const el of row.querySelectorAll('input, select')) o[el.name] = el.value;
+    for (const el of row.querySelectorAll('input[name], select[name]')) o[el.name] = el.value;
     return o;
   });
 }
@@ -1484,10 +1515,6 @@ function recalc() {
   const items = readItems();
   document.querySelectorAll('#items .item').forEach((row, i) => {
     const it = items[i];
-    if (row.dataset.notifiedPct) { // item's tax rule: tax on that % of the value
-      const v = r2((Number(it.quantity || 0) * Number(it.unitPrice || 0) - Number(it.discount || 0)) * Number(row.dataset.notifiedPct) / 100);
-      it.fixedNotifiedValueOrRetailPrice = String(v); row.querySelector('[name=fixedNotifiedValueOrRetailPrice]').value = v || '';
-    }
     const pct = Number((String(it.rate).match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
     const excl = r2(Number(it.quantity || 0) * Number(it.unitPrice || 0) - Number(it.discount || 0));
     const base = Number(it.fixedNotifiedValueOrRetailPrice) > 0 ? Number(it.fixedNotifiedValueOrRetailPrice) : excl;
@@ -1568,6 +1595,10 @@ function setupInvoiceForm() {
     if (b) fillBuyer(b); else clearBuyer();
   });
   $('#items').addEventListener('input', e => { if (e.target.name === 'uoM') applyQtyStep(e.target.closest('.item')); });
+  $('#items').addEventListener('change', e => {
+    if (!e.target.matches('.price-pick')) return;
+    e.target.closest('label').querySelector('[name=unitPrice]').value = e.target.value; recalc();
+  });
   setupHsSearch();
   setupSaved();
   setupSavedForms();
@@ -1936,7 +1967,7 @@ function setupHsSearch() {
     if (e.target.name === 'productDescription') e.target.dataset.auto = ''; // typed by the user: don't overwrite on next pick
     if (!e.target.matches('.hs-input')) return;
     const row = e.target.closest('.item');
-    row.querySelector('.hs-desc').textContent = ''; row.querySelector('.tax-hint').textContent = ''; row.dataset.taxFor = ''; row.dataset.notifiedPct = '';
+    row.querySelector('.hs-desc').textContent = ''; row.querySelector('.tax-hint').textContent = ''; row.dataset.taxFor = ''; row.querySelector('.price-pick').classList.add('hidden');
     clearTimeout(hsTimer);
     hsTimer = setTimeout(() => hsSuggest(e.target), 250);
   });
@@ -2003,13 +2034,18 @@ function fillRowFromProduct(row, p) {
   const st = row.querySelector('[name=saleType]');
   if (p.saleType && ![...st.options].some(o => o.value === p.saleType)) st.insertAdjacentHTML('beforeend', `<option>${esc(p.saleType)}</option>`);
   set('productDescription', p.name); set('hsCode', p.hsCode); set('uoM', p.uoM); set('rate', p.rate); set('saleType', p.saleType);
-  if (p.unitPrice != null) set('unitPrice', Number(p.unitPrice));
+  // The invoice shows one rate: the notified rate when the item's tax rule has one, else the item's price
+  // (with several prices the first is filled in and the others can be picked under the Amount box)
+  const prices = pricesOf(p), pick = row.querySelector('.price-pick'), notified = p.notifiedRate != null;
+  if (notified) set('unitPrice', Number(p.notifiedRate));
+  else if (prices.length) set('unitPrice', Number(prices[0].price));
+  pick.innerHTML = prices.map(x => `<option value="${Number(x.price)}">${esc(x.label)}: ${money(x.price)}</option>`).join('');
+  pick.classList.toggle('hidden', notified || prices.length < 2);
   set('sroScheduleNo', p.sroScheduleNo); set('sroItemSerialNo', p.sroItemSerialNo);
   row.querySelector('[name=productDescription]').dataset.auto = '';
   row.querySelector('.hs-desc').textContent = 'From your item (its tax rule)';
   row.dataset.taxFor = p.hsCode;
-  row.dataset.notifiedPct = Number(p.notifiedPct) < 100 ? Number(p.notifiedPct) : '';
-  row.querySelector('.tax-hint').textContent = row.dataset.notifiedPct ? `Tax rule: tax is charged on ${row.dataset.notifiedPct}% of the value (fixed / notified value)` : '';
+  row.querySelector('.tax-hint').textContent = notified ? `Notified rate ${money(p.notifiedRate)} per unit used (from the item's tax rule)` : '';
   applyQtyStep(row);
   recalc();
 }
@@ -2034,7 +2070,7 @@ async function saveRowAsProduct(row) {
   try {
     const p = await api('/api/products', { method: 'POST', body: {
       name: it.productDescription, hsCode: it.hsCode, uoM: it.uoM, rate: it.rate, saleType: it.saleType,
-      unitPrice: it.unitPrice, sroScheduleNo: it.sroScheduleNo, sroItemSerialNo: it.sroItemSerialNo,
+      prices: it.unitPrice !== '' ? [{ label: 'Price', price: it.unitPrice }] : [], sroScheduleNo: it.sroScheduleNo, sroItemSerialNo: it.sroItemSerialNo,
     } });
     toast(`Saved item "${p.name}" with this tax rule — it now appears in the item search`, true);
     loadSaved();
@@ -2093,13 +2129,25 @@ function setSelect(sel, v) {
   sel.value = v || '';
 }
 const SOURCE_BADGE = { OFFICIAL: '<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 text-xs">Official</span>', CUSTOMER: '<span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 text-xs" title="Not in the FBR / PCT HS list — FBR may reject it">Customer-created</span>' };
-const ruleText = p => p.saleType ? `${esc(p.saleType)} · ${esc(p.rate)}${p.sroScheduleNo ? ` · ${esc(p.sroScheduleNo)} ${esc(p.sroItemSerialNo)}` : ''}` : '';
+const ruleText = p => p.saleType ? `${esc(p.saleType)} · ${esc(p.rate)}${p.notifiedRate != null ? ` · notified ${money(p.notifiedRate)}/unit` : ''}${p.sroScheduleNo ? ` · ${esc(p.sroScheduleNo)} ${esc(p.sroItemSerialNo)}` : ''}` : '';
+const pricesOf = p => Array.isArray(p.prices) && p.prices.length ? p.prices : p.unitPrice != null ? [{ label: 'Price', price: Number(p.unitPrice) }] : [];
+function addPriceRow(label, price = '') {
+  if (label === undefined) label = String.fromCharCode(65 + ($('#pfPrices').children.length % 26)); // A, B, C …
+  $('#pfPrices').insertAdjacentHTML('beforeend', `<div class="price-row flex gap-2 items-center">
+    <input class="pr-label !w-40" maxlength="40" placeholder="e.g. A" value="${esc(label)}">
+    <input class="pr-price !w-32" type="number" step="0.01" min="0" placeholder="0.00" value="${esc(price)}">
+    <button type="button" class="text-slate-400 hover:text-red-600" title="Remove" onclick="this.parentElement.remove()">✕</button></div>`);
+}
+function readPrices() {
+  return [...document.querySelectorAll('#pfPrices .price-row')].map(r => ({ label: r.querySelector('.pr-label').value.trim(), price: r.querySelector('.pr-price').value }))
+    .filter(x => x.price !== '');
+}
 function renderItems() {
   const src = $('#itemSource').value, q = $('#itemQ').value.trim().toLowerCase();
   const rows = (S.saved?.products || []).filter(p => (!src || p.source === src) && (!q || p.name.toLowerCase().includes(q) || p.hsCode.startsWith(q)));
   $('#productRows').innerHTML = rows.map(p => `<tr class="border-b last:border-0 align-top">
     <td class="py-1">${esc(p.name)}</td><td class="font-mono text-xs">${esc(p.hsCode)}</td><td>${SOURCE_BADGE[p.source] || ''}</td><td class="text-xs">${esc(p.uoM)}</td>
-    <td class="text-right">${p.unitPrice != null ? money(p.unitPrice) : ''}</td>
+    <td class="text-xs">${pricesOf(p).map(x => `${esc(x.label)} ${money(x.price)}`).join('<br>')}</td>
     <td class="pl-3 text-xs">${p.saleType ? ruleText(p) : '<span class="text-amber-700">No tax rule — not on invoices yet</span>'}
       <a class="ml-1 text-emerald-700 underline" href="javascript:setItemRule('${p.id}')">${p.saleType ? 'change' : 'set tax rule'}</a></td>
     <td class="text-right whitespace-nowrap"><button class="text-emerald-700 text-xs mr-2" onclick="editProduct('${p.id}')">Edit</button><button class="text-red-600 text-xs" onclick="deleteSaved('products','${p.id}')">Delete</button></td></tr>`).join('')
@@ -2108,12 +2156,15 @@ function renderItems() {
 function clearProductForm() {
   const f = $('#productForm');
   f.reset(); f.id.value = '';
+  $('#pfPrices').innerHTML = ''; addPriceRow();
   $('#pfSubmit').textContent = 'Save item'; $('#pfMode').textContent = '';
 }
 function editProduct(id) {
   const p = S.saved.products.find(x => x.id === id), f = $('#productForm');
   for (const k of ['id', 'name', 'hsCode', 'uoM']) f[k].value = p[k] ?? '';
-  f.unitPrice.value = p.unitPrice != null ? Number(p.unitPrice) : '';
+  $('#pfPrices').innerHTML = '';
+  for (const x of pricesOf(p)) addPriceRow(x.label, Number(x.price));
+  if (!pricesOf(p).length) addPriceRow();
   $('#pfSubmit').textContent = 'Update item'; $('#pfMode').textContent = `Editing "${p.name}"`;
   f.name.focus();
 }
@@ -2132,7 +2183,7 @@ async function loadItemRules() {
   fillRuleForm();
   $('#trRows').innerHTML = items.map(p => `<tr class="border-b last:border-0 align-top">
     <td class="py-1">${esc(p.name)}</td><td class="font-mono text-xs">${esc(p.hsCode)}</td>
-    ${p.saleType ? `<td>${esc(p.saleType)}</td><td>${esc(p.rate)}</td><td>${Number(p.notifiedPct)}%</td><td>${esc(p.sroScheduleNo)}</td><td>${esc(p.sroItemSerialNo)}</td><td class="text-xs whitespace-nowrap">${p.taxRuleAt ? fmtDate(p.taxRuleAt) : ''}</td>`
+    ${p.saleType ? `<td>${esc(p.saleType)}</td><td>${esc(p.rate)}</td><td>${p.notifiedRate != null ? money(p.notifiedRate) + '/unit' : '—'}</td><td>${esc(p.sroScheduleNo)}</td><td>${esc(p.sroItemSerialNo)}</td><td class="text-xs whitespace-nowrap">${p.taxRuleAt ? fmtDate(p.taxRuleAt) : ''}</td>`
       : '<td colspan="6" class="text-amber-700 text-xs">No tax rule — this item is not offered on invoices</td>'}
     <td class="text-right whitespace-nowrap text-xs"><button class="text-emerald-700 mr-2" onclick="setItemRule('${p.id}')">${p.saleType ? 'Change' : 'Set rule'}</button>
       ${p.saleType ? `<button class="text-slate-600 underline" onclick="ruleHistory('${p.id}', this)">History</button>` : ''}</td></tr>
@@ -2144,19 +2195,44 @@ function fillRuleForm() {
   const f = $('#taxRuleForm'), p = (S.saved?.products || []).find(x => x.id === f.productId.value);
   setSelect(f.saleType, p?.saleType || SALE_TYPES()[0]);
   for (const k of ['rate', 'sroScheduleNo', 'sroItemSerialNo']) f[k].value = p?.[k] || '';
-  f.notifiedPct.value = p ? Number(p.notifiedPct) : 100;
+  f.notifiedRate.value = p?.notifiedRate != null ? Number(p.notifiedRate) : '';
+  $('#trRefLink').classList.add('hidden');
   syncRuleSliders();
 }
-// Rate box ↔ slider; notified % example, as in the CA's sheet (1,000 at 90% → tax on 900)
+// Rate box ↔ slider. Notified rate: a price per unit set by FBR, below or above the actual price (CA's example:
+// sugar sells at 150/kg, notified 140/kg → tax on 140). The slider moves it 50%–150% around the item's first price.
 function syncRuleSliders(from) {
-  const f = $('#taxRuleForm'), sl = $('#trRateSlider');
+  const f = $('#taxRuleForm'), sl = $('#trRateSlider'), ns = $('#trNotifiedSlider');
   if (from === 'slider') f.rate.value = `${Number(sl.value)}%`;
   else { const m = f.rate.value.match(/^\s*(\d+(?:\.\d+)?)\s*%/); sl.value = m ? m[1] : 0; }
-  const pct = Number(f.notifiedPct.value), rate = Number((f.rate.value.match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
-  $('#trPctOut').textContent = pct + '%';
-  const base = 1000 * pct / 100;
-  $('#trPctEx').textContent = `Example: amount 1,000 → tax ${rate}% on ${money(base)} = ${money(base * rate / 100)}`;
+  const item = (S.saved?.products || []).find(x => x.id === f.productId.value), price = item ? Number(pricesOf(item)[0]?.price || 0) : 0;
+  if (from === 'notified-slider' && price) f.notifiedRate.value = r2(price * ns.value / 100);
+  const nr = f.notifiedRate.value === '' ? null : Number(f.notifiedRate.value);
+  if (from !== 'notified-slider') ns.value = price && nr ? Math.min(150, Math.max(50, Math.round(nr / price * 100))) : 100;
+  ns.disabled = !price;
+  $('#trPriceOut').textContent = price ? `(price ${money(price)})` : '(add a price to the item to use the slider)';
+  const rate = Number((f.rate.value.match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0), unit = price || 100, base = nr ?? unit;
+  $('#trPctEx').textContent = nr == null
+    ? `No notified rate: tax is charged on the actual price (${money(unit)} → tax ${money(unit * rate / 100)} per unit).`
+    : `Price ${money(unit)}, notified ${money(nr)} → the invoice uses ${money(nr)}: tax ${rate}% = ${money(base * rate / 100)} per unit; total ${money(base + base * rate / 100)} per unit.`;
 }
+// Search FBR's SROs / circulars / general orders / notices (copied daily) plus the schedule names FBR uses
+const SCHEDULE_REFS = ['6th Schd Table I', '6th Schd Table II', '8th Schd Table 1', '5th Schd', '3rd Schd'];
+const REF_BADGE = { SRO: 'SRO', CIRCULAR: 'Circular', GENERAL_ORDER: 'General order', NOTICE: 'Notice', SCHEDULE: 'Schedule' };
+function setupRefSearch() {
+  const inp = $('#trRef'), link = $('#trRefLink');
+  inp.addEventListener('input', () => {
+    link.classList.add('hidden');
+    const q = inp.value.trim(); if (q.length < 2) return;
+    debounced(inp, async () => {
+      const rows = await api('/api/legal-refs?q=' + encodeURIComponent(q)).catch(() => []);
+      const sched = SCHEDULE_REFS.filter(x => x.toLowerCase().includes(q.toLowerCase())).map(x => ({ source: 'SCHEDULE', reference: x, title: 'Sales Tax Act schedule' }));
+      suggest(inp, [...sched, ...rows], r => `<span class="px-1 rounded bg-slate-100 text-slate-600">${REF_BADGE[r.source]}</span> <b>${esc(r.reference)}</b>${r.issuedOn ? ` <span class="text-slate-500">· ${fmtDate(r.issuedOn)}</span>` : ''}<div class="text-slate-600">${esc(r.title)}</div>`,
+        r => { inp.value = r.reference; if (r.url) { link.href = r.url; link.classList.remove('hidden'); } });
+    });
+  });
+}
+
 function setItemRule(id) { S.ruleItem = id; if (S.page === 'c-taxrules') loadItemRules(); else go('c-taxrules'); }
 async function ruleHistory(id, btn) {
   const row = $('#hist-' + id);
@@ -2164,7 +2240,7 @@ async function ruleHistory(id, btn) {
   try {
     const list = await api(`/api/products/${id}/tax-rules`);
     row.firstElementChild.innerHTML = `<div class="bg-slate-50 border rounded p-2 text-xs">${list.map((r, i) => `<div>${i === 0 ? '<b>Current</b>' : 'Earlier'} — from ${new Date(r.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}:
-      ${esc(r.saleType)}, ${esc(r.rate)}${Number(r.notifiedPct) < 100 ? ` on ${Number(r.notifiedPct)}% of the value` : ''}${r.sroScheduleNo ? `, ${esc(r.sroScheduleNo)} S.No ${esc(r.sroItemSerialNo)}` : ''} <span class="text-slate-500">· ${esc(r.createdBy)}${r.industry ? ' · ' + esc(r.industry) : ''}</span></div>`).join('')}</div>`;
+      ${esc(r.saleType)}, ${esc(r.rate)}${r.notifiedRate != null ? `, notified rate ${money(r.notifiedRate)} per unit` : ''}${r.sroScheduleNo ? `, ${esc(r.sroScheduleNo)} S.No ${esc(r.sroItemSerialNo)}` : ''} <span class="text-slate-500">· ${esc(r.createdBy)}${r.industry ? ' · ' + esc(r.industry) : ''}</span></div>`).join('')}</div>`;
     row.classList.remove('hidden');
   } catch (err) { toast(err.message); }
 }
@@ -2178,7 +2254,9 @@ function setupItemRuleForm() {
   });
   $('#trRateSlider').addEventListener('input', () => syncRuleSliders('slider'));
   f.rate.addEventListener('input', () => syncRuleSliders());
-  f.notifiedPct.addEventListener('input', () => syncRuleSliders());
+  f.notifiedRate.addEventListener('input', () => syncRuleSliders());
+  $('#trNotifiedSlider').addEventListener('input', () => syncRuleSliders('notified-slider'));
+  setupRefSearch();
   f.addEventListener('submit', async e => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(f));
@@ -2220,10 +2298,12 @@ function setupSavedForms() {
         r => { pf.hsCode.value = r.code; if (!pf.name.value.trim()) pf.name.value = shortHsDesc(r.description); });
     });
   });
+  if (!$('#pfPrices').children.length) addPriceRow();
   pf.addEventListener('submit', async e => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(pf));
     if (!body.id) delete body.id;
+    body.prices = readPrices();
     try {
       const p = await api('/api/products', { method: 'POST', body });
       toast(`${body.id ? 'Updated' : 'Saved'} item "${p.name}"${p.saleType ? '' : ' — now set its tax rule (Tax Rules) so it appears on invoices'}`, true);
@@ -2657,7 +2737,7 @@ function renderA4(inv, seller) {
         <th>${inv.invoiceRefNo ? 'Against invoice' : 'Sale origination'}</th><td>${inv.invoiceRefNo ? esc(inv.invoiceRefNo) + (inv.reason ? ' — ' + esc(inv.reason) : '') : esc(seller.sellerProvince || '—')}</td></tr>
     </table>
     <table style="margin-top:10px">
-      <thead><tr><th>#</th><th>HS Code</th><th>Description</th><th class="num">Qty</th><th>UOM</th><th class="num">Unit price</th><th class="num">Value excl. ST</th><th class="num">Rate</th><th class="num">Sales tax</th>
+      <thead><tr><th>#</th><th>HS Code</th><th>Description</th><th class="num">Qty</th><th>UOM</th><th class="num">Rate (per unit)</th><th class="num">Value excl. ST</th><th class="num">Tax rate</th><th class="num">Sales tax</th>
         ${anyFt ? '<th class="num">Further tax</th>' : ''}${anyExtra ? '<th class="num">Extra / FED</th>' : ''}<th class="num">Total</th></tr></thead>
       <tbody>${inv.items.map((it, i) => `<tr>
         <td>${i + 1}</td><td style="white-space:nowrap">${esc(it.hsCode)}</td>

@@ -44,7 +44,7 @@ so the first page can take about a minute to load.
 | Reports | Annex-C (sales) CSV and Annex-H1 (stock statement) per client and month |
 | Activity | Audit log of every action. It can't be edited or deleted. CSV export |
 | Enquiries | Messages sent from the website's contact form |
-| System | HS code sync with FBR, server egress IP |
+| System | HS code sync with FBR, server egress IP, client guideline buttons, FBR references (copied from fbr.gov.pk daily; "Refresh now") |
 
 ### Client (each NTN)
 | Menu | What it does |
@@ -54,8 +54,8 @@ so the first page can take about a minute to load.
 | Draft Invoices | Invoices saved but not filed yet: open, finish and submit, or delete |
 | Issued Invoices | Filed with FBR (status "Issued"). Filters show Pending Submission, Submission Failed and Check IRIS too; print, retry, debit note, mark cancelled |
 | Bulk Import | Many invoices from Excel/CSV: preview errors, then queue them |
-| Items | The client's items (name, HS code, UOM, price), marked Official or Customer-created HS code. An item appears on invoices only once it has a tax rule |
-| Tax Rules Against Items | The client sets each item's sale type, rate (box or 0–100% slider), fixed / notified value % (normally 100%), SRO / schedule and serial no. Date/time and industry are recorded automatically; old rules stay as history. Guideline buttons open the Sales Tax Act (30-06-2026) schedules, SROs, circulars and the HS code list. Raseed does not decide the tax (Phase 1) |
+| Items | The client's items (HS code, description, UOM and as many prices as needed, named A, B, C … or anything), marked Official or Customer-created HS code. An item appears on invoices only once it has a tax rule; with several prices the invoice line offers a price picker |
+| Tax Rules Against Items | The client sets each item's sale type, rate (box or 0–100% slider), fixed / notified rate per unit (optional; slider moves it below or above the item's price — when set, the invoice uses the notified rate as the line's rate, otherwise the item's normal price), reference searched from FBR's SROs, circulars, general orders and notices, SRO / schedule and serial no. Date/time and industry are recorded automatically; old rules stay as history. Guideline buttons open the Sales Tax Act (30-06-2026) schedules, SROs, circulars and the HS code list. Raseed does not decide the tax (Phase 1) |
 | Buyers / Customers | NTN, CNIC and STRN kept separately (FBR gets the NTN, else the CNIC); "Check registration with FBR"; the same number can't be saved twice |
 | Stock | Opening stock, purchases, imports and adjustments (feeds Annex-H1) |
 | Users | Owner adds Accountant / Cashier logins |

@@ -8,6 +8,7 @@ const { createAuth, requireRole, requireTenant, requireTenantRole, signToken, si
 const { encrypt, decrypt, mask } = require('./src/crypto');
 const { calcInvoice, WHOLE_NUMBER_UOMS, SRO_REQUIRED_SALE_TYPES } = require('./src/tax');
 const taxRules = require('./src/hsTaxRules');
+const fbrRefs = require('./src/fbrRefs');
 const fbr = require('./src/fbr');
 const hs = require('./src/hscodes');
 const annexC = require('./src/annexc');
@@ -1428,6 +1429,45 @@ app.get('/api/buyers/check', authenticateToken, requireTenant, async (req, res) 
     res.json(r);
 });
 
+// ---------- SROs, circulars, general orders, notices from fbr.gov.pk (searchable on the Tax Rules page) ----------
+const LEGAL_SOURCES = ['SRO', 'CIRCULAR', 'GENERAL_ORDER', 'NOTICE'];
+app.get('/api/legal-refs', authenticateToken, async (req, res) => {
+    const words = String(req.query.q || '').trim().split(/\s+/).filter(w => w.length > 0).slice(0, 6);
+    const where = {};
+    if (LEGAL_SOURCES.includes(req.query.source)) where.source = req.query.source;
+    if (words.length) where.AND = words.map(w => ({ OR: [{ refNo: { contains: w, mode: 'insensitive' } }, { title: { contains: w, mode: 'insensitive' } }] }));
+    const rows = await prisma.legalReference.findMany({ where, orderBy: [{ issuedOn: { sort: 'desc', nulls: 'last' } }, { refNo: 'desc' }], take: 25 });
+    res.json(rows.map(r => ({ ...r, reference: fbrRefs.referenceText(r) })));
+});
+async function legalStats() {
+    const g = await prisma.legalReference.groupBy({ by: ['source'], _count: { _all: true }, _max: { fetchedAt: true } });
+    return Object.fromEntries(g.map(x => [x.source, { count: x._count._all, fetchedAt: x._max.fetchedAt }]));
+}
+app.get('/api/admin/legal-refs/stats', authenticateToken, ADMIN, async (req, res) => res.json(await legalStats()));
+let legalSyncRunning = null;
+function syncLegalRefs() {
+    if (!legalSyncRunning) legalSyncRunning = fbrRefs.sync(prisma).finally(() => { legalSyncRunning = null; });
+    return legalSyncRunning;
+}
+app.post('/api/admin/legal-refs/sync', authenticateToken, ADMIN, async (req, res) => {
+    const result = await syncLegalRefs();
+    await audit(req, { tenantId: null, action: 'admin.legal_refs_sync', summary: `FBR references refreshed: ${Object.entries(result).map(([k, v]) => `${k} ${v}`).join(', ')}`, details: result });
+    res.json({ result, stats: await legalStats() });
+});
+// Refresh once a day (checked every 6 hours, and at start-up — the free Render server sleeps)
+async function legalSyncIfStale() {
+    const last = await prisma.legalReference.aggregate({ _max: { fetchedAt: true } }).catch(() => null);
+    const at = last?._max.fetchedAt;
+    if (!at || Date.now() - at.getTime() > 24 * 3600 * 1000) {
+        const r = await syncLegalRefs().catch(err => ({ error: err.message }));
+        console.log('FBR references refreshed:', JSON.stringify(r));
+    }
+}
+if (process.env.NODE_ENV !== 'test') {
+    setTimeout(() => legalSyncIfStale().catch(() => {}), 15000);
+    setInterval(() => legalSyncIfStale().catch(() => {}), 6 * 3600 * 1000);
+}
+
 // ---------- Guideline buttons on the client's Tax Rules page (admin edits them) ----------
 app.get('/api/guidelines', authenticateToken, async (req, res) => {
     const [links, note] = await Promise.all([
@@ -1465,11 +1505,17 @@ app.put('/api/admin/guidelines/note', authenticateToken, ADMIN, async (req, res)
 // Phase 1: the client sets the tax on each item; Raseed doesn't decide it from the HS code. Only items with a tax rule
 // are offered on the invoice form.
 function itemData(b) {
+    // An item can have several prices (e.g. retail / wholesale); the first is also its unitPrice
+    let prices = Array.isArray(b.prices) ? b.prices : b.unitPrice !== '' && b.unitPrice != null ? [{ label: 'Price', price: b.unitPrice }] : [];
+    prices = prices.filter(x => x && x.price !== '' && x.price != null)
+        .map((x, i) => ({ label: String(x.label || '').trim().slice(0, 40) || `Price ${i + 1}`, price: Number(x.price) }));
+    if (prices.length > 100) throw new HttpError(400, 'An item can have up to 100 prices.');
+    if (prices.some(x => !Number.isFinite(x.price) || x.price < 0)) throw new HttpError(400, 'Prices must be numbers of 0 or more.');
     const d = {
         name: String(b.name || '').trim(),
         hsCode: hs.normalizeCode(b.hsCode || ''),
         uoM: String(b.uoM || '').trim(),
-        unitPrice: b.unitPrice === '' || b.unitPrice == null ? null : Number(b.unitPrice),
+        prices, unitPrice: prices.length ? prices[0].price : null,
     };
     if (!d.name || d.name.length > 200) throw new HttpError(400, 'Item name is required (max 200 characters).');
     if (!hs.HS_FORMAT.test(d.hsCode)) throw new HttpError(400, 'HS code must look like 0101.2100');
@@ -1477,17 +1523,19 @@ function itemData(b) {
     if (d.unitPrice !== null && (!Number.isFinite(d.unitPrice) || d.unitPrice < 0)) throw new HttpError(400, 'Unit price must be a non-negative number.');
     return d;
 }
+// notifiedRate: the notified price per unit (above or below the actual price). When set, the invoice uses it as the
+// line's rate (CA: "invoice should show the notified rate if applicable, else the normal rate"). Empty = none.
 function taxRuleData(b, saleTypes) {
-    const pct = b.notifiedPct === '' || b.notifiedPct == null ? 100 : Number(b.notifiedPct);
+    const nr = b.notifiedRate === '' || b.notifiedRate == null ? null : Number(String(b.notifiedRate).replace(/,/g, ''));
     const r = {
         saleType: String(b.saleType || '').trim(),
         rate: String(b.rate || '').trim().slice(0, 60),
         sroScheduleNo: String(b.sroScheduleNo || '').trim().slice(0, 100),
         sroItemSerialNo: String(b.sroItemSerialNo || '').trim().slice(0, 50),
-        notifiedPct: Math.round(pct * 100) / 100,
+        notifiedRate: nr === null ? null : Math.round(nr * 100) / 100,
     };
     if (!saleTypes.includes(r.saleType)) throw new HttpError(400, 'Choose a sale type from the list.');
-    if (!(pct > 0 && pct <= 100)) throw new HttpError(400, 'Fixed / notified value must be more than 0% and at most 100%.');
+    if (nr !== null && !(nr > 0 && nr < 1e10)) throw new HttpError(400, 'Notified rate must be an amount per unit, more than 0 (or leave it empty).');
     if (!r.rate) throw new HttpError(400, 'Enter the tax rate, e.g. 18%, 10% or Exempt.');
     if (SRO_REQUIRED_SALE_TYPES.has(r.saleType) && (!r.sroScheduleNo || !r.sroItemSerialNo)) {
         throw new HttpError(400, `"${r.saleType}" needs the SRO / Schedule no. and the item serial no.`);
@@ -1516,7 +1564,7 @@ async function setTaxRule(req, product, r) {
         prisma.product.update({ where: { id: product.id }, data: { ...r, taxRuleAt: new Date() } }),
     ]);
     await audit(req, { action: 'product.tax_rule', entityType: 'Product', entityId: product.id,
-        summary: `Tax rule for "${product.name}": ${r.saleType}, ${r.rate}${r.notifiedPct < 100 ? `, on ${r.notifiedPct}% of the value` : ''}${r.sroScheduleNo ? `, ${r.sroScheduleNo} S.No ${r.sroItemSerialNo}` : ''}` });
+        summary: `Tax rule for "${product.name}": ${r.saleType}, ${r.rate}${r.notifiedRate != null ? `, notified rate ${r.notifiedRate} per unit` : ''}${r.sroScheduleNo ? `, ${r.sroScheduleNo} S.No ${r.sroItemSerialNo}` : ''}` });
     return { rule, item: updated };
 }
 
@@ -1549,7 +1597,7 @@ app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT,
         await audit(req, { action: 'product.save', entityType: 'Product', entityId: p.id,
             summary: `Item "${p.name}" saved (${p.hsCode}, ${p.source === 'CUSTOMER' ? 'customer-created code' : 'official code'}${p.unitPrice != null ? `, Rs ${p.unitPrice}` : ''})` });
         const same = rule && p.saleType === rule.saleType && p.rate === rule.rate && p.sroScheduleNo === rule.sroScheduleNo
-            && p.sroItemSerialNo === rule.sroItemSerialNo && Number(p.notifiedPct) === rule.notifiedPct;
+            && p.sroItemSerialNo === rule.sroItemSerialNo && (p.notifiedRate == null ? null : Number(p.notifiedRate)) === rule.notifiedRate;
         if (rule && !same) p = (await setTaxRule(req, p, rule)).item;
         res.json(p);
     } catch (err) {

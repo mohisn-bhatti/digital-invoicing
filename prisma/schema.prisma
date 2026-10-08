@@ -168,13 +168,14 @@ model Product {
   hsCode          String
   source          String   @default("OFFICIAL") // OFFICIAL = picked from the FBR/PCT HS list; CUSTOMER = code typed by the client
   uoM             String
-  unitPrice       Decimal? @db.Decimal(14, 2)
+  unitPrice       Decimal? @db.Decimal(14, 2) // first of `prices`, kept for older screens and imports
+  prices          Json     @default("[]")     // [{ label: "Retail", price: 150 }, …] — an item can have several prices
   // Current tax rule ("" = none yet: the item is not offered on invoices)
   saleType        String   @default("")
   rate            String   @default("")
   sroScheduleNo   String   @default("")
   sroItemSerialNo String   @default("")
-  notifiedPct     Decimal  @default(100) @db.Decimal(5, 2) // tax charged on this % of the line value (fixed / notified value)
+  notifiedRate    Decimal? @db.Decimal(14, 2) // notified price per unit; tax is charged on it instead of the actual price
   taxRuleAt       DateTime?
   taxRules        ProductTaxRule[]
   createdAt       DateTime @default(now())
@@ -194,7 +195,7 @@ model ProductTaxRule {
   rate            String
   sroScheduleNo   String   @default("")
   sroItemSerialNo String   @default("")
-  notifiedPct     Decimal  @default(100) @db.Decimal(5, 2)
+  notifiedRate    Decimal? @db.Decimal(14, 2)
   industry        String   @default("") // client's business nature / sector at the time (as chosen in IRIS)
   createdBy       String   @default("")
   createdAt       DateTime @default(now()) // date and time, picked automatically
@@ -380,4 +381,18 @@ model AppSetting {
   value     String
   updatedBy String   @default("system")
   updatedAt DateTime @updatedAt
+}
+
+// SROs, circulars, general orders and notices from fbr.gov.pk, copied daily so the Tax Rules page can search them
+model LegalReference {
+  id        String    @id @default(uuid())
+  source    String    // SRO, CIRCULAR, GENERAL_ORDER, NOTICE
+  refNo     String    @default("") // e.g. "1751(I)/2026", "Circular No. 01 of 2026 (Sales Tax)"
+  title     String
+  issuedOn  DateTime?
+  url       String
+  fetchedAt DateTime  @default(now())
+
+  @@unique([source, url])
+  @@index([source, issuedOn])
 }
