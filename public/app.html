@@ -7,8 +7,43 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
-  input, select { border: 1px solid #cbd5e1; border-radius: .375rem; padding: .4rem .55rem; width: 100%; font-size: .875rem; background: #fff; }
-  input:focus, select:focus { outline: 2px solid #059669; outline-offset: -1px; }
+  /* ---- One look for every form: roomy boxes, clear labels, space between rows ---- */
+  input, select, textarea { border: 1px solid #cbd5e1; border-radius: .5rem; padding: .55rem .75rem; width: 100%; font-size: .9rem; line-height: 1.35; background: #fff; color: #0f172a; }
+  input, select { min-height: 2.5rem; }
+  input::placeholder, textarea::placeholder { color: #94a3b8; }
+  input[type=checkbox], input[type=radio] { min-height: 0; padding: 0; width: 1rem !important; height: 1rem; accent-color: #047857; flex-shrink: 0; }
+  input[type=range], input[type=file] { min-height: 0; padding: 0; border: 0; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #059669; box-shadow: 0 0 0 3px rgba(5, 150, 105, .15); }
+  label > span:first-child { display: block; font-size: .8rem; font-weight: 500; color: #334155; margin-bottom: .35rem; }
+  label > span:first-child .text-slate-400, label > span:first-child .text-slate-500 { font-weight: 400; }
+  /* rows of fields breathe: grids that hold fields get the same gaps everywhere */
+  .page .grid:has(> label), .page .grid:has(> div > label), #customerModal .grid { column-gap: 1rem; row-gap: 1.1rem; }
+  .page form, .page .bg-white.rounded-xl { line-height: 1.45; }
+  .page .bg-white.rounded-xl.shadow:not(.overflow-x-auto) { padding: 1.5rem; }
+  .page .bg-white.rounded-xl.shadow { box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .08); }
+  .page h2.font-semibold, .page h3.font-medium { font-size: 1rem; color: #0f172a; }
+  /* long forms: a line and space between sections */
+  #invoiceForm > section + section, #invoiceForm > section + div, #invoiceForm > div + section { border-top: 1px solid #e2e8f0; padding-top: 1.25rem; }
+  #invoiceForm { gap: 1.25rem; }
+  /* tables: taller rows, clear header */
+  .page table:not(.items-table) th { font-size: .78rem; font-weight: 600; color: #475569; padding: .65rem .75rem; white-space: nowrap; }
+  .page table:not(.items-table) td { padding: .7rem .75rem; vertical-align: top; }
+  .page table:not(.items-table) tbody tr:hover { background: #f8fafc; }
+  .page table:not(.items-table) thead { background: #f8fafc; }
+  /* small link-style actions shown as tidy pills */
+  .act { display: inline-flex; align-items: center; padding: .2rem .55rem; border-radius: 9999px; border: 1px solid #e2e8f0; background: #fff; font-size: .75rem; line-height: 1.2; white-space: nowrap; }
+  .act:hover { background: #f1f5f9; }
+  /* the item form's tax table is dense by nature: slightly smaller boxes so values aren't cut off */
+  #trTaxes input, #trTaxes select, #trTaxes textarea, #trTaxes summary { padding: .4rem .5rem; font-size: .85rem; min-height: 2.25rem; }
+  #trTaxes td { vertical-align: top; }
+  details.tx-base summary::-webkit-details-marker { display: none; }
+  /* Items table: wide, scrolls sideways; name pinned left, actions pinned right */
+  .items-table .items-sticky-l { position: sticky; left: 0; z-index: 1; background: inherit; box-shadow: 1px 0 0 #e2e8f0; }
+  .items-table .items-sticky-r { position: sticky; right: 0; z-index: 1; background: inherit; box-shadow: -1px 0 0 #e2e8f0; }
+  .items-table thead tr { background: #f8fafc; }
+  .items-table tbody tr { background: #fff; }
+  .items-table tbody tr.item-row > td { border-bottom: 1px solid #e2e8f0; }
+  .items-table tbody tr.item-row:hover { background: #f0fdf4; }
   label > span { display: block; font-size: .75rem; color: #475569; margin-bottom: .15rem; }
   input[list] { padding-right: 1.75rem; background-repeat: no-repeat; background-position: right .5rem center; background-size: .8rem;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%23475569'%3E%3Cpath d='M5.2 7.2a1 1 0 011.4 0L10 10.6l3.4-3.4a1 1 0 111.4 1.4l-4.1 4.1a1 1 0 01-1.4 0L5.2 8.6a1 1 0 010-1.4z'/%3E%3C/svg%3E"); }
@@ -16,7 +51,6 @@
   .fbr-sent { color: #dc2626; font-weight: 600; }
   .guide { border: 1px solid #059669; color: #065f46; background: #ecfdf5; border-radius: .5rem; padding: .35rem .7rem; font-weight: 500; }
   .guide:hover { background: #d1fae5; }
-  body.cashier .save-product { display: none; }
   #receipt { width: 80mm; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #000; }
   #receipt .qr { padding: 0.12in; background: #fff; } /* quiet zone so scanners can find the code */
   #receipt .qr img, #receipt .qr canvas { width: 1in !important; height: 1in !important; }
@@ -25,9 +59,32 @@
   #invoiceA4 th, #invoiceA4 td { border: 1px solid #555; padding: 4px 5px; vertical-align: top; }
   #invoiceA4 th { background: #f1f5f9; font-weight: bold; text-align: left; }
   #invoiceA4 .num { text-align: right; white-space: nowrap; }
+  /* buyer details on the invoice come from the chosen saved buyer and can't be edited there */
+  .buyer-find input[readonly], .buyer-find select.locked { background: #f1f5f9; color: #334155; cursor: not-allowed; }
+  .buyer-find select.locked { pointer-events: none; }
+  /* invoice item: only Rate and Quantity are typed; UOM, HS code, sale type and tax rate come from the item's tax rule */
+  #items .locked { background: #f1f5f9; color: #334155; pointer-events: none; }
+  /* read-only "Sent to FBR" panels: FBR's field name above, the value below */
+  .fbr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: 1px; background: #e2e8f0; border: 1px solid #e2e8f0; border-radius: .5rem; overflow: hidden; }
+  .fbr-grid > div { background: #f8fafc; padding: .3rem .5rem; min-width: 0; }
+  .fbr-grid .k { font-size: .66rem; color: #64748b; line-height: 1.1; }
+  .fbr-grid .v { font-size: .8rem; color: #0f172a; font-weight: 500; overflow-wrap: anywhere; }
+  .fbr-grid .v.empty { color: #cbd5e1; font-weight: 400; }
+  #items select.locked:disabled { opacity: 1; }
+  #invoiceA4 .a4-items { font-size: 9.5px; }
+  #invoiceA4 .a4-items th { white-space: normal; vertical-align: bottom; }
+  #invoiceA4 .a4-items td { overflow-wrap: anywhere; }
   #invoiceA4 .qrA4 img, #invoiceA4 .qrA4 canvas { width: 1in !important; height: 1in !important; }
   /* @page size is set by printInvoice() (80mm roll or A4) */
   @media print {
+    /* Only the receipt pop-up prints, as normal page flow: a fixed, scrolling pop-up would print as one page and
+       cut off long invoices after page 1 */
+    body > *:not(#receiptModal) { display: none !important; }
+    html, body { background: #fff !important; }
+    #receiptModal, #receiptModal > div, #receiptModal .overflow-x-auto { position: static !important; overflow: visible !important;
+      display: block !important; max-height: none !important; height: auto !important; padding: 0 !important; margin: 0 !important;
+      background: none !important; box-shadow: none !important; border: 0 !important; }
+    body.print-a4 #invoiceA4 { border: 0 !important; box-shadow: none !important; padding: 0 !important; }
     body * { visibility: hidden; }
     body:not(.print-a4) #receipt, body:not(.print-a4) #receipt * { visibility: visible; }
     body:not(.print-a4) #receipt { position: absolute; left: 0; top: 0; }
@@ -143,8 +200,8 @@
         <legend class="px-1 text-sm font-semibold">1. Must match the FBR DI panel (IRIS) exactly</legend>
         <p class="text-xs text-slate-500 mb-3">Copy these from the client's IRIS profile. Fields marked <span class="fbr-sent">(Sent to FBR)</span> go on every invoice; FBR rejects the invoice if they differ from IRIS.</p>
         <div class="grid sm:grid-cols-3 gap-3">
-          <label><span>Seller STRN <span class="text-slate-400">(printed on invoice)</span></span><input name="sellerStrn" inputmode="numeric" placeholder="13 digits" autocomplete="off"></label>
-          <label><span>Taxpayer (Seller) NTN / CNIC <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerNtnCnic" inputmode="numeric" placeholder="7 or 13 digits" autocomplete="off"></label>
+          <label><span>Seller STRN <span class="text-slate-400">(printed on invoice)</span></span><input name="sellerStrn" inputmode="numeric" data-digits="13" placeholder="13 digits" autocomplete="off"></label>
+          <label><span>Taxpayer (Seller) NTN / CNIC <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerNtnCnic" inputmode="numeric" data-digits="13" placeholder="7 or 13 digits" autocomplete="off"></label>
           <label><span>Seller business name <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerBusinessName" autocomplete="off"></label>
           <label><span>Seller province <span class="fbr-sent">(Sent to FBR)</span></span><select name="sellerProvince" data-list="provinces"></select></label>
           <label class="sm:col-span-2"><span>Seller address <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerAddress" autocomplete="off"></label>
@@ -275,15 +332,16 @@
     <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
       <h2 class="font-semibold">Tax rules data bank <span class="text-xs font-normal text-slate-500">— every client's tax rules against their items. User name and industry come from each client's DI settings; the rest is as the client set it.</span></h2>
       <div class="flex flex-wrap items-end gap-3">
-        <label class="block min-w-[16rem]"><span>Search</span><input id="ibQ" placeholder="Item, HS code, sale type, rate or SRO" autocomplete="off"></label>
+        <label class="block min-w-[16rem]"><span>Search</span><input id="ibQ" placeholder="Anything: client, NTN, STRN, CNIC, item, HS code, sale type, reference…" autocomplete="off"></label>
         <label><span>User</span><select id="ibUser"></select></label>
         <label><span>Industry</span><select id="ibIndustry"></select></label>
         <label><span>Sale type</span><select id="ibSaleType"></select></label>
         <button type="button" onclick="exportItemBank()" class="border rounded px-3 py-1.5 text-xs">Download CSV</button>
         <span id="ibCount" class="text-xs text-slate-500 pb-2"></span>
       </div>
-      <div class="overflow-x-auto"><table class="w-full text-xs">
-        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">User name</th><th>User industry</th><th>Item</th><th>HS code</th><th>Sale type</th><th>Rate</th><th>Notified rate</th><th>SRO / Schedule</th><th>Item Sr.</th><th>Set on</th></tr></thead>
+      <p class="text-xs text-slate-500 mb-1">Same columns as the client's Items with Tax Rules page, with the client in front. Scroll right to see all columns →</p>
+      <div class="items-scroll overflow-x-auto border rounded-lg"><table class="items-table w-max min-w-full text-sm">
+        <thead class="text-left text-slate-600 bg-slate-50 border-b"><tr class="align-bottom"><th class="items-sticky-l px-3 py-2.5 font-semibold" style="min-width:11rem">User name</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem">User industry</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">NTN</th><th class="px-3 py-2.5 font-semibold" style="min-width:9rem">STRN</th><th class="px-3 py-2.5 font-semibold" style="min-width:9rem">CNIC</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Name</th><th class="px-3 py-2.5 font-semibold" style="min-width:14rem">Description</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Notes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">HS code</th><th class="px-3 py-2.5 font-semibold" style="min-width:8rem">Source</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">UOM</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem">Prices</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Sale type</th><th class="px-3 py-2.5 font-semibold" style="min-width:5rem">Rate</th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">References <span class="font-normal text-slate-400">(★ sent to FBR)</span></th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">Comment</th><th class="px-3 py-2.5 font-semibold" style="min-width:20rem">More taxes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">Since</th></tr></thead>
         <tbody id="ibRows"></tbody></table></div>
     </div>
   </div>
@@ -329,7 +387,7 @@
     <button onclick="loadEgressIp()" class="text-emerald-700 underline">Check</button>
   </div>
   <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
-    <h2 class="font-semibold">Client guidelines <span class="text-xs font-normal text-slate-500">— the buttons on every client's Tax Rules page. Update the links when FBR publishes a new Act, SRO list etc.</span></h2>
+    <h2 class="font-semibold">Client guidelines <span class="text-xs font-normal text-slate-500">— the buttons on every client's Items with Tax Rules page. Update the links when FBR publishes a new Act, SRO list etc.</span></h2>
     <form id="guideForm" class="grid sm:grid-cols-6 gap-2 items-end bg-slate-50 border rounded p-3">
       <input type="hidden" name="id">
       <label class="sm:col-span-2"><span>Button text</span><input name="label" required maxlength="80" autocomplete="off" placeholder="e.g. Sales Tax Act (30-06-2027) PDF"></label>
@@ -347,7 +405,7 @@
     </form>
   </div>
   <div class="bg-white rounded-xl shadow p-5 space-y-2 text-sm">
-    <h2 class="font-semibold">FBR references <span class="text-xs font-normal text-slate-500">— SROs, circulars, general orders and notices copied from fbr.gov.pk once a day; clients search them on the Tax Rules page</span></h2>
+    <h2 class="font-semibold">FBR references <span class="text-xs font-normal text-slate-500">— Sales Tax Act and Rules, SROs, circulars, general orders and notices copied from fbr.gov.pk once a day; clients search them on the Items with Tax Rules page</span></h2>
     <div id="legalStats" class="text-xs text-slate-600">…</div>
     <button type="button" id="legalSyncBtn" onclick="syncLegal()" class="bg-slate-800 text-white rounded px-3 py-1.5">Refresh now</button>
   </div>
@@ -388,8 +446,9 @@
           <label><span>Invoice Date</span><input name="invoiceDate" type="date" required></label>
           <div><span class="block text-xs text-slate-600 mb-0.5">Invoice Number <span class="text-slate-400">(automatic)</span></span><div id="nextInvoiceNo" class="py-1.5 text-sm font-medium">—</div></div>
           <div><span class="block text-xs text-slate-600 mb-0.5">FBR Invoice Number <span class="text-slate-400">(automatic)</span></span><div class="py-1.5 text-sm text-slate-500">given by FBR when the invoice is issued</div></div>
-          <label><span>Invoice Type</span>
-            <select name="invoiceType" id="invoiceType"><option>Sale Invoice</option><option>Debit Note</option></select></label>
+          <div><span class="block text-xs text-slate-600 mb-0.5">Invoice Type</span><div id="invoiceTypeText" class="py-1.5 text-sm font-medium">Sale Invoice</div>
+            <!-- CA: always a sale invoice here; a debit note starts from Issued Invoices → Debit note -->
+            <input type="hidden" name="invoiceType" id="invoiceType" value="Sale Invoice"></div>
           <div><span class="block text-xs text-slate-600 mb-0.5">Sale Origination Province</span><div id="originProvince" class="py-1.5 text-sm font-medium">—</div></div>
           <label id="refNoWrap" class="hidden"><span>Original FBR invoice no.</span><input name="invoiceRefNo" autocomplete="off" placeholder="e.g. 7000007DI1747119701593"></label>
           <label class="debit-only hidden"><span>Reason</span><select name="reason"></select></label>
@@ -398,29 +457,41 @@
       </section>
 
       <div class="flex flex-wrap items-end gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-        <label class="flex-1 min-w-[16rem]"><span>Buyer</span><select id="customerSel"></select></label>
+        <label class="flex-1 min-w-[16rem] relative"><span>Buyer <span class="text-slate-500">— search by name, NTN, CNIC, STRN, mobile, email, province, address or note; leave empty for a walk-in customer</span></span>
+          <input id="buyerSearch" autocomplete="off" placeholder="Search saved buyers…"></label>
+        <button type="button" id="walkInBtn" onclick="clearBuyer(); $('#buyerSearch').focus()" class="hidden bg-white border rounded px-3 py-1.5 text-sm">✕ Walk-in customer</button>
         <button type="button" id="addCustomerBtn" onclick="openCustomer()" class="bg-white border border-emerald-600 text-emerald-800 rounded px-3 py-1.5 text-sm font-medium">+ Add new customer</button>
       </div>
 
       <section>
-        <h3 class="font-medium text-sm mb-2">Particulars of Buyer</h3>
-        <div class="grid sm:grid-cols-3 gap-3">
+        <h3 class="font-medium text-sm mb-2">Particulars of Buyer <span id="buyerMode" class="text-xs font-normal text-slate-500"></span></h3>
+        <div class="grid sm:grid-cols-3 gap-3 buyer-find">
           <div>
-            <label><span>Buyer Type</span>
+            <label><span>NTN <span id="ntnReq" class="text-red-600 hidden">*</span></span><input name="buyerNtn" inputmode="numeric" data-digits="9" autocomplete="off" placeholder="7 or 9 digits"></label>
+            <div class="flex items-center gap-2 mt-1 text-xs"><button type="button" onclick="checkBuyerFbr()" class="text-emerald-700 underline">Check with FBR</button><span id="buyerCheck" class="text-slate-500"></span></div>
+          </div>
+          <label><span>CNIC</span><input name="buyerCnic" inputmode="numeric" data-digits="13" autocomplete="off" placeholder="13 digits"></label>
+          <label><span>STRN</span><input name="buyerStrn" inputmode="numeric" data-digits="13" autocomplete="off" placeholder="13 digits"></label>
+          <div>
+            <label><span>Registered / Unregistered</span>
               <select name="buyerRegistrationType" id="buyerType"><option>Unregistered</option><option>Registered</option></select></label>
             <label id="endConsumerWrap" class="flex items-center gap-1.5 mt-1.5 text-xs text-slate-700 cursor-pointer">
               <input type="checkbox" name="endConsumer" checked style="width:auto"> End consumer / walk-in — no further tax</label>
             <label id="nonAtlWrap" class="hidden flex items-center gap-1.5 mt-1.5 text-xs text-slate-700 cursor-pointer">
               <input type="checkbox" name="buyerNonAtl" style="width:auto"> Not active with FBR (non-ATL) — further tax applies</label>
           </div>
-          <div>
-            <label><span>Registration No. (NTN / CNIC) <span id="ntnReq" class="text-red-600 hidden">*</span></span><input name="buyerNtnCnic" inputmode="numeric" autocomplete="off" placeholder="Type to search saved buyers"></label>
-            <div class="flex items-center gap-2 mt-1 text-xs"><button type="button" onclick="checkBuyerFbr()" class="text-emerald-700 underline">Check with FBR</button><span id="buyerCheck" class="text-slate-500"></span></div>
-          </div>
-          <label><span>Name</span><input name="buyerBusinessName" placeholder="Walk-in Customer — or type to search saved" autocomplete="off"></label>
-          <label><span>Destination Province</span><select name="buyerProvince" data-list="provinces"></select></label>
-          <label class="sm:col-span-2"><span>Address</span><input name="buyerAddress" placeholder="Defaults to seller address"></label>
+          <label class="sm:col-span-2"><span>Name</span><input name="buyerBusinessName" placeholder="Walk-in Customer — or type to search saved buyers" autocomplete="off"></label>
+          <label><span>Province</span><select name="buyerProvince" data-list="provinces"></select></label>
+          <label class="sm:col-span-2"><span>Address</span><input name="buyerAddress" placeholder="Defaults to seller address" autocomplete="off"></label>
+          <label><span>Mobile number</span><input name="buyerMobile" type="tel" inputmode="tel" maxlength="16" autocomplete="off" placeholder="03001234567"></label>
+          <label><span>Email</span><input name="buyerEmail" type="email" maxlength="120" autocomplete="off" placeholder="name@example.com"></label>
+          <label><span>Additional note</span><input name="buyerNote" maxlength="500" autocomplete="off" placeholder="e.g. payment terms, contact person"></label>
         </div>
+      </section>
+
+      <section>
+        <h3 class="font-medium text-sm mb-1">Sent to FBR — invoice header <span class="text-xs font-normal text-slate-500">(exactly what FBR receives; updates as you fill the form)</span></h3>
+        <div id="fbrHeader" class="fbr-grid"></div>
       </section>
 
       <section>
@@ -500,63 +571,81 @@
   </div>
   </div>
   <div data-page="c-products" class="page hidden space-y-6">
-      <div class="bg-white rounded-xl shadow p-5 overflow-x-auto text-sm">
-        <h3 class="font-medium mb-2">Items <span class="text-xs font-normal text-slate-500">— an item appears on invoices once it has a tax rule (Tax Rules page)</span></h3>
-        <form id="productForm" class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3 bg-slate-50 border rounded p-3">
-          <input type="hidden" name="id">
-          <label class="col-span-2"><span>HS code <span class="text-slate-400">(pick from the official list, or type your own)</span></span><input name="hsCode" class="pf-hs" required autocomplete="off" placeholder="Type code or product, e.g. yogurt"></label>
-          <label class="col-span-2"><span>Description / item name</span><input name="name" required maxlength="200" autocomplete="off" placeholder="e.g. Yogurt 500g"></label>
-          <label><span>UOM</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
-          <div class="col-span-2 sm:col-span-3"><span class="block text-xs text-slate-600 mb-0.5">Prices <span class="text-slate-400">(as many as you need, e.g. A 150 · B 155 · C 180; chosen on the invoice)</span></span>
-            <div id="pfPrices" class="space-y-1"></div>
-            <button type="button" onclick="addPriceRow()" class="mt-1 text-xs text-emerald-700 underline">+ Add price</button></div>
-          <div class="col-span-2 sm:col-span-4 flex flex-wrap items-center gap-3">
-            <button id="pfSubmit" class="bg-emerald-700 text-white rounded px-3 py-1.5">Save item</button>
-            <button type="button" class="text-xs text-slate-600 underline" onclick="clearProductForm()">Clear</button>
-            <span id="pfMode" class="text-xs text-slate-500"></span>
-          </div>
-        </form>
-        <div class="flex flex-wrap items-end gap-3 mb-2">
-          <label><span>Show</span><select id="itemSource"><option value="">All items</option><option value="OFFICIAL">Official HS codes</option><option value="CUSTOMER">Customer-created codes</option></select></label>
-          <label><span>Search</span><input id="itemQ" placeholder="Name or HS code" autocomplete="off"></label>
-        </div>
-        <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Name</th><th>HS code</th><th>Source</th><th>UOM</th><th>Prices</th><th class="pl-3">Tax rule</th><th></th></tr></thead>
-          <tbody id="productRows"></tbody></table>
-      </div>
-  </div>
-  <div data-page="c-taxrules" class="page hidden space-y-6">
     <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
       <h2 class="font-semibold">Guidelines <span class="text-xs font-normal text-slate-500">— check the law for your item, then set its sale type and rate below. Raseed does not decide the tax for you.</span></h2>
       <div id="guideLinks" class="flex flex-wrap gap-2"></div>
       <p id="guideNote" class="text-xs text-slate-500"></p>
     </div>
-    <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
-      <h2 class="font-semibold">Set a tax rule against an item</h2>
-      <form id="taxRuleForm" class="grid sm:grid-cols-4 gap-3 items-start bg-slate-50 border rounded p-3">
-        <input type="hidden" name="productId">
-        <label class="sm:col-span-2"><span>1. Item <span class="text-slate-400">(search by name or HS code)</span></span><input id="trItemPick" list="trItemList" required autocomplete="off" placeholder="Type to search your items"><datalist id="trItemList"></datalist></label>
-        <div><span class="block text-xs text-slate-600 mb-0.5">Date and time <span class="text-slate-400">(automatic)</span></span><div id="trNow" class="py-1.5 font-medium">—</div></div>
-        <div><span class="block text-xs text-slate-600 mb-0.5">Industry (as in IRIS) <span class="text-slate-400">(automatic)</span></span><div id="trIndustry" class="py-1.5 font-medium">—</div></div>
-        <label class="sm:col-span-2"><span>2. Sale type</span><select name="saleType" id="trSaleType"></select></label>
-        <div class="sm:col-span-2"><label><span>3. Tax rate</span><input name="rate" list="rateList" required autocomplete="off" placeholder="e.g. 18%, 10%, Exempt"></label>
-          <input type="range" id="trRateSlider" min="0" max="100" step="0.5" value="18" class="w-full !p-0 !border-0 mt-1 accent-emerald-700" aria-label="Tax rate slider">
-          <div class="flex justify-between text-[10px] text-slate-400"><span>0%</span><span>applied on the invoice amount</span><span>100%</span></div></div>
-        <div class="sm:col-span-4 grid sm:grid-cols-4 gap-2 items-start">
-          <label><span>4. Fixed / notified rate <span class="text-slate-400">(per unit; used on the invoice instead of the price; empty = none)</span></span><input name="notifiedRate" type="number" step="0.01" min="0" autocomplete="off" placeholder="e.g. 140"></label>
-          <div class="sm:col-span-3"><span class="block text-xs text-slate-600 mb-0.5">Move to set it below or above the item's price <b id="trPriceOut"></b></span>
-            <input type="range" id="trNotifiedSlider" min="50" max="150" step="1" value="100" class="w-full !p-0 !border-0 accent-emerald-700" aria-label="Notified rate compared with the price">
-            <div id="trPctEx" class="text-xs text-slate-500"></div></div>
+    <div class="bg-white rounded-xl shadow p-5 text-sm">
+      <h2 class="font-semibold mb-2">Items with tax rules <span class="text-xs font-normal text-slate-500">— each item with its tax rule; only items with a tax rule appear on invoices</span></h2>
+      <form id="productForm" class="bg-slate-50 border rounded p-3 mb-3 space-y-3">
+        <input type="hidden" name="id">
+        <div>
+          <div class="text-xs font-semibold text-slate-700 mb-1">A. Item <span class="font-normal text-slate-500">— all fields are required</span></div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <label class="col-span-2 sm:col-span-4"><span>1. Item name</span><input name="name" required maxlength="200" autocomplete="off" placeholder="e.g. Yogurt 500g"></label>
+            <label class="col-span-2"><span>2. Item description</span><textarea name="description" rows="2" maxlength="500" required placeholder="e.g. Plain yogurt, 500 g cup"></textarea></label>
+            <label class="col-span-2"><span>3. Item notes <span class="text-slate-400">(for your own use)</span></span><textarea name="notes" rows="2" maxlength="1000" required placeholder="e.g. supplier, storage, remarks"></textarea></label>
+            <label class="col-span-2"><span>HS code <span class="text-slate-400">(pick from the official list, or type your own)</span></span><input name="hsCode" class="pf-hs" required autocomplete="off" placeholder="Type code or product, e.g. yogurt"></label>
+            <label class="col-span-2"><span>UOM</span><input name="uoM" list="uomList" required autocomplete="off" placeholder="e.g. KG, Numbers, pieces, units"></label>
+            <div class="col-span-2 sm:col-span-4"><span class="block text-xs text-slate-600 mb-0.5">Prices <span class="text-slate-400">(as many as you need, e.g. A 150 · B 155 · C 180; ticked on the invoice)</span></span>
+              <div id="pfPrices" class="space-y-1"></div>
+              <button type="button" onclick="addPriceRow()" class="mt-1 text-xs text-emerald-700 underline">+ Add price</button></div>
+          </div>
         </div>
-        <label class="sm:col-span-2 relative"><span>5. Exemption / zero / reduced rate reference <span class="text-slate-400">(search SROs, circulars, general orders, notices — or type a schedule)</span></span>
-          <input name="sroScheduleNo" id="trRef" autocomplete="off" placeholder="e.g. sugar, 1751, 6th Schd Table I">
-          <a id="trRefLink" class="hidden text-xs text-emerald-700 underline" target="_blank" rel="noopener">Open the document (PDF)</a></label>
-        <label><span>6. Item serial no.</span><input name="sroItemSerialNo" autocomplete="off" placeholder="e.g. 19"></label>
-        <button class="bg-emerald-700 text-white rounded px-3 py-2 self-end">Save tax rule</button>
+        <div class="border-t pt-3">
+          <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+            <div class="text-xs font-semibold text-slate-700">B. Tax rule against this item</div>
+            <div class="text-xs text-slate-500">Date and time: <b id="trNow">—</b> · Industry (as in IRIS): <b id="trIndustry">—</b> <span class="text-slate-400">(automatic)</span></div>
+          </div>
+          <div class="grid sm:grid-cols-4 gap-3 items-start">
+            <label class="sm:col-span-2"><span>Sale type</span><select name="saleType" id="trSaleType" required></select></label>
+            <input type="hidden" name="notifiedRate"><!-- CA: no notified rate box; an existing one is kept when the item is edited -->
+            <div class="sm:col-span-4">
+              <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1"><span class="text-xs text-slate-600">Taxes <span class="text-slate-400">(the sales tax, plus any more taxes — each with its own references and one comment)</span></span>
+                <button type="button" onclick="addTaxRow()" class="text-xs text-emerald-700 underline">+ Add tax</button></div>
+              <table class="w-full table-fixed text-sm bg-white border rounded">
+                <colgroup><col class="w-[13%]"><col class="w-[9%]"><col class="w-[12%]"><col class="w-[14%]"><col class="w-[12%]"><col class="w-[20%]"><col class="w-[17%]"><col class="w-8"></colgroup>
+                <thead class="bg-slate-50 text-left text-xs text-slate-600"><tr><th class="p-2">Tax</th><th class="p-2">Type</th><th class="p-2">Rate / Rs</th><th class="p-2">Apply on</th><th class="p-2">FBR box</th><th class="p-2">References <span class="font-normal text-slate-400">(pick several)</span></th><th class="p-2">Comment</th><th></th></tr></thead>
+                <tbody id="trTaxes">
+                  <tr id="trMainTax" class="align-top border-t">
+                    <td class="p-2 font-medium">Sales tax<div id="trMainSale" class="text-xs font-normal text-slate-500"></div></td>
+                    <td class="p-2 text-slate-600">%</td>
+                    <td class="p-2"><input name="rate" list="rateList" required autocomplete="off" placeholder="e.g. 18%" title="Sales tax rate, e.g. 18%, 10%, Exempt"></td>
+                    <td class="p-2 text-slate-600">Value before tax</td>
+                    <td class="p-2 text-slate-600">Sales Tax</td>
+                    <td class="p-2"><div class="refpick" id="trMainRefs" data-main="1"></div><input type="hidden" name="sroItemSerialNo"><!-- CA: no serial box; an existing serial is kept when the item is edited --></td>
+                    <td class="p-2"><textarea name="taxComment" rows="2" maxlength="2000" placeholder="The law detail you read (section, schedule entry, condition)"></textarea></td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+              <p class="text-xs text-slate-500 mt-1">★ The sales tax's first reference is sent to FBR as the SRO / Schedule no. References of more taxes are kept for your record.</p>
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <button id="pfSubmit" class="bg-emerald-700 text-white rounded px-3 py-1.5">Save item with tax rule</button>
+          <button type="button" class="text-xs text-slate-600 underline" onclick="clearProductForm()">Clear</button>
+          <span id="pfMode" class="text-xs text-slate-500"></span>
+        </div>
+        <p class="text-xs text-slate-500">Changing the tax rule replaces the item's current rule from now on. Invoices already filed keep the tax they were filed with; old rules stay in the item's history.</p>
       </form>
-      <p class="text-xs text-slate-500">A new rule replaces the item's current one from now on. Invoices already filed keep the tax they were filed with; old rules stay in the history.</p>
-      <div class="overflow-x-auto"><table class="w-full">
-        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Item</th><th>HS code</th><th>Sale type</th><th>Rate</th><th>Notified rate</th><th>SRO / Schedule</th><th>Serial</th><th>Since</th><th></th></tr></thead>
-        <tbody id="trRows"></tbody></table></div>
+      <div class="flex flex-wrap items-end gap-3 mb-2">
+        <label><span>Show</span><select id="itemSource"><option value="">All items</option><option value="NORULE">Without a tax rule</option><option value="OFFICIAL">Official HS codes</option><option value="CUSTOMER" id="itemSourceOwn">Codes created by this client</option></select></label>
+        <label><span>Search</span><input id="itemQ" placeholder="Name or HS code" autocomplete="off"></label>
+        <div class="ml-auto flex flex-wrap gap-2 text-xs">
+          <button type="button" onclick="itemTemplate()" class="border rounded px-3 py-1.5 bg-white">Excel template</button>
+          <label class="border rounded px-3 py-1.5 cursor-pointer bg-emerald-700 text-white">Import from Excel<input type="file" id="itemImportFile" accept=".xlsx,.xls" class="hidden"></label>
+          <button type="button" onclick="exportItems()" class="border rounded px-3 py-1.5 bg-white">Export to Excel</button>
+        </div>
+      </div>
+      <div id="itemImportOut" class="hidden mb-3"></div>
+      <p class="text-xs text-slate-500 mb-1">Scroll right to see all columns →</p>
+      <div class="items-scroll overflow-x-auto border rounded-lg">
+      <table class="items-table w-max min-w-full text-sm"><thead class="text-left text-slate-600 bg-slate-50 border-b"><tr class="align-bottom"><th class="items-sticky-l px-3 py-2.5 font-semibold" style="min-width:12rem">Name</th><th class="px-3 py-2.5 font-semibold" style="min-width:14rem">Description</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Notes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">HS code</th><th class="px-3 py-2.5 font-semibold" style="min-width:8rem">Source</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">UOM</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem">Prices</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Sale type</th><th class="px-3 py-2.5 font-semibold" style="min-width:5rem">Rate</th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">References <span class="font-normal text-slate-400">(★ sent to FBR)</span></th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">Comment</th><th class="px-3 py-2.5 font-semibold" style="min-width:20rem">More taxes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">Since</th><th class="items-sticky-r px-3 py-2.5"></th></tr></thead>
+        <tbody id="productRows"></tbody></table>
+      </div>
     </div>
   </div>
   <div data-page="c-stock" class="page hidden space-y-6">
@@ -608,24 +697,35 @@
   </div>
   <div data-page="c-buyers" class="page hidden space-y-6">
       <div class="bg-white rounded-xl shadow p-5 overflow-x-auto text-sm">
-        <h3 class="font-medium mb-2">Buyers / Customers <span class="text-xs font-normal text-slate-500">— add here; new buyers with an NTN/CNIC are also saved automatically when an invoice is filed</span></h3>
+        <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
+          <h3 class="font-medium">Buyers / Customers <span class="text-xs font-normal text-slate-500">— add here; new buyers with an NTN/CNIC are also saved automatically when an invoice is filed</span></h3>
+          <div class="flex flex-wrap gap-2 text-xs">
+            <button type="button" onclick="buyerTemplate()" class="border rounded px-3 py-1.5">Excel template</button>
+            <label class="border rounded px-3 py-1.5 cursor-pointer bg-emerald-700 text-white">Import from Excel<input type="file" id="buyerImportFile" accept=".xlsx,.xls,.csv" class="hidden"></label>
+            <button type="button" onclick="exportBuyers()" class="border rounded px-3 py-1.5">Export to Excel</button>
+          </div>
+        </div>
+        <div id="buyerImportOut" class="hidden mb-3 text-xs"></div>
         <form id="buyerForm" class="buyer-ids grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3 bg-slate-50 border rounded p-3">
           <input type="hidden" name="id">
-          <label><span>NTN</span><input name="ntn" inputmode="numeric" autocomplete="off" placeholder="7 or 9 digits"></label>
-          <label><span>CNIC</span><input name="cnic" inputmode="numeric" autocomplete="off" placeholder="13 digits"></label>
-          <label><span>STRN</span><input name="strn" inputmode="numeric" autocomplete="off" placeholder="13 digits"></label>
+          <label><span>NTN</span><input name="ntn" inputmode="numeric" data-digits="9" autocomplete="off" placeholder="7 or 9 digits"></label>
+          <label><span>CNIC</span><input name="cnic" inputmode="numeric" data-digits="13" autocomplete="off" placeholder="13 digits"></label>
+          <label><span>STRN</span><input name="strn" inputmode="numeric" data-digits="13" autocomplete="off" placeholder="13 digits"></label>
           <div class="col-span-2 sm:col-span-3 flex flex-wrap items-center gap-2 text-xs -mt-1"><button type="button" class="reg-check text-emerald-700 underline">Check registration with FBR</button><span class="reg-out text-slate-500"></span></div>
           <label><span>Registered / Unregistered</span><select name="registrationType"><option>Unregistered</option><option>Registered</option></select></label>
           <label class="sm:col-span-2"><span>Name</span><input name="businessName" required maxlength="200" autocomplete="off"></label>
           <label><span>Province</span><select name="province" data-list="provinces"></select></label>
           <label class="sm:col-span-2"><span>Address</span><input name="address" autocomplete="off"></label>
+          <label><span>Mobile number</span><input name="mobile" type="tel" inputmode="tel" maxlength="16" autocomplete="off" placeholder="03001234567"></label>
+          <label><span>Email</span><input name="email" type="email" maxlength="120" autocomplete="off" placeholder="name@example.com"></label>
+          <label class="col-span-2 sm:col-span-1"><span>Additional note</span><input name="note" maxlength="500" autocomplete="off" placeholder="e.g. payment terms, contact person"></label>
           <div class="col-span-2 sm:col-span-3 flex flex-wrap items-center gap-3">
             <button id="bfSubmit" class="bg-emerald-700 text-white rounded px-3 py-1.5">Save buyer</button>
             <button type="button" class="text-xs text-slate-600 underline" onclick="clearBuyerForm()">Clear</button>
             <span id="bfMode" class="text-xs text-slate-500"></span>
           </div>
         </form>
-        <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Name</th><th>NTN</th><th>CNIC</th><th>STRN</th><th>Type</th><th>Province</th><th></th></tr></thead>
+        <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Name</th><th>NTN</th><th>CNIC</th><th>STRN</th><th>Type</th><th>Province</th><th>Mobile</th><th>Email</th><th>Note</th><th></th></tr></thead>
           <tbody id="buyerRows"></tbody></table>
       </div>
   </div>
@@ -639,15 +739,18 @@
   <form id="customerForm" class="bg-white rounded-xl shadow-xl p-6 mt-16 w-full max-w-lg grid sm:grid-cols-2 gap-3">
     <h2 class="sm:col-span-2 font-semibold text-lg">Add new customer</h2>
     <div class="buyer-ids sm:col-span-2 grid grid-cols-3 gap-3">
-      <label><span>NTN</span><input name="ntn" inputmode="numeric" autocomplete="off" placeholder="7 or 9 digits"></label>
-      <label><span>CNIC</span><input name="cnic" inputmode="numeric" autocomplete="off" placeholder="13 digits"></label>
-      <label><span>STRN</span><input name="strn" inputmode="numeric" autocomplete="off" placeholder="13 digits"></label>
+      <label><span>NTN</span><input name="ntn" inputmode="numeric" data-digits="9" autocomplete="off" placeholder="7 or 9 digits"></label>
+      <label><span>CNIC</span><input name="cnic" inputmode="numeric" data-digits="13" autocomplete="off" placeholder="13 digits"></label>
+      <label><span>STRN</span><input name="strn" inputmode="numeric" data-digits="13" autocomplete="off" placeholder="13 digits"></label>
       <div class="col-span-3 flex flex-wrap items-center gap-2 text-xs -mt-1"><button type="button" class="reg-check text-emerald-700 underline">Check registration with FBR</button><span class="reg-out text-slate-500"></span></div>
     </div>
     <label><span>Registered / Unregistered</span><select name="registrationType"><option>Unregistered</option><option>Registered</option></select></label>
     <label><span>Name</span><input name="businessName" required maxlength="200" autocomplete="off"></label>
     <label><span>Province</span><select name="province" data-list="provinces"></select></label>
     <label><span>Address</span><input name="address" autocomplete="off"></label>
+    <label><span>Mobile number</span><input name="mobile" type="tel" inputmode="tel" maxlength="16" autocomplete="off" placeholder="03001234567"></label>
+    <label><span>Email</span><input name="email" type="email" maxlength="120" autocomplete="off" placeholder="name@example.com"></label>
+    <label class="sm:col-span-2"><span>Additional note</span><input name="note" maxlength="500" autocomplete="off"></label>
     <div class="sm:col-span-2 flex gap-2 pt-1">
       <button class="flex-1 bg-emerald-700 text-white rounded py-2 font-medium">Save and use on this invoice</button>
       <button type="button" onclick="closeCustomer()" class="border rounded px-4">Cancel</button>
@@ -713,7 +816,7 @@ async function api(path, opts = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && S.token) { logout(); throw new Error(data.error || 'Session expired'); }
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { data }); // data: e.g. an import's list of problems
   return data;
 }
 
@@ -751,8 +854,7 @@ const NAV = {
     { id: 'c-drafts', label: 'Draft Invoices', icon: 'draft', crumb: 'Sales' },
     { id: 'c-invoices', label: 'Issued Invoices', icon: 'list', crumb: 'Sales' },
     { id: 'c-buyers', label: 'Buyers / Customers', icon: 'users', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
-    { id: 'c-products', label: 'Items', icon: 'box', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
-    { id: 'c-taxrules', label: 'Tax Rules Against Items', icon: 'layers', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'c-products', label: 'Items with Tax Rules', icon: 'box', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'c-import', label: 'Bulk Import', icon: 'upload', crumb: 'Sales', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'c-stock', label: 'Stock', icon: 'layers', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'c-users', label: 'Users', icon: 'cog', crumb: 'Account', roles: ['OWNER'] },
@@ -770,8 +872,8 @@ const NAV = {
 };
 const PAGE_ENTER = {
   'c-dashboard': () => loadDashboard(), 'c-invoices': () => loadInvoices(), 'c-import': () => loadBatches(),
-  'c-drafts': () => loadDrafts(), 'c-taxrules': () => loadItemRules(),
-  'c-products': () => loadSaved(), 'c-buyers': () => loadSaved(), 'c-users': () => loadUsers('c'), 'c-stock': () => loadStock(),
+  'c-drafts': () => loadDrafts(),
+  'c-products': () => loadItemsPage(), 'c-buyers': () => loadSaved(), 'c-users': () => loadUsers('c'), 'c-stock': () => loadStock(),
   'a-dashboard': () => loadAdminDash(), 'a-clients': () => loadClients(), 'a-reports': () => fillReportClients(),
   'a-itemrules': () => loadItemBank(), 'a-activity': () => loadAudit('a'), 'a-leads': () => loadLeads(), 'a-system': () => loadSystem(),
 };
@@ -790,6 +892,7 @@ function route() {
   if (!S.token) return;
   const list = navList(), view = S.role === 'SUPER_ADMIN' ? '#adminView' : '#clientView';
   let id = location.hash.replace(/^#\/?/, '');
+  if (id === 'c-taxrules') { id = 'c-products'; history.replaceState(null, '', '#/c-products'); } // merged into Items with Tax Rules
   const meta = list.find(n => n.id === id);
   if (!meta || !document.querySelector(`${view} [data-page="${id}"]`) || (id === 'a-client' && !S.manageId)) {
     id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : (S.adminSession ? 'c-new' : 'c-dashboard');
@@ -1171,7 +1274,7 @@ async function loadAdminDash() {
     $('#adAttention').innerHTML = items.length ? `<ul class="space-y-2">${items.join('')}</ul>` : '<div class="text-slate-500">All good — nothing needs attention.</div>';
   } catch (err) { toast(err.message); }
 }
-const LEGAL_NAMES = { SRO: 'SROs', CIRCULAR: 'Circulars', GENERAL_ORDER: 'General orders', NOTICE: 'Notices' };
+const LEGAL_NAMES = { ACT: 'Sales Tax Act', RULES: 'Sales Tax Rules', SRO: 'SROs', CIRCULAR: 'Circulars', GENERAL_ORDER: 'General orders', NOTICE: 'Notices' };
 function showLegalStats(st) {
   const keys = Object.keys(LEGAL_NAMES).filter(k => st[k]);
   $('#legalStats').innerHTML = keys.length ? keys.map(k => `${LEGAL_NAMES[k]}: <b>${st[k].count.toLocaleString()}</b>`).join(' · ')
@@ -1414,8 +1517,6 @@ function applyEnv() {
   applySetupBanner();
 }
 function applyRoleUi() {
-  const opt = [...$('#invoiceType').options].find(o => o.value === 'Debit Note');
-  if (opt) opt.hidden = !canManage();
   document.body.classList.toggle('cashier', !canManage());
 }
 function applySetupBanner() {
@@ -1467,22 +1568,37 @@ async function loadItemBank() {
 function itemBankRows() {
   const q = $('#ibQ').value.trim().toLowerCase(), u = $('#ibUser').value, ind = $('#ibIndustry').value, st = $('#ibSaleType').value;
   return (S.itemBank || []).filter(r => (!u || r.userName === u) && (!ind || r.industry === ind) && (!st || r.saleType === st)
-    && (!q || [r.name, r.hsCode, r.saleType, r.rate, r.sroScheduleNo, r.sroItemSerialNo].some(v => String(v || '').toLowerCase().includes(q))));
+    && (!q || [r.userName, r.industry, r.userNtn, r.userStrn, r.userCnic, r.name, r.description, r.notes, r.hsCode, r.uoM, r.saleType, r.rate, salesTaxComment(r),
+      ...(r.lawRefs || []).map(x => x.reference), ...(r.extraTaxes || []).flatMap(t => [t.name, t.comment, ...(t.refs || []).map(x => x.reference)]),
+      ...pricesOf(r).map(x => x.label)].some(v => String(v || '').toLowerCase().includes(q))));
 }
 function renderItemBank() {
   const rows = itemBankRows();
   $('#ibCount').textContent = `${rows.length} of ${(S.itemBank || []).length} rules`;
-  $('#ibRows').innerHTML = rows.map(r => `<tr class="border-b last:border-0 align-top">
-    <td class="py-1">${esc(r.userName)}</td><td>${esc(r.industry) || '<span class="text-slate-400">not set</span>'}</td><td>${esc(r.name)}</td>
-    <td class="font-mono">${esc(r.hsCode)}</td><td>${esc(r.saleType)}</td><td>${esc(r.rate)}</td><td>${r.notifiedRate != null ? money(r.notifiedRate) + '/unit' : '—'}</td>
-    <td>${esc(r.sroScheduleNo)}</td><td>${esc(r.sroItemSerialNo)}</td><td class="whitespace-nowrap">${r.taxRuleAt ? fmtDate(r.taxRuleAt) : ''}</td></tr>`).join('')
-    || '<tr><td colspan="10" class="py-3 text-slate-500">No tax rules match.</td></tr>';
+  // the same cells as the client's items table (renderItems), with the client's name, industry and numbers in front
+  const cell = (v, cls = '') => `<td class="px-3 py-3 ${cls}">${v || '<span class="text-slate-300">—</span>'}</td>`;
+  const src = r => r.source === 'CUSTOMER' ? `<span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 text-xs" title="Not in the FBR / PCT HS list">${esc(r.userName)}</span>` : SOURCE_BADGE.OFFICIAL;
+  $('#ibRows').innerHTML = rows.map(r => `<tr class="item-row align-top">
+    <td class="items-sticky-l px-3 py-3 font-medium">${esc(r.userName)}</td>${cell(esc(r.industry))}${cell(esc(r.userNtn), 'font-mono whitespace-nowrap')}${cell(esc(r.userStrn), 'font-mono whitespace-nowrap')}${cell(esc(r.userCnic), 'font-mono whitespace-nowrap')}
+    ${cell(esc(r.name), 'font-medium')}${cell(esc(r.description), 'whitespace-pre-line')}${cell(esc(r.notes), 'whitespace-pre-line text-slate-600')}
+    ${cell(esc(r.hsCode), 'font-mono')}<td class="px-3 py-3">${src(r)}</td>${cell(esc(r.uoM))}
+    ${cell(pricesOf(r).map(x => `${esc(x.label)} ${money(x.price)}`).join('<br>'), 'whitespace-nowrap')}
+    ${cell(esc(r.saleType))}${cell(esc(r.rate))}${cell(salesTaxRefs(r).replace(/ · /g, '<br>'))}${cell(esc(salesTaxComment(r)), 'whitespace-pre-line text-slate-600')}
+    ${cell(extraTaxesCell(r))}${cell(r.taxRuleAt ? `${fmtDate(r.taxRuleAt)}<div><button type="button" class="text-emerald-700 underline text-xs" onclick="bankHistory('${r.id}')">History</button></div>` : '', 'whitespace-nowrap')}</tr>
+    <tr id="ibhist-${r.id}" class="hidden"><td colspan="18" class="px-3 pb-3"></td></tr>`).join('')
+    || '<tr><td colspan="18" class="py-3 px-3 text-slate-500">No tax rules match.</td></tr>';
 }
 function exportItemBank() {
-  const cols = [['userName', 'User name'], ['industry', 'User industry'], ['name', 'Item'], ['hsCode', 'HS code'], ['saleType', 'Sale type'], ['rate', 'Rate'],
-    ['notifiedRate', 'Notified rate'], ['sroScheduleNo', 'SRO / Schedule'], ['sroItemSerialNo', 'Item Sr.'], ['taxRuleAt', 'Set on']];
+  const cols = [['userName', 'User name'], ['industry', 'User industry'], ['userNtn', 'NTN'], ['userStrn', 'STRN'], ['userCnic', 'CNIC'],
+    ['name', 'Name'], ['description', 'Description'], ['notes', 'Notes'], ['hsCode', 'HS code'], ['source', 'Source'], ['uoM', 'UOM'], ['prices', 'Prices'],
+    ['saleType', 'Sale type'], ['rate', 'Rate'], ['refs', 'References (first sent to FBR)'], ['comment', 'Comment'], ['moreTaxes', 'More taxes'], ['taxRuleAt', 'Since']];
+  const value = (r, k) => k === 'moreTaxes' ? (r.extraTaxes || []).map(t => `${t.name} ${t.kind === 'FIXED' ? 'Rs ' + t.value + ' fixed' : t.value + '% on ' + taxBaseParts(t.base).map(x => TAX_BASE_TEXT[x] || r.extraTaxes[Number(x.slice(4))]?.name || x).join(' + ')} → ${fbrBoxName(t.fbrField)}${t.refs?.length ? ' [' + t.refs.map(x => x.reference).join('; ') + ']' : ''}${t.comment ? ' (' + t.comment + ')' : ''}`).join(' | ')
+    : k === 'prices' ? pricesOf(r).map(x => `${x.label} ${x.price}`).join('; ')
+    : k === 'refs' ? (r.lawRefs?.length ? r.lawRefs : r.sroScheduleNo ? [{ reference: r.sroScheduleNo }] : []).map(x => x.reference).join('; ')
+    : k === 'comment' ? salesTaxComment(r) : k === 'source' ? (r.source === 'CUSTOMER' ? r.userName : 'Official')
+    : k === 'taxRuleAt' ? (r.taxRuleAt ? fmtDate(r.taxRuleAt) : '') : r[k];
   const cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = [cols.map(c => cell(c[1])).join(','), ...itemBankRows().map(r => cols.map(([k]) => cell(r[k])).join(','))].join('\r\n');
+  const csv = [cols.map(c => cell(c[1])).join(','), ...itemBankRows().map(r => cols.map(([k]) => cell(value(r, k))).join(','))].join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' }));
   a.download = 'tax-rules-data-bank.csv'; a.click();
@@ -1502,23 +1618,26 @@ function itemRow() {
     <button type="button" class="absolute top-1 right-2 text-slate-400 hover:text-red-600" title="Remove" onclick="removeItem(this)">✕</button>
     <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 content-start">
       <label class="col-span-2 sm:col-span-6"><span>Item <span class="text-slate-400">(only items with a tax rule)</span></span><input name="productDescription" required autocomplete="off" placeholder="Click to choose from your items, or type to search"></label>
-      <div><label><span>Rate <span class="text-slate-400">(per unit)</span></span><input name="unitPrice" type="number" step="0.01" min="0" placeholder="0.00" required></label>
+      <div><label><span>Rate <span class="text-slate-400">(per unit)</span></span><input name="unitPrice" type="number" step="0.01" min="0" class="locked" readonly tabindex="-1" placeholder="from the item" required></label>
         <div class="price-pick hidden mt-1 space-y-0.5 text-xs" role="radiogroup" aria-label="Choose the item's rate"></div></div>
-      <label class="col-span-2"><span>Unit of Measurement</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
+      <label class="col-span-2"><span>Unit of Measurement</span><input name="uoM" class="locked" readonly tabindex="-1" placeholder="from the item" required></label>
       <label><span>Quantity</span><input name="quantity" type="number" step="1" min="1" value="1" required></label>
       <label class="col-span-2 relative"><span>HS Code <span class="text-slate-400">(from the item)</span></span>
-        <input name="hsCode" class="hs-input" placeholder="Type code or product, e.g. laptop" autocomplete="off" required>
+        <input name="hsCode" class="hs-input locked" readonly tabindex="-1" placeholder="from the item" autocomplete="off" required>
         <div class="hs-list hidden absolute z-30 left-0 top-full mt-1 w-[34rem] max-w-[85vw] max-h-80 overflow-auto bg-white border rounded shadow-lg text-xs"></div>
       </label>
-      <label class="col-span-1 sm:col-span-3"><span>Sale Type</span><select name="saleType">${SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('')}</select></label>
-      <label class="col-span-1 sm:col-span-3"><span>Tax rate</span><input name="rate" list="rateList" value="18%" required></label>
+      <label class="col-span-1 sm:col-span-3"><span>Sale Type</span><select name="saleType" class="locked" tabindex="-1" disabled>${SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('')}</select></label>
+      <label class="col-span-1 sm:col-span-3"><span>Tax rate</span><input name="rate" class="locked" readonly tabindex="-1" placeholder="from the item" required></label>
       <div class="hs-desc col-span-2 sm:col-span-6 text-xs text-slate-500 -mt-1"></div>
       <div class="tax-hint col-span-2 sm:col-span-6 text-xs -mt-1"></div>
-      ${['sroScheduleNo', 'sroItemSerialNo', 'fixedNotifiedValueOrRetailPrice', 'extraTax', 'fedPayable', 'salesTaxWithheldAtSource'].map(n => `<input type="hidden" name="${n}">`).join('')}
+      ${['sroScheduleNo', 'sroItemSerialNo', 'fixedNotifiedValueOrRetailPrice', 'extraTax', 'fedPayable', 'salesTaxWithheldAtSource', 'extraTaxes'].map(n => `<input type="hidden" name="${n}">`).join('')}
+      <div class="tax-chips hidden col-span-2 sm:col-span-6 flex flex-wrap gap-1 text-xs"></div>
     </div>
     <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
       <div class="text-xs text-slate-600 line-calc"></div>
-      <button type="button" class="save-product text-xs text-emerald-700 hover:underline">★ Save as item (with this tax)</button>
+    </div>
+    <div class="mt-2"><div class="text-xs font-semibold text-slate-600 mb-1">Sent to FBR for this item</div><div class="fbr-line fbr-grid"></div>
+
     </div>`;
   return div;
 }
@@ -1554,6 +1673,36 @@ function readItems() {
     return o;
   });
 }
+// More taxes for one invoice line (mirrors src/tax.js calcExtraTaxes). defs: the JSON kept in the row's hidden field.
+function extraTaxLine(defs, value, salesTax) {
+  let list = [];
+  try { list = typeof defs === 'string' ? (defs ? JSON.parse(defs) : []) : defs || []; } catch { list = []; }
+  const amounts = [];
+  return list.map((d, i) => {
+    const b = taxBaseParts(d.base).reduce((sum, x) => { const ref = /^TAX:(\d+)$/.exec(x); return sum + (ref ? amounts[Number(ref[1])] || 0 : x === 'SALES_TAX' ? salesTax : value); }, 0);
+    const amount = d.kind === 'FIXED' ? r2(Number(d.value) || 0) : r2(b * (Number(d.value) || 0) / 100);
+    amounts[i] = amount;
+    return { name: d.name, amount, fbrField: d.fbrField || 'extraTax' };
+  });
+}
+// On a debit note each more tax is a chip with ✕ (a fixed tax would otherwise be charged again in full)
+function renderTaxChips(row, detail) {
+  const box = row.querySelector('.tax-chips'), debit = $('#invoiceType').value === 'Debit Note';
+  box.classList.toggle('hidden', !detail.length);
+  box.innerHTML = detail.map((x, i) => `<span class="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-900">${esc(x.name)} ${money(x.amount)}${debit ? ` <button type="button" class="tax-chip-del text-amber-700 hover:text-red-600" data-i="${i}" title="Remove from this line">✕</button>` : ''}</span>`).join('');
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.tax-chip-del'); if (!b) return;
+  const inp = b.closest('.item').querySelector('[name=extraTaxes]');
+  let list = []; try { list = JSON.parse(inp.value || '[]'); } catch {}
+  const i = Number(b.dataset.i);
+  if (list.some(d => d.kind !== 'FIXED' && taxBaseParts(d.base).includes(`TAX:${i}`))) return toast('Another tax on this line is applied on this one — remove that first');
+  list.splice(i, 1);
+  for (const d of list) if (d.kind !== 'FIXED') d.base = taxBaseParts(d.base).map(x => { const m = /^TAX:(\d+)$/.exec(x); return m && Number(m[1]) > i ? `TAX:${Number(m[1]) - 1}` : x; }).join('+');
+  inp.value = list.length ? JSON.stringify(list) : '';
+  recalc();
+});
+
 // The invoice discount split over the lines by value, as the server does (src/tax.js spreadDiscount)
 function spreadDiscount(items, total) {
   const gross = items.map(it => r2(Number(it.quantity || 0) * Number(it.unitPrice || 0)));
@@ -1584,17 +1733,35 @@ function recalc() {
     const pct = Number((String(it.rate).match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
     const excl = r2(Number(it.quantity || 0) * Number(it.unitPrice || 0) - shares[i]);
     const base = Number(it.fixedNotifiedValueOrRetailPrice) > 0 ? Number(it.fixedNotifiedValueOrRetailPrice) : excl;
-    const st = r2(base * pct / 100);
-    const ft = unreg && pct > 0 && !NO_FT.has(it.saleType) ? r2(excl * ftRate / 100) : 0;
-    const total = r2(excl + st + ft + Number(it.extraTax || 0) + Number(it.fedPayable || 0));
+    const st0 = r2(base * pct / 100);
+    const ft0 = unreg && pct > 0 && !NO_FT.has(it.saleType) ? r2(excl * ftRate / 100) : 0;
+    // More taxes from the item's tax rule, each into its FBR box (same as src/tax.js calcExtraTaxes)
+    const detail = extraTaxLine(it.extraTaxes, excl, st0);
+    const box = { salesTaxApplicable: st0, furtherTax: ft0, extraTax: Number(it.extraTax || 0), fedPayable: Number(it.fedPayable || 0) };
+    for (const x of detail) box[x.fbrField] = r2(box[x.fbrField] + x.amount);
+    const st = box.salesTaxApplicable, ft = box.furtherTax;
+    const total = r2(excl + st + ft + box.extraTax + box.fedPayable);
+    renderTaxChips(row, detail);
     const warn = [];
-    if (SRO_SALE_TYPES.has(it.saleType) && (!it.sroScheduleNo || !it.sroItemSerialNo)) warn.push("needs the SRO / Schedule no. and item serial — set them on the item's tax rule");
+    if (SRO_SALE_TYPES.has(it.saleType) && !it.sroScheduleNo) warn.push("needs a reference (SRO / Schedule no.) — set it on the item's tax rule");
     if (wholeUom(it.uoM) && it.quantity !== '' && !Number.isInteger(Number(it.quantity))) warn.push(`quantity must be a whole number for ${it.uoM}`);
     if (it.saleType === '3rd Schedule Goods' && !(Number(it.fixedNotifiedValueOrRetailPrice) > 0)) warn.push("needs a retail (notified) rate on the item's tax rule — tax is charged on it");
-    row.querySelector('.line-calc').innerHTML = esc(`Value of Sales Excl. ST ${money(excl)} · Sales Tax ${money(st)} · Further Tax ${money(ft)} · Value incl. Sales Tax ${money(total)}`)
+    // what FBR receives for this line (field names as in FBR's DI API; the server recalculates the same way)
+    row.querySelector('.fbr-line').innerHTML = fbrCells([
+      ['hsCode', 'HS Code', it.hsCode], ['productDescription', 'Product Description', it.productDescription], ['saleType', 'Sale Type', it.saleType],
+      ['rate', 'Rate', it.rate], ['uoM', 'UOM', it.uoM], ['quantity', 'Quantity', it.quantity],
+      ['valueSalesExcludingST', 'Value of Sales Excl. ST', money(excl)], ['discount', 'Discount', money(shares[i])],
+      ['fixedNotifiedValueOrRetailPrice', 'Fixed / Notified Value or Retail Price', money(it.fixedNotifiedValueOrRetailPrice || 0)],
+      ['salesTaxApplicable', 'Sales Tax / FED in ST', money(st)], ['furtherTax', 'Further Tax', money(ft)], ['extraTax', 'Extra Tax', money(box.extraTax)],
+      ['fedPayable', 'FED Payable', money(box.fedPayable)], ['salesTaxWithheldAtSource', 'ST Withheld at Source', money(it.salesTaxWithheldAtSource || 0)],
+      ['sroScheduleNo', 'SRO / Schedule No.', it.sroScheduleNo], ['sroItemSerialNo', 'SRO Item Sr. No.', it.sroItemSerialNo],
+      ['totalValues', 'Value incl. Sales Tax (total)', money(total)],
+    ]);
+    row.querySelector('.line-calc').innerHTML = esc(`Value of Sales Excl. ST ${money(excl)} · Sales Tax ${money(st)} · Further Tax ${money(ft)}${detail.map(x => ` · ${x.name} ${money(x.amount)}`).join('')} · Value incl. Sales Tax ${money(total)}`)
       + warn.map(w => ` <span class="text-red-700">· ${esc(w)}</span>`).join('');
     t.excl += excl; t.st += st; t.ft += ft; t.total += total;
   });
+  renderFbrHeader();
   $('#tExcl').textContent = money(t.excl); $('#tST').textContent = money(t.st);
   $('#tFT').textContent = money(t.ft); $('#tTotal').textContent = money(t.total);
   // CNIC/NTN: always for B2B (registered, or unregistered business); for consumers above Rs 100,000
@@ -1605,12 +1772,30 @@ function recalc() {
   return t;
 }
 const SRO_SALE_TYPES = new Set(['Exempt Goods', 'Goods at Reduced Rate', 'Goods as per SRO.297(|)/2023']);
+// [fbrKey, label, value] → read-only cells; hover shows FBR's own field name
+const fbrCells = list => list.map(([k, label, v]) => `<div title="FBR field: ${k}"><div class="k">${esc(label)}</div><div class="v${v === '' || v == null ? ' empty' : ''}">${v === '' || v == null ? '—' : esc(v)}</div></div>`).join('');
+// Invoice header as the server sends it (src/fbr.js buildPayload; defaults as in prepareInvoice)
+function renderFbrHeader() {
+  const f = $('#invoiceForm'), st = S.settings || {}, debit = f.invoiceType.value === 'Debit Note';
+  const digits = v => String(v || '').replace(/\D/g, '');
+  $('#fbrHeader').innerHTML = fbrCells([
+    ['invoiceType', 'Invoice Type', f.invoiceType.value], ['invoiceDate', 'Invoice Date', f.invoiceDate.value],
+    ['sellerNTNCNIC', 'Seller NTN / CNIC', st.sellerNtnCnic], ['sellerBusinessName', 'Seller Business Name', st.sellerBusinessName],
+    ['sellerProvince', 'Seller Province', st.sellerProvince], ['sellerAddress', 'Seller Address', st.sellerAddress],
+    ['buyerNTNCNIC', 'Buyer NTN / CNIC', digits(f.buyerNtn.value) || digits(f.buyerCnic.value)],
+    ['buyerBusinessName', 'Buyer Business Name', f.buyerBusinessName.value.trim() || 'Walk-in Customer'],
+    ['buyerProvince', 'Buyer Province', f.buyerProvince.value || st.sellerProvince], ['buyerAddress', 'Buyer Address', f.buyerAddress.value.trim() || st.sellerAddress],
+    ['buyerRegistrationType', 'Buyer Registration Type', f.buyerRegistrationType.value],
+    ...(debit ? [['invoiceRefNo', 'Invoice Ref No.', f.invoiceRefNo.value], ['reason', 'Reason', f.reason.value]] : []),
+    ...(st.fbrEnv === 'SANDBOX' ? [['scenarioId', 'Scenario ID', f.scenarioId.value]] : []),
+  ]);
+}
 
 // Ask FBR whether the buyer is registered and active (ATL); sets buyer type and the non-ATL tick
 async function checkBuyerFbr() {
   const f = $('#invoiceForm'), out = $('#buyerCheck');
-  const ntn = f.buyerNtnCnic.value.replace(/\D/g, '');
-  if (![7, 9, 13].includes(ntn.length)) { out.className = 'text-red-700'; out.textContent = 'Enter a 7/9-digit NTN or 13-digit CNIC first'; return; }
+  const ntn = [f.buyerNtn.value, f.buyerCnic.value, f.buyerStrn.value].map(v => v.replace(/\D/g, '')).find(Boolean) || '';
+  if (![7, 9, 13].includes(ntn.length)) { out.className = 'text-red-700'; out.textContent = 'Enter the NTN, CNIC or STRN first'; return; }
   out.className = 'text-slate-500'; out.textContent = 'Checking…';
   try {
     const r = await api('/api/buyers/check?ntn=' + ntn);
@@ -1654,12 +1839,8 @@ function setupInvoiceForm() {
     recalc();
   });
   $('#invoiceForm').reason.innerHTML = '<option value="">— select reason —</option>' + S.meta.debitReasons.map(r => `<option>${esc(r)}</option>`).join('');
-  $('#invoiceType').addEventListener('change', applyDocType);
   $('#invoiceForm').reason.addEventListener('change', () => $('#remarksReq').classList.toggle('hidden', $('#invoiceForm').reason.value !== 'Others'));
-  $('#customerSel').addEventListener('change', e => {
-    const b = (S.saved?.buyers || []).find(x => x.id === e.target.value);
-    if (b) fillBuyer(b); else clearBuyer();
-  });
+  setupBuyerSearch();
   $('#items').addEventListener('input', e => { if (e.target.name === 'uoM') applyQtyStep(e.target.closest('.item')); });
   $('#items').addEventListener('change', e => {
     if (!e.target.matches('.price-pick input')) return;
@@ -1678,6 +1859,9 @@ function setupInvoiceForm() {
 
   $('#invoiceForm').addEventListener('submit', async e => {
     e.preventDefault();
+    // read-only boxes are skipped by the browser's own checks: each line needs an item with a rate
+    const bad = readItems().findIndex(it => !it.productDescription || !it.hsCode || it.unitPrice === '');
+    if (bad >= 0) return toast(`Item ${bad + 1}: pick an item that has a price (Rate is empty)`);
     const btn = $('#submitBtn');
     const body = { ...readForm(), clientRequestId: formRequestId, draftId: S.draftId || undefined };
     btn.disabled = true; btn.textContent = 'Sending to FBR…';
@@ -1710,7 +1894,9 @@ function readForm() {
     scenarioId: f.scenarioId.value, buyerRegistrationType: f.buyerRegistrationType.value,
     endConsumer: f.buyerRegistrationType.value === 'Unregistered' && f.endConsumer.checked,
     buyerNonAtl: f.buyerRegistrationType.value === 'Registered' && f.buyerNonAtl.checked,
-    buyerNtnCnic: f.buyerNtnCnic.value, buyerBusinessName: f.buyerBusinessName.value,
+    buyerNtn: f.buyerNtn.value, buyerCnic: f.buyerCnic.value, buyerStrn: f.buyerStrn.value,
+    buyerNtnCnic: f.buyerNtn.value || f.buyerCnic.value, buyerBusinessName: f.buyerBusinessName.value,
+    buyerMobile: f.buyerMobile.value, buyerEmail: f.buyerEmail.value, buyerNote: f.buyerNote.value,
     buyerProvince: f.buyerProvince.value, buyerAddress: f.buyerAddress.value,
     discount: f.discount.value, items: readItems(),
   };
@@ -1724,6 +1910,8 @@ function fillItems(items, note, discount) {
     for (const k of ['hsCode', 'productDescription', 'uoM', 'rate', 'sroScheduleNo', 'sroItemSerialNo'])
       if (it[k] != null) row.querySelector(`[name=${k}]`).value = it[k];
     if (it.saleType) setSelect(row.querySelector('[name=saleType]'), it.saleType);
+    const defs = typeof it.extraTaxes === 'string' ? it.extraTaxes : it.extraTaxes?.length ? JSON.stringify(it.extraTaxes) : '';
+    row.querySelector('[name=extraTaxes]').value = defs;
     for (const k of NUM_FIELDS) if (it[k] != null && it[k] !== '') row.querySelector(`[name=${k}]`).value = Number(it[k]) || (k === 'quantity' ? 1 : '');
     if (note) row.querySelector('.hs-desc').textContent = note;
     applyQtyStep(row);
@@ -1742,6 +1930,7 @@ let formRequestId = newRequestId();
 
 function applyDocType() {
   const debit = $('#invoiceType').value === 'Debit Note';
+  $('#invoiceTypeText').textContent = debit ? 'Debit Note (against a filed invoice)' : 'Sale Invoice';
   $('#refNoWrap').classList.toggle('hidden', !debit);
   document.querySelectorAll('.debit-only').forEach(el => el.classList.toggle('hidden', !debit));
   $('#invoiceForm').invoiceRefNo.required = debit;
@@ -1759,8 +1948,12 @@ async function startDebitNote(id) {
     f.invoiceRefNo.value = inv.fbrInvoiceNumber;
     f.reason.value = ''; f.reasonRemarks.value = '';
     f.invoiceDate.value = pkDate();
-    fillBuyer({ businessName: inv.buyerBusinessName, ntnCnic: inv.buyerNtnCnic, registrationType: inv.buyerRegistrationType, province: inv.buyerProvince, address: inv.buyerAddress, endConsumer: inv.endConsumer });
-    fillItems(inv.items.map(({ salesTaxApplicable, furtherTax, ...it }) => it), `From original invoice #${inv.localNo}`);
+    fillBuyer({ businessName: inv.buyerBusinessName, ntnCnic: inv.buyerNtnCnic, ...((inv.buyerNtn || inv.buyerCnic) && { ntn: inv.buyerNtn, cnic: inv.buyerCnic }),
+      strn: inv.buyerStrn, mobile: inv.buyerMobile, email: inv.buyerEmail, note: inv.buyerNote,
+      registrationType: inv.buyerRegistrationType, province: inv.buyerProvince, address: inv.buyerAddress, endConsumer: inv.endConsumer });
+    // Keep the more-tax definitions; their amounts come out of the copied boxes (they are recalculated on the new quantities)
+    fillItems(inv.items.map(({ salesTaxApplicable, furtherTax, extraTaxDetail, ...it }) => ({ ...it, extraTax: ownPart({ ...it, extraTaxDetail }, 'extraTax'), fedPayable: ownPart({ ...it, extraTaxDetail }, 'fedPayable') })),
+      `From original invoice #${inv.localNo}`);
     formRequestId = newRequestId();
     toast(`Debit note against invoice #${inv.localNo}: choose the reason, then change quantities/values to the amount being adjusted.`, true);
   } catch (err) { toast(err.message); }
@@ -1768,11 +1961,12 @@ async function startDebitNote(id) {
 
 function clearBuyer() {
   const f = $('#invoiceForm');
-  for (const n of ['buyerNtnCnic', 'buyerBusinessName', 'buyerAddress']) f[n].value = '';
+  for (const n of BUYER_INPUTS) f[n].value = '';
   f.buyerProvince.value = '';
   f.buyerRegistrationType.value = 'Unregistered'; f.endConsumer.checked = true;
   f.buyerRegistrationType.dispatchEvent(new Event('change'));
-  $('#customerSel').value = ''; $('#buyerCheck').textContent = '';
+  $('#buyerSearch').value = ''; $('#buyerCheck').textContent = '';
+  lockBuyer(false);
 }
 function resetForm() {
   const f = $('#invoiceForm');
@@ -1825,8 +2019,9 @@ async function openDraft(id) {
     f.invoiceDate.value = v.invoiceDate || pkDate();
     f.invoiceRefNo.value = v.invoiceRefNo || ''; f.reason.value = v.reason || ''; f.reasonRemarks.value = v.reasonRemarks || '';
     if (v.scenarioId) { f.scenarioId.value = v.scenarioId; }
-    fillBuyer({ businessName: v.buyerBusinessName || '', ntnCnic: v.buyerNtnCnic, registrationType: v.buyerRegistrationType || 'Unregistered',
-      province: v.buyerProvince, address: v.buyerAddress, endConsumer: v.endConsumer });
+    fillBuyer({ businessName: v.buyerBusinessName || '', ntnCnic: v.buyerNtnCnic, ...(v.buyerNtn !== undefined && { ntn: v.buyerNtn, cnic: v.buyerCnic }),
+      strn: v.buyerStrn, mobile: v.buyerMobile, email: v.buyerEmail, note: v.buyerNote,
+      registrationType: v.buyerRegistrationType || 'Unregistered', province: v.buyerProvince, address: v.buyerAddress, endConsumer: v.endConsumer });
     f.buyerNonAtl.checked = Boolean(v.buyerNonAtl);
     fillItems(v.items || [], undefined, v.discount);
     formRequestId = newRequestId();
@@ -1857,10 +2052,6 @@ document.addEventListener('click', async e => {
 
 /* ---------- Customer (top of the invoice form) ---------- */
 function fillCustomerList() {
-  const sel = $('#customerSel'), cur = sel.value;
-  sel.innerHTML = '<option value="">Walk-in customer (end consumer)</option>' + (S.saved?.buyers || []).map(b =>
-    `<option value="${b.id}">${esc(b.businessName)}${b.ntnCnic ? ' — ' + esc(b.ntnCnic) : b.strn ? ' — STRN ' + esc(b.strn) : ''} · ${esc(b.registrationType)}</option>`).join('');
-  sel.value = cur;
   $('#addCustomerBtn').classList.toggle('hidden', !canManage());
 }
 function openCustomer() {
@@ -1877,7 +2068,6 @@ function setupCustomerForm() {
       const b = await api('/api/buyers', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
       closeCustomer();
       await loadSaved();
-      $('#customerSel').value = b.id;
       fillBuyer(b);
       toast(`Customer "${b.businessName}" saved`, true);
     } catch (err) { toast(err.message); }
@@ -2042,7 +2232,7 @@ function setupHsSearch() {
     clearTimeout(hsTimer);
     hsTimer = setTimeout(() => hsSuggest(e.target), 250);
   });
-  items.addEventListener('focusin', e => { if (e.target.matches('.hs-input')) hsSuggest(e.target); });
+  items.addEventListener('focusin', e => { if (e.target.matches('.hs-input') && !e.target.readOnly) hsSuggest(e.target); });
   // Typed a full code without picking from the list: still suggest its sale type and rate
   items.addEventListener('change', async e => {
     if (!e.target.matches('.hs-input')) return;
@@ -2076,7 +2266,8 @@ function suggest(input, rows, render, onPick) {
     host.classList.add('relative');
     host.appendChild(box);
   }
-  if (!rows.length) return box.classList.add('hidden');
+  // A slow search can answer after the user has moved on: don't pop the list up under another box
+  if (!rows.length || document.activeElement !== input) return box.classList.add('hidden');
   box.innerHTML = rows.map((r, i) => `<button type="button" class="sg-opt block w-full text-left px-3 py-2 hover:bg-emerald-50 border-b last:border-0" data-i="${i}">${render(r)}</button>`).join('');
   box._rows = rows; box._pick = onPick;
   box.classList.remove('hidden');
@@ -2094,6 +2285,13 @@ document.addEventListener('focusout', e => {
   if (box) setTimeout(() => box.classList.add('hidden'), 150);
 });
 document.addEventListener('focusin', e => { if (e.target.matches?.('input[type=number]')) e.target.select(); });
+// NTN / CNIC / STRN boxes: digits only, no more than the longest valid length (dashes in a pasted CNIC are dropped)
+document.addEventListener('input', e => {
+  const el = e.target, max = Number(el.dataset?.digits);
+  if (!max) return;
+  const v = el.value.replace(/\D/g, '').slice(0, max);
+  if (v !== el.value) el.value = v;
+}, true);
 const sgTimers = new WeakMap();
 function debounced(input, fn) {
   clearTimeout(sgTimers.get(input));
@@ -2115,39 +2313,65 @@ function fillRowFromProduct(row, p) {
   pick.classList.toggle('hidden', opts.length < 2);
   row.dataset.notified = notified ? Number(p.notifiedRate) : '';
   set('sroScheduleNo', p.sroScheduleNo); set('sroItemSerialNo', p.sroItemSerialNo);
+  row.querySelector('[name=extraTaxes]').value = p.extraTaxes?.length ? JSON.stringify(p.extraTaxes) : '';
   row.querySelector('[name=productDescription]').dataset.auto = '';
   row.querySelector('.hs-desc').textContent = 'From your item (its tax rule)';
   row.dataset.taxFor = p.hsCode;
-  row.querySelector('.tax-hint').textContent = notified ? `Notified rate ${money(p.notifiedRate)} per unit from the item's tax rule${opts.length > 1 ? ' — tick another rate below Rate to use it' : ''}` : '';
+  // Rate comes only from the item: one price is fixed, several are ticked below Rate (CA)
+  const hint = row.querySelector('.tax-hint');
+  hint.className = 'tax-hint col-span-2 sm:col-span-6 text-xs -mt-1' + (opts.length ? '' : ' text-red-700');
+  hint.textContent = !opts.length ? `"${p.name}" has no price — add one under Items with Tax Rules first`
+    : notified ? `Notified rate ${money(p.notifiedRate)} per unit from the item's tax rule${opts.length > 1 ? ' — tick another rate below Rate to use it' : ''}`
+    : opts.length > 1 ? 'Tick the rate to use' : '';
+  if (!opts.length) row.querySelector('[name=unitPrice]').value = '';
   applyQtyStep(row);
   recalc();
 }
 
+// The invoice's buyer boxes (besides type, province and the ticks)
+const BUYER_INPUTS = ['buyerNtn', 'buyerCnic', 'buyerStrn', 'buyerBusinessName', 'buyerAddress', 'buyerMobile', 'buyerEmail', 'buyerNote'];
+// b: a saved buyer ({ ntn, cnic, strn, … }) or older data with one NTN/CNIC number (ntnCnic)
 function fillBuyer(b) {
   const f = $('#invoiceForm');
-  f.buyerBusinessName.value = b.businessName;
-  f.buyerNtnCnic.value = b.ntnCnic || '';
+  const one = String(b.ntnCnic || '').replace(/\D/g, ''), ntn = b.ntn ?? (one.length === 13 ? '' : one), cnic = b.cnic ?? (one.length === 13 ? one : '');
+  f.buyerBusinessName.value = b.businessName || '';
+  f.buyerNtn.value = ntn || ''; f.buyerCnic.value = cnic || ''; f.buyerStrn.value = b.strn || '';
+  f.buyerMobile.value = b.mobile || ''; f.buyerEmail.value = b.email || ''; f.buyerNote.value = b.note || '';
   f.buyerRegistrationType.value = b.registrationType;
   f.buyerRegistrationType.dispatchEvent(new Event('change'));
   f.endConsumer.checked = b.endConsumer ?? false; // saved buyers are businesses
   setSelect(f.buyerProvince, b.province || '');
   f.buyerAddress.value = b.address || '';
-  const saved = (S.saved?.buyers || []).find(x => x.id === b.id || (b.ntnCnic && x.ntnCnic === b.ntnCnic));
-  $('#customerSel').value = saved ? saved.id : '';
+  $('#buyerSearch').value = b.businessName || '';
+  lockBuyer(true);
   recalc();
 }
-
-async function saveRowAsProduct(row) {
-  const it = {};
-  for (const el of row.querySelectorAll('input, select')) it[el.name] = el.value;
-  try {
-    const p = await api('/api/products', { method: 'POST', body: {
-      name: it.productDescription, hsCode: it.hsCode, uoM: it.uoM, rate: it.rate, saleType: it.saleType,
-      prices: it.unitPrice !== '' ? [{ label: 'Price', price: it.unitPrice }] : [], sroScheduleNo: it.sroScheduleNo, sroItemSerialNo: it.sroItemSerialNo,
-    } });
-    toast(`Saved item "${p.name}" with this tax rule — it now appears in the item search`, true);
-    loadSaved();
-  } catch (err) { toast(err.message); }
+// Walk-in (no buyer chosen): the details are empty and fixed too — a buyer with details is picked or added as a customer
+function lockBuyer(chosen) {
+  const f = $('#invoiceForm');
+  for (const n of BUYER_INPUTS) { f[n].readOnly = true; f[n].placeholder = n === 'buyerBusinessName' ? 'Walk-in Customer' : n === 'buyerAddress' ? 'Seller address is used' : '—'; }
+  for (const n of ['buyerRegistrationType', 'buyerProvince']) { f[n].classList.add('locked'); f[n].tabIndex = -1; }
+  $('#walkInBtn').classList.toggle('hidden', !chosen);
+  $('#buyerMode').textContent = chosen ? '— from the saved buyer (change it on the Buyers page)' : '— walk-in customer (end consumer). Search above or "+ Add new customer" for a buyer with details';
+}
+// One search box: any of name, NTN, CNIC, STRN, mobile, email; the list shows on click as well
+function setupBuyerSearch() {
+  const inp = $('#buyerSearch');
+  lockBuyer(false);
+  const show = () => {
+    const q = inp.value.trim().toLowerCase(), d = q.replace(/\D/g, ''), local = x => String(x || '').replace(/\D/g, '').replace(/^(92|0)/, ''); // 0300… = +92300…
+    const rows = (S.saved?.buyers || []).filter(b => !q
+      || [b.businessName, b.email, b.address, b.note, b.province, provinceLabel(b.province)].some(v => String(v || '').toLowerCase().includes(q))
+      || (d.length >= 3 && ([b.ntn, b.cnic, b.strn].some(v => String(v || '').includes(d)) || local(b.mobile).includes(local(d)))))
+      .slice(0, 50);
+    suggest(inp, rows,
+      b => `<b>${esc(b.businessName)}</b> <span class="font-mono text-slate-500">${esc([b.ntn && 'NTN ' + b.ntn, b.cnic && 'CNIC ' + b.cnic, b.strn && 'STRN ' + b.strn].filter(Boolean).join(' · '))}</span>
+        <div class="text-slate-500">${esc(b.registrationType)}${b.province ? ' · ' + esc(provinceLabel(b.province)) : ''}${b.mobile ? ' · ' + esc(b.mobile) : ''}${b.email ? ' · ' + esc(b.email) : ''}</div>${b.note ? `<div class="text-slate-400 italic">${esc(b.note)}</div>` : ''}`,
+      fillBuyer);
+    if (q && !rows.length) toast('No saved buyer matches — use "+ Add new customer"');
+  };
+  inp.addEventListener('focusin', show);
+  inp.addEventListener('input', () => debounced(inp, show));
 }
 
 function setupSaved() {
@@ -2160,29 +2384,11 @@ function setupSaved() {
     suggest(inp, rows,
       p => `<b>${esc(p.name)}</b> <span class="font-mono text-slate-500">${esc(p.hsCode)}</span> · ${esc(p.saleType)} · ${esc(p.rate)} · ${esc(p.uoM)}${p.unitPrice != null ? ' · Rs ' + money(p.unitPrice) : ''}`,
       p => fillRowFromProduct(inp.closest('.item'), p));
-    if (opened && !rows.length) toast(q ? 'No item with a tax rule matches — set tax rules under Tax Rules Against Items' : 'No items with a tax rule yet — add items, then set their tax rules');
+    if (opened && !rows.length) toast(q ? 'No item with a tax rule matches — give items a tax rule under Items with Tax Rules' : 'No items with a tax rule yet — add them under Items with Tax Rules');
   };
   $('#items').addEventListener('input', e => { if (e.target.name === 'productDescription') itemSuggest(e.target); });
   $('#items').addEventListener('focusin', e => { if (e.target.name === 'productDescription') itemSuggest(e.target, true); });
-  $('#items').addEventListener('click', e => {
-    const btn = e.target.closest('.save-product');
-    if (btn) saveRowAsProduct(btn.closest('.item'));
-  });
   // Buyers: search by name or NTN
-  for (const name of ['buyerBusinessName', 'buyerNtnCnic']) {
-    const inp = f[name];
-    inp.addEventListener('input', () => {
-      const q = inp.value.trim();
-      if (q.length < (name === 'buyerNtnCnic' ? 3 : 2)) return;
-      debounced(inp, async () => {
-        const rows = await api('/api/buyers?q=' + encodeURIComponent(q)).catch(() => []);
-        suggest(inp, rows,
-          b => `<b>${esc(b.businessName)}</b> <span class="font-mono text-slate-500">${esc(b.ntnCnic || '')}</span> · ${esc(b.registrationType)}${b.province ? ' · ' + esc(b.province) : ''}`,
-          fillBuyer);
-      });
-    });
-  }
-
 }
 
 async function loadSaved() {
@@ -2194,153 +2400,260 @@ async function loadSaved() {
     $('#buyerRows').innerHTML = buyers.map(b => `<tr class="border-b last:border-0">
       <td class="py-1">${esc(b.businessName)}</td><td class="font-mono text-xs">${esc(b.ntn)}</td><td class="font-mono text-xs">${esc(b.cnic)}</td><td class="font-mono text-xs">${esc(b.strn)}</td>
       <td>${esc(b.registrationType)}</td><td class="text-xs">${esc(provinceLabel(b.province))}</td>
+      <td class="font-mono text-xs">${esc(b.mobile)}</td><td class="text-xs">${esc(b.email)}</td><td class="text-xs max-w-[14rem] truncate" title="${esc(b.note)}">${esc(b.note)}</td>
       <td class="text-right whitespace-nowrap"><button class="text-emerald-700 text-xs mr-2" onclick="editBuyer('${b.id}')">Edit</button><button class="text-red-600 text-xs" onclick="deleteSaved('buyers','${b.id}')">Delete</button></td></tr>`).join('')
-      || '<tr><td colspan="7" class="py-2 text-slate-500">No saved buyers yet.</td></tr>';
+      || '<tr><td colspan="10" class="py-2 text-slate-500">No saved buyers yet.</td></tr>';
   } catch (err) { toast(err.message); }
 }
 function setSelect(sel, v) {
   if (v && ![...sel.options].some(o => o.value === v)) sel.insertAdjacentHTML('beforeend', `<option>${esc(v)}</option>`);
   sel.value = v || '';
 }
-const SOURCE_BADGE = { OFFICIAL: '<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 text-xs">Official</span>', CUSTOMER: '<span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 text-xs" title="Not in the FBR / PCT HS list — FBR may reject it">Customer-created</span>' };
+// Codes not in the FBR / PCT list are shown under the client's own name (as given when the client was created)
+const clientName = () => S.settings?.companyName || S.company || 'this client';
+const SOURCE_BADGE = {
+  OFFICIAL: '<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 text-xs">Official</span>',
+  get CUSTOMER() { return `<span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 text-xs" title="Created by ${esc(clientName())} — not in the FBR / PCT HS list, FBR may reject it">${esc(clientName())}</span>`; },
+};
 const ruleText = p => p.saleType ? `${esc(p.saleType)} · ${esc(p.rate)}${p.notifiedRate != null ? ` · notified ${money(p.notifiedRate)}/unit` : ''}${p.sroScheduleNo ? ` · ${esc(p.sroScheduleNo)} ${esc(p.sroItemSerialNo)}` : ''}` : '';
 const pricesOf = p => Array.isArray(p.prices) && p.prices.length ? p.prices : p.unitPrice != null ? [{ label: 'Price', price: Number(p.unitPrice) }] : [];
-function addPriceRow(label, price = '') {
-  if (label === undefined) label = String.fromCharCode(65 + ($('#pfPrices').children.length % 26)); // A, B, C …
+function addPriceRow(label = '', price = '') {
+  const letter = String.fromCharCode(65 + ($('#pfPrices').children.length % 26)); // A, B, C … when no name is typed
   $('#pfPrices').insertAdjacentHTML('beforeend', `<div class="price-row flex gap-2 items-center">
-    <input class="pr-label !w-40" maxlength="40" placeholder="e.g. A" value="${esc(label)}">
-    <input class="pr-price !w-32" type="number" step="0.01" min="0" placeholder="0.00" value="${esc(price)}">
+    <input class="pr-label !w-40" maxlength="40" required placeholder="Name, e.g. ${letter}" value="${esc(label)}">
+    <input class="pr-price !w-32" type="number" step="0.01" min="0" required placeholder="0.00" value="${esc(price)}">
     <button type="button" class="text-slate-400 hover:text-red-600" title="Remove" onclick="this.parentElement.remove()">✕</button></div>`);
 }
 function readPrices() {
   return [...document.querySelectorAll('#pfPrices .price-row')].map(r => ({ label: r.querySelector('.pr-label').value.trim(), price: r.querySelector('.pr-price').value }))
-    .filter(x => x.price !== '');
+    .filter(x => x.label || x.price !== ''); // half-filled rows go to the server, which asks for the missing part
 }
+// Every reference of the item: the first (★, sent to FBR) in bold, each with its PDF link and comment
+// A tax's references (links to the PDFs) and its comment; star = the sales tax's first reference, sent to FBR
+const refLinks = (refs, star) => (refs || []).map((r, i) => `${star && i === 0 ? '★ ' : ''}${r.url ? `<a class="underline${star && i === 0 ? ' font-semibold' : ''}" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.reference)}</a>` : `<span class="${star && i === 0 ? 'font-semibold' : ''}">${esc(r.reference)}</span>`}`).join(' · ');
+const commentLine = c => c ? `<div class="text-slate-500 whitespace-pre-line">${esc(c)}</div>` : '';
+const refsCell = p => {
+  const refs = p.lawRefs?.length ? p.lawRefs : p.sroScheduleNo ? [{ reference: p.sroScheduleNo }] : [];
+  const comment = p.taxComment || refs.filter(r => r.comment).map(r => `${r.reference}: ${r.comment}`).join('\n');
+  return refLinks(refs, true) + commentLine(comment);
+};
+// More taxes column: each tax, then its own references and comment
+const fbrBoxName = f => (TAX_FIELDS.find(([v]) => v === f) || [, f])[1];
+const extraTaxesCell = p => (p.extraTaxes || []).map(t => `<div class="mb-1.5"><b class="font-medium">${taxRuleText(t, p.extraTaxes)}</b> <span class="text-slate-500">→ FBR ${esc(fbrBoxName(t.fbrField))}</span>${t.refs?.length ? `<div>${refLinks(t.refs)}</div>` : ''}${commentLine(t.comment)}</div>`).join('');
+// Sales tax references alone (comment has its own column)
+const salesTaxRefs = p => refLinks(p.lawRefs?.length ? p.lawRefs : p.sroScheduleNo ? [{ reference: p.sroScheduleNo }] : [], true);
+const salesTaxComment = p => p.taxComment || (p.lawRefs || []).filter(r => r.comment).map(r => `${r.reference}: ${r.comment}`).join('\n');
 function renderItems() {
+  $('#itemSourceOwn').textContent = `Codes created by ${clientName()}`;
   const src = $('#itemSource').value, q = $('#itemQ').value.trim().toLowerCase();
-  const rows = (S.saved?.products || []).filter(p => (!src || p.source === src) && (!q || p.name.toLowerCase().includes(q) || p.hsCode.startsWith(q)));
-  $('#productRows').innerHTML = rows.map(p => `<tr class="border-b last:border-0 align-top">
-    <td class="py-1">${esc(p.name)}</td><td class="font-mono text-xs">${esc(p.hsCode)}</td><td>${SOURCE_BADGE[p.source] || ''}</td><td class="text-xs">${esc(p.uoM)}</td>
-    <td class="text-xs">${pricesOf(p).map(x => `${esc(x.label)} ${money(x.price)}`).join('<br>')}</td>
-    <td class="pl-3 text-xs">${p.saleType ? ruleText(p) : '<span class="text-amber-700">No tax rule — not on invoices yet</span>'}
-      <a class="ml-1 text-emerald-700 underline" href="javascript:setItemRule('${p.id}')">${p.saleType ? 'change' : 'set tax rule'}</a></td>
-    <td class="text-right whitespace-nowrap"><button class="text-emerald-700 text-xs mr-2" onclick="editProduct('${p.id}')">Edit</button><button class="text-red-600 text-xs" onclick="deleteSaved('products','${p.id}')">Delete</button></td></tr>`).join('')
-    || `<tr><td colspan="7" class="py-2 text-slate-500">${(S.saved?.products || []).length ? 'No items match.' : 'No items yet — add your first item above.'}</td></tr>`;
+  const rows = (S.saved?.products || []).filter(p => (!src || (src === 'NORULE' ? !p.saleType : p.source === src)) && (!q || p.name.toLowerCase().includes(q) || p.hsCode.startsWith(q)));
+  const cell = (v, cls = '') => `<td class="px-3 py-3 ${cls}">${v || '<span class="text-slate-300">—</span>'}</td>`;
+  $('#productRows').innerHTML = rows.map(p => `<tr class="item-row align-top">
+    <td class="items-sticky-l px-3 py-3 font-medium">${esc(p.name)}</td>${cell(esc(p.description), 'whitespace-pre-line')}${cell(esc(p.notes), 'whitespace-pre-line text-slate-600')}
+    ${cell(esc(p.hsCode), 'font-mono')}<td class="px-3 py-3">${SOURCE_BADGE[p.source] || ''}</td>${cell(esc(p.uoM))}
+    ${cell(pricesOf(p).map(x => `${esc(x.label)} ${money(x.price)}`).join('<br>'), 'whitespace-nowrap')}
+    ${p.saleType ? `${cell(esc(p.saleType))}${cell(esc(p.rate))}${cell(salesTaxRefs(p).replace(/ · /g, '<br>'))}${cell(esc(salesTaxComment(p)), 'whitespace-pre-line text-slate-600')}
+      ${cell(extraTaxesCell(p))}${cell(p.taxRuleAt ? `${fmtDate(p.taxRuleAt)}<div><button type="button" class="text-emerald-700 underline text-xs" onclick="ruleHistory('${p.id}')">History</button></div>` : '', 'whitespace-nowrap')}`
+      : '<td colspan="6" class="px-3 py-3 text-amber-700">No tax rule — not on invoices yet. Use Edit to set one.</td>'}
+    <td class="items-sticky-r text-right whitespace-nowrap px-3 py-3"><button class="text-emerald-700 mr-2" onclick="editProduct('${p.id}')">Edit</button><button class="text-red-600" onclick="deleteSaved('products','${p.id}')">Delete</button></td></tr>
+    <tr id="hist-${p.id}" class="hidden"><td colspan="14" class="pb-2"></td></tr>`).join('')
+    || `<tr><td colspan="14" class="py-2 text-slate-500">${(S.saved?.products || []).length ? 'No items match.' : 'No items yet — add your first item with its tax rule above.'}</td></tr>`;
 }
 function clearProductForm() {
   const f = $('#productForm');
   f.reset(); f.id.value = '';
   $('#pfPrices').innerHTML = ''; addPriceRow();
-  $('#pfSubmit').textContent = 'Save item'; $('#pfMode').textContent = '';
+  $('#pfSubmit').textContent = 'Save item with tax rule'; $('#pfMode').textContent = '';
+  fillRuleForm(null);
 }
 function editProduct(id) {
   const p = S.saved.products.find(x => x.id === id), f = $('#productForm');
-  for (const k of ['id', 'name', 'hsCode', 'uoM']) f[k].value = p[k] ?? '';
+  for (const k of ['id', 'name', 'description', 'notes', 'hsCode', 'uoM']) f[k].value = p[k] ?? '';
   $('#pfPrices').innerHTML = '';
   for (const x of pricesOf(p)) addPriceRow(x.label, Number(x.price));
   if (!pricesOf(p).length) addPriceRow();
-  $('#pfSubmit').textContent = 'Update item'; $('#pfMode').textContent = `Editing "${p.name}"`;
-  f.name.focus();
+  fillRuleForm(p);
+  $('#pfSubmit').textContent = 'Update item and tax rule'; $('#pfMode').textContent = `Editing "${p.name}"${p.saleType ? '' : ' — set its tax rule below'}`;
+  f.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  f.name.focus({ preventScroll: true });
 }
 
 /* ---------- Tax rules against items (client sets them; Raseed only links the FBR guidance) ---------- */
-async function loadItemRules() {
+async function loadItemsPage() {
   setupItemRuleForm();
   loadGuides();
   $('#trNow').textContent = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   $('#trIndustry').textContent = S.settings?.industry || 'not set by your administrator';
   await loadSaved();
-  const items = S.saved?.products || [], f = $('#taxRuleForm'), cur = S.ruleItem || f.productId.value;
-  $('#trItemList').innerHTML = items.map(p => `<option value="${esc(itemLabel(p))}">${p.saleType ? '' : 'no tax rule yet'}</option>`).join('');
-  const chosen = items.find(p => p.id === cur);
-  f.productId.value = chosen ? chosen.id : ''; $('#trItemPick').value = chosen ? itemLabel(chosen) : ''; S.ruleItem = null;
-  fillRuleForm();
-  $('#trRows').innerHTML = items.map(p => `<tr class="border-b last:border-0 align-top">
-    <td class="py-1">${esc(p.name)}</td><td class="font-mono text-xs">${esc(p.hsCode)}</td>
-    ${p.saleType ? `<td>${esc(p.saleType)}</td><td>${esc(p.rate)}</td><td>${p.notifiedRate != null ? money(p.notifiedRate) + '/unit' : '—'}</td><td>${esc(p.sroScheduleNo)}</td><td>${esc(p.sroItemSerialNo)}</td><td class="text-xs whitespace-nowrap">${p.taxRuleAt ? fmtDate(p.taxRuleAt) : ''}</td>`
-      : '<td colspan="6" class="text-amber-700 text-xs">No tax rule — this item is not offered on invoices</td>'}
-    <td class="text-right whitespace-nowrap text-xs"><button class="text-emerald-700 mr-2" onclick="setItemRule('${p.id}')">${p.saleType ? 'Change' : 'Set rule'}</button>
-      ${p.saleType ? `<button class="text-slate-600 underline" onclick="ruleHistory('${p.id}', this)">History</button>` : ''}</td></tr>
-    <tr id="hist-${p.id}" class="hidden"><td colspan="9" class="pb-2"></td></tr>`).join('')
-    || '<tr><td colspan="9" class="py-2 text-slate-500">No items yet — add them on the Items page first.</td></tr>';
+  if (!$('#productForm').id.value) fillRuleForm(null);
 }
-const itemLabel = p => `${p.name} (${p.hsCode})`;
-function fillRuleForm() {
-  const f = $('#taxRuleForm'), p = (S.saved?.products || []).find(x => x.id === f.productId.value);
-  setSelect(f.saleType, p?.saleType || SALE_TYPES()[0]);
-  for (const k of ['rate', 'sroScheduleNo', 'sroItemSerialNo']) f[k].value = p?.[k] || '';
+function fillRuleForm(p) {
+  const f = $('#productForm');
+  setSelect(f.saleType, p?.saleType || ''); // a new item starts with no sale type chosen
+  for (const k of ['rate', 'sroItemSerialNo']) f[k].value = p?.[k] || '';
   f.notifiedRate.value = p?.notifiedRate != null ? Number(p.notifiedRate) : '';
-  $('#trRefLink').classList.add('hidden');
-  syncRuleSliders();
-}
-// Rate box ↔ slider. Notified rate: a price per unit set by FBR, below or above the actual price (CA's example:
-// sugar sells at 150/kg, notified 140/kg → tax on 140). The slider moves it 50%–150% around the item's first price.
-function syncRuleSliders(from) {
-  const f = $('#taxRuleForm'), sl = $('#trRateSlider'), ns = $('#trNotifiedSlider');
-  if (from === 'slider') f.rate.value = `${Number(sl.value)}%`;
-  else { const m = f.rate.value.match(/^\s*(\d+(?:\.\d+)?)\s*%/); sl.value = m ? m[1] : 0; }
-  const item = (S.saved?.products || []).find(x => x.id === f.productId.value), price = item ? Number(pricesOf(item)[0]?.price || 0) : 0;
-  if (from === 'notified-slider' && price) f.notifiedRate.value = r2(price * ns.value / 100);
-  const nr = f.notifiedRate.value === '' ? null : Number(f.notifiedRate.value);
-  if (from !== 'notified-slider') ns.value = price && nr ? Math.min(150, Math.max(50, Math.round(nr / price * 100))) : 100;
-  ns.disabled = !price;
-  $('#trPriceOut').textContent = price ? `(price ${money(price)})` : '(add a price to the item to use the slider)';
-  const rate = Number((f.rate.value.match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0), unit = price || 100, base = nr ?? unit;
-  $('#trPctEx').textContent = nr == null
-    ? `No notified rate: tax is charged on the actual price (${money(unit)} → tax ${money(unit * rate / 100)} per unit).`
-    : `Price ${money(unit)}, notified ${money(nr)} → the invoice uses ${money(nr)}: tax ${rate}% = ${money(base * rate / 100)} per unit; total ${money(base + base * rate / 100)} per unit.`;
+  const refs = p?.lawRefs?.length ? p.lawRefs : p?.sroScheduleNo ? [{ reference: p.sroScheduleNo }] : [];
+  setRefs($('#trMainRefs'), refs);
+  // one comment for the sales tax; older rules had a comment per reference — shown merged
+  f.taxComment.value = p?.taxComment || refs.filter(r => r.comment).map(r => `${r.reference}: ${r.comment}`).join('\n');
+  for (const r of document.querySelectorAll('#trTaxes .tax-row')) r.remove();
+  for (const t of p?.extraTaxes || []) addTaxRow(t);
 }
 // Search FBR's SROs / circulars / general orders / notices (copied daily) plus the schedule names FBR uses
 const SCHEDULE_REFS = ['6th Schd Table I', '6th Schd Table II', '8th Schd Table 1', '5th Schd', '3rd Schd'];
-const REF_BADGE = { SRO: 'SRO', CIRCULAR: 'Circular', GENERAL_ORDER: 'General order', NOTICE: 'Notice', SCHEDULE: 'Schedule' };
-function setupRefSearch() {
-  const inp = $('#trRef'), link = $('#trRefLink');
-  inp.addEventListener('input', () => {
-    link.classList.add('hidden');
+const REF_BADGE = { ACT: 'Sales Tax Act', RULES: 'Sales Tax Rules', SRO: 'SRO', CIRCULAR: 'Circular', GENERAL_ORDER: 'General order', NOTICE: 'Notice', SCHEDULE: 'Schedule' };
+// More taxes: one row each — name, % or fixed Rs, what it applies on (value, value after tax, sales tax or a tax
+// above it — several can be ticked, the tax is on their sum) and the FBR box it is added into. Calculated in src/tax.js (calcExtraTaxes); mirrored in extraTaxLine below.
+const TAX_BASES = [['VALUE', 'Value before tax'], ['SALES_TAX', 'Sales tax amount']];
+// "VALUE+SALES_TAX+TAX:0" → parts; older rules saved "Value after tax" = value + sales tax
+const taxBaseParts = base => [...new Set(String(base || 'VALUE').split('+').flatMap(x => x === 'VALUE_AFTER_TAX' ? ['VALUE', 'SALES_TAX'] : [x]).filter(Boolean))];
+const TAX_FIELDS = [['extraTax', 'Extra Tax'], ['fedPayable', 'FED Payable'], ['furtherTax', 'Further Tax'], ['salesTaxApplicable', 'Sales Tax']];
+function addTaxRow(t = {}) {
+  const row = document.createElement('tr');
+  row.className = 'tax-row align-top border-t';
+  row.innerHTML = `<td class="p-2"><input class="tx-name" maxlength="60" placeholder="e.g. Withholding" value="${esc(t.name || '')}"></td>
+    <td class="p-2"><select class="tx-kind"><option value="PCT">%</option><option value="FIXED">Fixed Rs</option></select></td>
+    <td class="p-2"><input class="tx-value" type="number" step="0.01" min="0" placeholder="${t.kind === 'FIXED' ? 'Rs' : '%'}" value="${t.value ?? ''}"></td>
+    <td class="p-2"><details class="tx-base relative" title="Apply on (tick one or more)"><summary class="cursor-pointer list-none border border-slate-300 rounded bg-white px-2 py-1.5 text-sm"></summary>
+      <div class="tx-base-list absolute z-30 left-0 top-full mt-1 min-w-full w-max max-w-[20rem] bg-white border rounded shadow-lg p-2 space-y-1 text-sm"></div></details></td>
+    <td class="p-2"><select class="tx-field" title="Send to FBR as">${TAX_FIELDS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></td>
+    <td class="p-2"><div class="refpick"></div></td>
+    <td class="p-2"><textarea class="tx-comment" rows="2" maxlength="2000" placeholder="The law detail for this tax">${esc(t.comment || '')}</textarea></td>
+    <td class="p-2 text-center"><button type="button" class="tx-del text-slate-400 hover:text-red-600" title="Remove">✕</button></td>`;
+  setRefs(row.querySelector('.refpick'), t.refs || []);
+  row.querySelector('.tx-kind').value = t.kind === 'FIXED' ? 'FIXED' : 'PCT';
+  row.querySelector('.tx-field').value = t.fbrField || 'extraTax';
+  row.dataset.base = t.base || 'VALUE';
+  $('#trTaxes').appendChild(row);
+  syncTaxRows();
+  if (!t.name) row.querySelector('.tx-name').focus();
+  return row;
+}
+function readTaxes() {
+  return [...document.querySelectorAll('#trTaxes .tax-row')].map(r => {
+    const kind = r.querySelector('.tx-kind').value;
+    return { name: r.querySelector('.tx-name').value.trim(), kind, value: r.querySelector('.tx-value').value,
+      base: kind === 'FIXED' ? '' : r.dataset.base, fbrField: r.querySelector('.tx-field').value,
+      refs: r.querySelector('.refpick')._refs || [], comment: r.querySelector('.tx-comment').value.trim() };
+  });
+}
+// "Apply on" ticks: value, sales tax and the taxes above each row only; a fixed amount needs no base.
+// The ticked parts live in row.dataset.base ("VALUE+SALES_TAX+TAX:0").
+function syncTaxRows() {
+  const rows = [...document.querySelectorAll('#trTaxes .tax-row')];
+  const names = rows.map((x, j) => x.querySelector('.tx-name').value.trim() || `tax ${j + 1}`);
+  rows.forEach((r, i) => {
+    const box = r.querySelector('.tx-base'), fixed = r.querySelector('.tx-kind').value === 'FIXED';
+    const opts = [...TAX_BASES, ...names.slice(0, i).map((n, j) => [`TAX:${j}`, `On "${n}"`])];
+    const parts = (r.dataset.base ? taxBaseParts(r.dataset.base) : []).filter(x => opts.some(([v]) => v === x));
+    r.dataset.base = parts.join('+'); // may be empty while the user changes the ticks; checked on save
+    box.querySelector('.tx-base-list').innerHTML = opts.map(([v, l]) => `<label class="flex items-center gap-2 cursor-pointer whitespace-nowrap !text-sm"><input type="checkbox" value="${v}" ${parts.includes(v) ? 'checked' : ''} style="width:auto"> ${esc(l)}</label>`).join('');
+    box.querySelector('summary').textContent = fixed ? '— (fixed amount on the line)' : !parts.length ? 'On: — tick at least one' : 'On: ' + parts.map(x => opts.find(([v]) => v === x)[1].replace(/^On "(.*)"$/, '"$1"')).join(' + ');
+    box.classList.toggle('pointer-events-none', fixed); box.classList.toggle('opacity-60', fixed);
+    if (fixed) box.open = false;
+    r.querySelector('.tx-value').placeholder = fixed ? 'Rs (once per line)' : '%';
+  });
+}
+function removeTaxRow(row) {
+  const rows = [...document.querySelectorAll('#trTaxes .tax-row')], i = rows.indexOf(row);
+  const user = rows.find(r => r.querySelector('.tx-kind').value !== 'FIXED' && taxBaseParts(r.dataset.base).includes(`TAX:${i}`));
+  if (user) return toast(`"${user.querySelector('.tx-name').value || 'A tax below'}" is applied on this tax — untick it there first`);
+  // taxes below that point at a later row move up by one
+  for (const r of rows.slice(i + 1)) {
+    r.dataset.base = taxBaseParts(r.dataset.base).map(x => { const m = /^TAX:(\d+)$/.exec(x); return m && Number(m[1]) > i ? `TAX:${Number(m[1]) - 1}` : x; }).join('+');
+  }
+  row.remove(); syncTaxRows();
+}
+const TAX_BASE_TEXT = { VALUE: 'value', SALES_TAX: 'sales tax' };
+const taxRuleText = (t, all = []) => `${esc(t.name)} ${t.kind === 'FIXED' ? `Rs ${money(t.value)} (fixed)`
+  : `${Number(t.value)}% on ${taxBaseParts(t.base).map(x => TAX_BASE_TEXT[x] || esc(all[Number(x.slice(4))]?.name || x)).join(' + ')}`}`;
+const extraTaxesText = p => (p.extraTaxes || []).map(t => taxRuleText(t, p.extraTaxes)).join(' · ');
+
+// References picker, one per tax: chips of the documents picked + a search box (Act, Rules, SROs, circulars …;
+// Enter adds what was typed, e.g. a schedule). On the sales tax row the first chip (★) is sent to FBR.
+function setRefs(box, refs) {
+  box._refs = refs.map(r => ({ reference: r.reference, url: r.url || '', source: r.source || '' }));
+  if (!box.querySelector('.rp-input')) box.innerHTML = `<div class="rp-chips flex flex-wrap gap-1 mb-1"></div>
+    <div class="relative"><input class="rp-input" autocomplete="off" placeholder="Search or type + Enter"></div>`;
+  renderRefs(box);
+}
+function renderRefs(box) {
+  const main = box.dataset.main === '1';
+  box.querySelector('.rp-chips').innerHTML = box._refs.map((r, i) => `<span class="inline-flex items-center gap-1 max-w-full px-2 py-0.5 rounded-full text-xs border ${main && i === 0 ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-slate-50 border-slate-200'}">
+      ${main && i === 0 ? '<b title="Sent to FBR">★</b>' : main ? `<button type="button" class="rp-top text-slate-400 hover:text-emerald-700" data-i="${i}" title="Send this one to FBR">☆</button>` : ''}
+      ${r.url ? `<a class="underline truncate" href="${esc(r.url)}" target="_blank" rel="noopener" title="${esc(REF_BADGE[r.source] || '')} — open the PDF">${esc(r.reference)}</a>` : `<span class="truncate">${esc(r.reference)}</span>`}
+      <button type="button" class="rp-del text-slate-400 hover:text-red-600" data-i="${i}" title="Remove">✕</button></span>`).join('');
+  if (main) syncMainTax();
+}
+function addRef(box, r) {
+  if (box._refs.some(x => x.reference.toLowerCase() === r.reference.toLowerCase())) return toast(`"${r.reference}" is already added`);
+  box._refs.push({ reference: r.reference, url: r.url || '', source: r.source || '' });
+  const inp = box.querySelector('.rp-input'); inp.value = ''; inp.parentElement.querySelector('.sg-list')?.classList.add('hidden');
+  renderRefs(box);
+}
+// Sales tax row: shows the rule's sale type and rate; the FBR serial box only for exempt / reduced rate / SRO sale types
+function syncMainTax() {
+  const f = $('#productForm');
+  $('#trMainSale').textContent = f.saleType.value;
+}
+function setupRefPickers() {
+  const host = $('#trTaxes');
+  host.addEventListener('input', e => {
+    const inp = e.target; if (!inp.matches('.rp-input')) return;
     const q = inp.value.trim(); if (q.length < 2) return;
     debounced(inp, async () => {
       const rows = await api('/api/legal-refs?q=' + encodeURIComponent(q)).catch(() => []);
       const sched = SCHEDULE_REFS.filter(x => x.toLowerCase().includes(q.toLowerCase())).map(x => ({ source: 'SCHEDULE', reference: x, title: 'Sales Tax Act schedule' }));
       suggest(inp, [...sched, ...rows], r => `<span class="px-1 rounded bg-slate-100 text-slate-600">${REF_BADGE[r.source]}</span> <b>${esc(r.reference)}</b>${r.issuedOn ? ` <span class="text-slate-500">· ${fmtDate(r.issuedOn)}</span>` : ''}<div class="text-slate-600">${esc(r.title)}</div>`,
-        r => { inp.value = r.reference; if (r.url) { link.href = r.url; link.classList.remove('hidden'); } });
+        r => addRef(inp.closest('.refpick'), { reference: r.reference, url: r.url, source: r.source === 'SCHEDULE' ? '' : r.source }));
     });
   });
+  host.addEventListener('keydown', e => {
+    if (!e.target.matches('.rp-input') || e.key !== 'Enter') return;
+    e.preventDefault();
+    const v = e.target.value.trim(); if (v) addRef(e.target.closest('.refpick'), { reference: v });
+  });
+  host.addEventListener('click', e => {
+    const b = e.target.closest('.rp-del, .rp-top'); if (!b) return;
+    const box = b.closest('.refpick'), i = Number(b.dataset.i);
+    if (b.matches('.rp-del')) box._refs.splice(i, 1); else box._refs.unshift(...box._refs.splice(i, 1));
+    renderRefs(box);
+  });
+  const f = $('#productForm');
+  f.saleType.addEventListener('change', syncMainTax);
 }
 
-function setItemRule(id) { S.ruleItem = id; if (S.page === 'c-taxrules') loadItemRules(); else go('c-taxrules'); }
-async function ruleHistory(id, btn) {
-  const row = $('#hist-' + id);
+// Tax rule history (newest first): when, who, sale type, rate, references, comment, more taxes
+const historyHtml = list => `<div class="bg-slate-50 border rounded p-3 text-xs space-y-2">${list.map((r, i) => `<div class="${i ? 'border-t pt-2' : ''}">
+    <b>${i === 0 ? 'Current' : 'Earlier'}</b> — from ${new Date(r.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}:
+    ${esc(r.saleType)}, ${esc(r.rate)}${r.sroItemSerialNo ? `, serial ${esc(r.sroItemSerialNo)}` : ''}<span class="text-slate-500"> · ${esc(r.createdBy)}${r.industry ? ' · ' + esc(r.industry) : ''}</span>
+    ${refsCell(r) ? `<div class="pl-3 mt-0.5"><span class="text-slate-500">Sales tax:</span> ${refsCell(r)}</div>` : ''}
+    ${extraTaxesCell(r) ? `<div class="pl-3 mt-0.5"><span class="text-slate-500">More taxes:</span>${extraTaxesCell(r)}</div>` : ''}</div>`).join('') || '<div class="text-slate-500">No history yet.</div>'}</div>`;
+// rowId: the hidden row under the item; url: client or admin history endpoint
+async function toggleHistory(rowId, url) {
+  const row = $('#' + rowId);
   if (!row.classList.contains('hidden')) return row.classList.add('hidden');
-  try {
-    const list = await api(`/api/products/${id}/tax-rules`);
-    row.firstElementChild.innerHTML = `<div class="bg-slate-50 border rounded p-2 text-xs">${list.map((r, i) => `<div>${i === 0 ? '<b>Current</b>' : 'Earlier'} — from ${new Date(r.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}:
-      ${esc(r.saleType)}, ${esc(r.rate)}${r.notifiedRate != null ? `, notified rate ${money(r.notifiedRate)} per unit` : ''}${r.sroScheduleNo ? `, ${esc(r.sroScheduleNo)} S.No ${esc(r.sroItemSerialNo)}` : ''} <span class="text-slate-500">· ${esc(r.createdBy)}${r.industry ? ' · ' + esc(r.industry) : ''}</span></div>`).join('')}</div>`;
-    row.classList.remove('hidden');
-  } catch (err) { toast(err.message); }
+  try { row.firstElementChild.innerHTML = historyHtml(await api(url)); row.classList.remove('hidden'); }
+  catch (err) { toast(err.message); }
 }
+const ruleHistory = id => toggleHistory('hist-' + id, `/api/products/${id}/tax-rules`);
+const bankHistory = id => toggleHistory('ibhist-' + id, `/api/admin/products/${id}/tax-rules`);
 function setupItemRuleForm() {
   if (S.itemRuleReady) return; S.itemRuleReady = true;
-  const f = $('#taxRuleForm');
-  $('#trSaleType').innerHTML = SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('');
-  $('#trItemPick').addEventListener('input', e => {
-    const p = (S.saved?.products || []).find(x => itemLabel(x) === e.target.value);
-    f.productId.value = p ? p.id : ''; if (p) fillRuleForm();
+  const f = $('#productForm');
+  $('#trTaxes').addEventListener('input', e => { if (e.target.matches('.tx-name')) syncTaxRows(); });
+  $('#trTaxes').addEventListener('change', e => {
+    if (e.target.matches('.tx-base input')) {
+      const r = e.target.closest('.tax-row');
+      r.dataset.base = [...r.querySelectorAll('.tx-base input:checked')].map(x => x.value).join('+');
+    }
+    if (e.target.matches('.tx-kind, .tx-base input')) syncTaxRows();
   });
-  $('#trRateSlider').addEventListener('input', () => syncRuleSliders('slider'));
-  f.rate.addEventListener('input', () => syncRuleSliders());
-  f.notifiedRate.addEventListener('input', () => syncRuleSliders());
-  $('#trNotifiedSlider').addEventListener('input', () => syncRuleSliders('notified-slider'));
-  setupRefSearch();
-  f.addEventListener('submit', async e => {
-    e.preventDefault();
-    const body = Object.fromEntries(new FormData(f));
-    if (!body.productId) return toast('Choose an item from the list');
-    try {
-      const d = await api(`/api/products/${body.productId}/tax-rule`, { method: 'POST', body });
-      toast(`Tax rule saved for "${d.item.name}" — it now appears on invoices`, true);
-      S.ruleItem = body.productId; loadItemRules();
-    } catch (err) { toast(err.message); }
-  });
+  // close an open "Apply on" list when clicking elsewhere
+  document.addEventListener('click', e => { for (const d of document.querySelectorAll('#trTaxes details[open]')) if (!d.contains(e.target)) d.open = false; });
+  $('#trTaxes').addEventListener('click', e => { const b = e.target.closest('.tx-del'); if (b) removeTaxRow(b.closest('.tax-row')); });
+  $('#trSaleType').innerHTML = '<option value="">— select sale type —</option>' + SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('');
+  setupRefPickers();
 }
 function clearBuyerForm() {
   const f = $('#buyerForm');
@@ -2353,6 +2666,7 @@ function editBuyer(id) {
   for (const k of ['ntn', 'cnic', 'strn']) f[k].value = b[k] || '';
   f.querySelector('.reg-out').textContent = '';
   f.registrationType.value = b.registrationType; f.address.value = b.address || '';
+  for (const k of ['mobile', 'email', 'note']) f[k].value = b[k] || '';
   setSelect(f.province, b.province);
   $('#bfSubmit').textContent = 'Update buyer'; $('#bfMode').textContent = `Editing "${b.businessName}"`;
   f.businessName.focus();
@@ -2369,7 +2683,7 @@ function setupSavedForms() {
       const rows = await api('/api/hs?q=' + encodeURIComponent(q)).catch(() => []);
       suggest(pf.hsCode, rows,
         r => `<span class="font-mono font-semibold">${esc(r.code)}</span> <div class="text-slate-600">${esc(r.description)}</div>`,
-        r => { pf.hsCode.value = r.code; if (!pf.name.value.trim()) pf.name.value = shortHsDesc(r.description); });
+        r => { pf.hsCode.value = r.code; if (!pf.name.value.trim()) pf.name.value = shortHsDesc(r.description); if (!pf.description.value.trim()) pf.description.value = r.description.slice(0, 500); });
     });
   });
   if (!$('#pfPrices').children.length) addPriceRow();
@@ -2378,9 +2692,14 @@ function setupSavedForms() {
     const body = Object.fromEntries(new FormData(pf));
     if (!body.id) delete body.id;
     body.prices = readPrices();
+    body.lawRefs = $('#trMainRefs')._refs || [];
+    body.extraTaxes = readTaxes();
+    const noBase = body.extraTaxes.find(t => t.kind === 'PCT' && !t.base);
+    if (noBase) return toast(`"${noBase.name || 'More tax'}": tick at least one "Apply on"`);
+    if (!SRO_SALE_TYPES.has(body.saleType)) body.sroItemSerialNo = '';
     try {
-      const p = await api('/api/products', { method: 'POST', body });
-      toast(`${body.id ? 'Updated' : 'Saved'} item "${p.name}"${p.saleType ? '' : ' — now set its tax rule (Tax Rules) so it appears on invoices'}`, true);
+      const p = await api('/api/products', { method: 'POST', body }); // saves the item and, if changed, its tax rule
+      toast(`${body.id ? 'Updated' : 'Saved'} "${p.name}" with its tax rule — it appears on invoices`, true);
       clearProductForm(); loadSaved();
     } catch (err) { toast(err.message); }
   });
@@ -2400,6 +2719,267 @@ async function deleteSaved(kind, id) {
   if (!confirm('Delete this saved ' + (kind === 'products' ? 'product' : 'buyer') + '? Past invoices are not affected.')) return;
   try { await api(`/api/${kind}/${id}`, { method: 'DELETE' }); loadSaved(); } catch (err) { toast(err.message); }
 }
+
+/* ---------- Items with tax rules: Excel template, import (check first, then import) and export ---------- */
+// The file has 5 sheets: Items, More taxes, HS codes (all of them, to search), Lists, How to fill.
+// Written with ExcelJS (dropdowns, formulas, filters); uploads are read with SheetJS. Checks: src/itemImport.js.
+function loadExcelJs() {
+  if (window.ExcelJS) return Promise.resolve();
+  return new Promise((ok, fail) => document.head.appendChild(Object.assign(document.createElement('script'),
+    { src: 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js', onload: ok, onerror: () => fail(new Error('Could not load the Excel writer')) })));
+}
+const ITEM_X_ROWS = 1000; // rows prepared with dropdowns and the HS description formula
+const itemXCols = nPrices => [
+  ['name', 'Item name *', 26, true], ['description', 'Item description *', 34, true], ['notes', 'Item notes *', 28, true],
+  ['hsCode', 'HS code *', 13, true], ['hsDesc', 'HS description (auto)', 46], ['uoM', 'UOM *', 20, true],
+  ...Array.from({ length: nPrices }, (_, i) => [[`p${i + 1}Name`, `Price ${i + 1} name${i ? '' : ' *'}`, 14, true], [`p${i + 1}Amount`, `Price ${i + 1} amount${i ? '' : ' *'}`, 14]]).flat(),
+  ['saleType', 'Sale type *', 34, true], ['rate', 'Sales tax rate *', 14, true], ['refs', 'Sales tax references', 40, true], ['comment', 'Sales tax comment', 40, true],
+];
+const TAX_X_COLS = [['itemName', 'Item name *', 26], ['name', 'Tax name *', 20], ['kind', 'Type *', 11], ['value', 'Rate or Rs *', 12],
+  ['applyOn', 'Apply on * (for %)', 34], ['fbrBox', 'FBR box *', 16], ['refs', 'References', 40], ['comment', 'Comment', 40]];
+const APPLY_ON_TEXT = { VALUE: 'Value before tax', SALES_TAX: 'Sales tax amount' };
+const xHead = ws => { const r = ws.getRow(1); r.font = { bold: true }; r.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2F5EC' } }; ws.views = [{ state: 'frozen', ySplit: 1 }]; };
+const xCol = n => { let s = ''; for (n++; n; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; }; // 0 → A
+async function buildItemsWorkbook(products) {
+  await loadExcelJs();
+  const hsList = await api('/api/hs/all');
+  const nPrices = Math.max(5, ...products.map(p => pricesOf(p).length));
+  const cols = itemXCols(nPrices), at = k => cols.findIndex(c => c[0] === k);
+  const wb = new ExcelJS.Workbook();
+  const items = wb.addWorksheet('Items'), taxes = wb.addWorksheet('More taxes'), hsWs = wb.addWorksheet('HS codes');
+  const lists = wb.addWorksheet('Lists'), help = wb.addWorksheet('How to fill');
+
+  // Lists: what the dropdowns offer
+  const L = { saleTypes: SALE_TYPES(), uoms: S.lists?.uoms || S.meta.uoms, rates: S.meta.rates, kinds: ['%', 'Fixed Rs'], boxes: TAX_FIELDS.map(f => f[1]), applyOn: ['Value before tax', 'Sales tax amount', 'Value before tax + Sales tax amount'] };
+  lists.columns = [['Sale types', 'saleTypes', 40], ['UOM', 'uoms', 24], ['Tax rates', 'rates', 12], ['Type', 'kinds', 10], ['FBR box', 'boxes', 16], ['Apply on', 'applyOn', 36]].map(([header, key, width]) => ({ header, key, width }));
+  const lRows = Math.max(...Object.values(L).map(v => v.length));
+  for (let i = 0; i < lRows; i++) lists.addRow(Object.fromEntries(Object.entries(L).map(([k, v]) => [k, v[i] ?? null])));
+  xHead(lists);
+  const listRef = (col, k) => `Lists!$${col}$2:$${col}$${L[k].length + 1}`;
+
+  // HS codes: all of them, to search with Ctrl+F or the filter
+  hsWs.columns = [{ header: 'HS code', key: 'code', width: 13 }, { header: 'Description', key: 'description', width: 110 }, { header: 'Source', key: 'source', width: 10 }];
+  hsWs.getColumn(1).numFmt = '@';
+  hsWs.addRows(hsList); xHead(hsWs); hsWs.autoFilter = 'A1:C1';
+
+  // Items
+  items.columns = cols.map(([key, header, width]) => ({ header, key, width }));
+  cols.forEach(([, , , txt], i) => { if (txt) items.getColumn(i + 1).numFmt = '@'; });
+  for (const p of products) {
+    const row = { name: p.name, description: p.description, notes: p.notes, hsCode: p.hsCode, uoM: p.uoM, saleType: p.saleType, rate: p.rate,
+      refs: (p.lawRefs?.length ? p.lawRefs : p.sroScheduleNo ? [{ reference: p.sroScheduleNo }] : []).map(r => r.reference).join('; '), comment: salesTaxComment(p) };
+    pricesOf(p).forEach((x, i) => { row[`p${i + 1}Name`] = x.label; row[`p${i + 1}Amount`] = Number(x.price); });
+    items.addRow(row);
+  }
+  const last = Math.max(ITEM_X_ROWS, products.length + 200) + 1, hsCol = xCol(at('hsCode')), descCol = at('hsDesc') + 1;
+  for (let r = 2; r <= last; r++) {
+    items.getCell(r, descCol).value = { formula: `IF(${hsCol}${r}="","",IFERROR(VLOOKUP(${hsCol}${r},'HS codes'!$A:$B,2,FALSE),"not in FBR list"))` };
+  }
+  items.getColumn(descCol).font = { color: { argb: 'FF64748B' } };
+  const dd = (ws, col, ref, strict = true) => ws.dataValidations.add(`${col}2:${col}${last}`, { type: 'list', allowBlank: true, formulae: [ref],
+    showErrorMessage: strict, errorStyle: strict ? 'stop' : 'information', errorTitle: 'Not in the list', error: 'Pick a value from the list (see the Lists sheet).' });
+  dd(items, xCol(at('uoM')), listRef('B', 'uoms'));
+  dd(items, xCol(at('saleType')), listRef('A', 'saleTypes'));
+  dd(items, xCol(at('rate')), listRef('C', 'rates'), false); // other rates may be typed
+  xHead(items);
+
+  // More taxes
+  taxes.columns = TAX_X_COLS.map(([key, header, width]) => ({ header, key, width }));
+  for (const p of products) for (const t of p.extraTaxes || []) {
+    taxes.addRow({ itemName: p.name, name: t.name, kind: t.kind === 'FIXED' ? 'Fixed Rs' : '%', value: Number(t.value),
+      applyOn: t.kind === 'FIXED' ? '' : taxBaseParts(t.base).map(x => APPLY_ON_TEXT[x] || p.extraTaxes[Number(x.slice(4))]?.name || x).join(' + '),
+      fbrBox: fbrBoxName(t.fbrField), refs: (t.refs || []).map(r => r.reference).join('; '), comment: t.comment || '' });
+  }
+  dd(taxes, 'A', `Items!$A$2:$A$${last}`);
+  dd(taxes, 'C', listRef('D', 'kinds'));
+  dd(taxes, 'E', listRef('F', 'applyOn'), false); // names of taxes above may be typed too
+  dd(taxes, 'F', listRef('E', 'boxes'));
+  xHead(taxes);
+
+  // How to fill
+  help.columns = [{ header: 'Column', key: 'c', width: 28 }, { header: 'How to fill it', key: 'h', width: 110 }];
+  help.addRows([
+    ['Items sheet', 'One row per item. Columns with * are required. An import only adds new items; nothing is saved while the file has problems.'],
+    ['Item name *', 'Unique name, e.g. "Sugar 50kg bag" (max 200 characters). A name that already exists is refused.'],
+    ['Item description *', 'What the item is, e.g. "White refined sugar, 50 kg bag" (max 500).'],
+    ['Item notes *', 'Your own notes, e.g. supplier or storage (max 1000).'],
+    ['HS code *', 'Find it on the "HS codes" sheet (Ctrl+F or the filter), e.g. 1701.9910. A code not in the FBR list is allowed and saved as your own. The same HS code can be used again only with another sale type.'],
+    ['HS description (auto)', 'Fills in by itself from the HS code — "not in FBR list" means check the code.'],
+    ['UOM *', 'Pick from the list, e.g. KG.'],
+    ['Price N name / amount', 'At least Price 1 (name and amount), e.g. Retail / 150. Fill name and amount together. Add more pairs as needed.'],
+    ['Sale type *', 'Pick from the list (Lists sheet).'],
+    ['Sales tax rate *', 'e.g. 18%, 10%, Exempt.'],
+    ['Sales tax references', 'Separate with ";", e.g. "SRO 1751(I)/2026; 6th Schd Table I". The first one is sent to FBR. Needed for exempt / reduced rate / SRO sale types. References from FBR\'s list get their PDF link.'],
+    ['Sales tax comment', 'The law detail you read (optional).'],
+    ['More taxes sheet', 'One row per extra tax. Item name must match a row on the Items sheet. Taxes of one item are read top to bottom.'],
+    ['Type * / Rate or Rs *', '% (e.g. 2) or Fixed Rs (e.g. 5500 — once per invoice line, not × quantity).'],
+    ['Apply on *', 'For %: Value before tax, Sales tax amount, or the name of a tax above it for the same item. Several joined with " + ", e.g. "Sales tax amount + Withholding".'],
+    ['FBR box *', 'Extra Tax, FED Payable, Further Tax or Sales Tax — where FBR receives this tax.'],
+  ].map(([c, h]) => ({ c, h })));
+  xHead(help); help.getColumn(2).alignment = { wrapText: true, vertical: 'top' };
+  return wb;
+}
+async function saveExcel(wb, name) {
+  const blob = new Blob([await wb.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function itemTemplate() {
+  try { toast('Preparing the template with all HS codes…', true); await saveExcel(await buildItemsWorkbook([]), 'items-template.xlsx'); }
+  catch (err) { toast(err.message); }
+}
+async function exportItems() {
+  try {
+    await loadSaved();
+    const list = (S.saved?.products || []).filter(p => p.saleType);
+    if (!list.length) return toast('No items with a tax rule to export yet');
+    await saveExcel(await buildItemsWorkbook(list), `items-${pkDate()}.xlsx`);
+  } catch (err) { toast(err.message); }
+}
+// Headings → keys the server checks ("Item name *", "item NAME" … all work)
+const xKey = h => String(h || '').replace(/\(.*?\)/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''); // "Apply on * (for %)" → "applyon"
+const ITEM_HEAD = { itemname: 'name', name: 'name', itemdescription: 'description', description: 'description', itemnotes: 'notes', notes: 'notes',
+  hscode: 'hsCode', uom: 'uoM', saletype: 'saleType', salestaxrate: 'rate', taxrate: 'rate', rate: 'rate',
+  salestaxreferences: 'refs', references: 'refs', reference: 'refs', salestaxcomment: 'comment', comment: 'comment' };
+const TAX_HEAD = { itemname: 'itemName', item: 'itemName', taxname: 'name', name: 'name', type: 'kind', rateorrs: 'value', rate: 'value', amount: 'value', value: 'value',
+  applyon: 'applyOn', fbrbox: 'fbrBox', references: 'refs', reference: 'refs', comment: 'comment' };
+const itemHeadKey = h => { const k = xKey(h); const m = /^price(\d+)(name|amount)?$/.exec(k); return m ? `p${m[1]}${m[2] === 'name' ? 'Name' : 'Amount'}` : ITEM_HEAD[k]; };
+function readXSheet(ws, mapKey, skip = []) {
+  if (!ws) return { headers: [], rows: [] };
+  const head = (XLSX.utils.sheet_to_json(ws, { header: 1, range: 0, blankrows: false })[0] || []).map(h => [h, mapKey(h)]);
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true }).map(r => {
+    const o = { row: r.__rowNum__ + 1 };
+    for (const [h, k] of head) if (k && !skip.includes(k)) o[k] = typeof r[h] === 'string' ? r[h].trim() : r[h];
+    return o;
+  }).filter(o => Object.entries(o).some(([k, v]) => k !== 'row' && v !== '' && v != null));
+  return { headers: head.map(([, k]) => k).filter(Boolean), rows };
+}
+async function importItems(file) {
+  const out = $('#itemImportOut');
+  out.className = 'mb-3 text-sm text-slate-600'; out.textContent = `Checking ${file.name}…`;
+  try {
+    await loadSheetJs();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const it = readXSheet(wb.Sheets.Items || wb.Sheets[wb.SheetNames[0]], itemHeadKey, ['hsDesc']);
+    const tx = readXSheet(wb.Sheets['More taxes'], h => TAX_HEAD[xKey(h)]);
+    S.itemImport = { name: file.name, body: { itemHeaders: it.headers, items: it.rows, taxHeaders: tx.headers, taxes: tx.rows } };
+    renderItemImport(await api('/api/products/import/check', { method: 'POST', body: S.itemImport.body }));
+  } catch (err) { out.className = 'mb-3 text-sm text-red-700'; out.textContent = err.message; }
+}
+function renderItemImport(r) {
+  const out = $('#itemImportOut'), name = esc(S.itemImport?.name || 'the file');
+  const list = (rows, cls) => `<ul class="mt-2 space-y-1 ${cls}">${rows.map(e => `<li><b>${esc(e.sheet)}${e.row ? `, row ${e.row}` : ''}${e.name ? ` (${esc(e.name)})` : ''}:</b> ${e.messages.map(esc).join(' · ')}</li>`).join('')}</ul>`;
+  const warn = r.warnings?.length ? `<div class="mt-2 text-amber-800">Note:${list(r.warnings, '')}</div>` : '';
+  if (r.errors.length) {
+    const n = r.errors.reduce((a, e) => a + e.messages.length, 0);
+    out.className = 'mb-3 text-sm border rounded-lg p-3 bg-red-50 border-red-200';
+    out.innerHTML = `<b class="text-red-800">${n} problem${n > 1 ? 's' : ''} found in ${name} — nothing was saved.</b> Fix them in Excel and upload the file again.${list(r.errors, 'text-red-800')}${warn}`;
+  } else {
+    out.className = 'mb-3 text-sm border rounded-lg p-3 bg-emerald-50 border-emerald-200';
+    out.innerHTML = `<b class="text-emerald-800">${r.ready} item${r.ready > 1 ? 's' : ''} in ${name} ready to import.</b>
+      <button type="button" onclick="commitItemImport()" class="ml-2 bg-emerald-700 text-white rounded px-3 py-1">Import ${r.ready} item${r.ready > 1 ? 's' : ''}</button>
+      <button type="button" onclick="$('#itemImportOut').classList.add('hidden')" class="ml-2 text-xs underline">Cancel</button>${warn}`;
+  }
+}
+async function commitItemImport() {
+  try {
+    const d = await api('/api/products/import/commit', { method: 'POST', body: S.itemImport.body });
+    const out = $('#itemImportOut');
+    out.className = 'mb-3 text-sm border rounded-lg p-3 bg-emerald-50 border-emerald-200';
+    out.innerHTML = `<b class="text-emerald-800">Imported ${d.imported} item${d.imported > 1 ? 's' : ''} with their tax rules from ${esc(S.itemImport.name)}.</b>`;
+    S.itemImport = null; loadSaved();
+  } catch (err) {
+    if (err.data?.errors) renderItemImport({ errors: err.data.errors, warnings: err.data.warnings || [] });
+    else toast(err.message);
+  }
+}
+document.addEventListener('change', e => {
+  if (e.target.id !== 'itemImportFile' || !e.target.files[0]) return;
+  importItems(e.target.files[0]); e.target.value = '';
+});
+
+/* ---------- Buyers: Excel template, import and export ---------- */
+// One column list for all three, so an exported file can be edited and imported back
+const BUYER_COLS = [['businessName', 'Name'], ['ntn', 'NTN'], ['cnic', 'CNIC'], ['strn', 'STRN'], ['registrationType', 'Registered / Unregistered'],
+  ['province', 'Province'], ['address', 'Address'], ['mobile', 'Mobile number'], ['email', 'Email'], ['note', 'Additional note']];
+// Numbers as text so Excel keeps leading zeros (03001234567) and doesn't turn a CNIC into 3.52E+12
+function buyerSheet(rows) {
+  const ws = XLSX.utils.aoa_to_sheet([BUYER_COLS.map(c => c[1]), ...rows.map(r => BUYER_COLS.map(([k]) => String(r[k] ?? '')))]);
+  for (const cell of Object.keys(ws)) if (cell[0] !== '!') { ws[cell].t = 's'; ws[cell].z = '@'; }
+  ws['!cols'] = BUYER_COLS.map(([k]) => ({ wch: { businessName: 30, address: 36, note: 36, email: 26, registrationType: 24 }[k] || 16 }));
+  return ws;
+}
+function saveWorkbook(sheets, name) {
+  const wb = XLSX.utils.book_new();
+  for (const [title, ws] of sheets) XLSX.utils.book_append_sheet(wb, ws, title);
+  XLSX.writeFile(wb, name);
+}
+async function buyerTemplate() {
+  try {
+    await loadSheetJs();
+    const help = XLSX.utils.aoa_to_sheet([
+      ['Column', 'How to fill it'],
+      ['Name', 'Required. Buyer / business name (max 200 characters).'],
+      ['NTN', '7 or 9 digits. Needed for a registered buyer unless a CNIC is given.'],
+      ['CNIC', '13 digits, with or without dashes.'],
+      ['STRN', '13 digits (or 7/9 if FBR issued that).'],
+      ['Registered / Unregistered', 'Registered or Unregistered. Empty = Unregistered.'],
+      ['Province', 'One of: ' + sortProvinces(S.lists?.provinces || S.meta.provinces).map(provinceLabel).join(', ')],
+      ['Address', 'Optional.'],
+      ['Mobile number', 'Optional. 10 to 15 digits, e.g. 03001234567 or +923001234567.'],
+      ['Email', 'Optional.'],
+      ['Additional note', 'Optional (max 500 characters).'],
+      [],
+      ['A row with the same NTN, CNIC or STRN as a saved buyer updates that buyer; other rows add new buyers.'],
+    ]);
+    help['!cols'] = [{ wch: 26 }, { wch: 90 }];
+    saveWorkbook([['Buyers', buyerSheet([])], ['How to fill', help]], 'buyers-template.xlsx');
+  } catch (err) { toast(err.message); }
+}
+async function exportBuyers() {
+  try {
+    await loadSheetJs();
+    const list = await api('/api/buyers');
+    if (!list.length) return toast('No saved buyers to export yet');
+    saveWorkbook([['Buyers', buyerSheet(list.map(b => ({ ...b, province: provinceLabel(b.province) })))]], `buyers-${pkDate()}.xlsx`);
+  } catch (err) { toast(err.message); }
+}
+// Headings are matched loosely (case, spaces), so "ntn", "NTN " and "Mobile" all work
+const buyerHeadKey = h => {
+  const k = String(h).toLowerCase().replace(/[^a-z]/g, '');
+  const hit = BUYER_COLS.find(([key, label]) => label.toLowerCase().replace(/[^a-z]/g, '') === k || key.toLowerCase() === k);
+  return hit ? hit[0] : { mobile: 'mobile', phone: 'mobile', type: 'registrationType', note: 'note', notes: 'note', buyername: 'businessName', businessname: 'businessName' }[k];
+};
+const provinceValue = v => {
+  const k = provKey(v);
+  return (S.lists?.provinces || S.meta.provinces).find(p => provKey(p) === k || provKey(provinceLabel(p)) === k) || String(v || '').trim();
+};
+async function importBuyers(file) {
+  const out = $('#buyerImportOut');
+  out.className = 'mb-3 text-xs text-slate-600'; out.textContent = `Reading ${file.name}…`;
+  try {
+    const sheet = await readSheet(file);
+    const rows = sheet.map((r, i) => {
+      const o = { row: i + 2 };
+      for (const [h, v] of Object.entries(r)) { const k = buyerHeadKey(h); if (k) o[k] = String(v ?? '').trim(); }
+      if (o.province) o.province = provinceValue(o.province);
+      if (/^reg/i.test(o.registrationType || '')) o.registrationType = 'Registered';
+      if (/^3\d{9}$/.test(o.mobile || '')) o.mobile = '0' + o.mobile; // Excel dropped the leading 0 of 03001234567
+      return o;
+    }).filter(o => BUYER_COLS.some(([k]) => o[k]));
+    if (!rows.length) throw new Error('No buyer rows found — use the Excel template (headings in row 1).');
+    const d = await api('/api/buyers/import', { method: 'POST', body: { rows } });
+    const bad = d.results.filter(x => x.status === 'error');
+    out.className = 'mb-3 text-xs border rounded p-3 ' + (bad.length ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200');
+    out.innerHTML = `<b>${d.added} added, ${d.updated} updated${bad.length ? `, ${bad.length} not saved` : ''}</b> from ${esc(file.name)}`
+      + (bad.length ? `<ul class="mt-1 list-disc pl-5 text-red-700">${bad.map(x => `<li>Row ${x.row}${x.name ? ` (${esc(x.name)})` : ''}: ${esc(x.message)}</li>`).join('')}</ul>` : '');
+    loadSaved();
+  } catch (err) { out.className = 'mb-3 text-xs text-red-700'; out.textContent = err.message; }
+}
+document.addEventListener('change', e => {
+  if (e.target.id !== 'buyerImportFile' || !e.target.files[0]) return;
+  importBuyers(e.target.files[0]); e.target.value = '';
+});
 
 /* ---------- Bulk import ---------- */
 let importRows = null, importFileName = '';
@@ -2581,11 +3161,11 @@ function irisWindow(i) {
 }
 function invoiceActions(i) {
   if (i.status === 'CANCELLED') return `<span class="text-xs text-slate-500" title="${esc(i.cancelNote)}">Cancelled</span>`;
-  if (i.status === 'SUBMITTED') return `<div class="flex flex-col items-end gap-1 text-xs">
-      <button class="text-emerald-700 text-sm" onclick="openInvoice('${i.id}')">Receipt</button>
-      ${canManage() && i.invoiceType === 'Sale Invoice' ? `<button class="text-sky-700 underline" onclick="startDebitNote('${i.id}')">Debit note</button>` : ''}
-      ${canManage() ? `<button class="text-slate-600 underline" onclick="cancelInvoice('${i.id}', ${(Date.now() - new Date(i.submittedAt || i.createdAt).getTime()) / 3600000 > S.meta.editWindowHours})">Mark cancelled in IRIS</button>` : ''}
-      ${irisWindow(i)}</div>`;
+  if (i.status === 'SUBMITTED') return `<div class="flex flex-wrap justify-end gap-1.5 ml-auto">
+      <button class="act text-emerald-800 font-medium" onclick="openInvoice('${i.id}')">Receipt</button>
+      ${canManage() && i.invoiceType === 'Sale Invoice' ? `<button class="act text-sky-800" onclick="startDebitNote('${i.id}')">Debit note</button>` : ''}
+      ${canManage() ? `<button class="act text-slate-700" onclick="cancelInvoice('${i.id}', ${(Date.now() - new Date(i.submittedAt || i.createdAt).getTime()) / 3600000 > S.meta.editWindowHours})" title="Mark it cancelled here after you cancelled it in IRIS">Cancelled in IRIS</button>` : ''}
+      <div class="w-full text-right">${irisWindow(i)}</div></div>`;
   if (i.status === 'SUBMITTING') return '<span class="text-sky-700 text-xs">Sending…</span>';
   if (i.status === 'QUEUED') return `<div class="flex flex-col items-end gap-1 text-xs">
       <button class="text-indigo-700 underline" onclick="retryInvoice('${i.id}', this)">Send now</button>
@@ -2646,16 +3226,16 @@ async function loadInvoices() {
       <button class="border rounded px-3 py-1 disabled:opacity-40" ${d.page <= 1 ? 'disabled' : ''} onclick="S.ivPage=${d.page - 1};loadInvoices()">‹ Previous</button>
       <button class="border rounded px-3 py-1 disabled:opacity-40" ${d.page >= d.pages ? 'disabled' : ''} onclick="S.ivPage=${d.page + 1};loadInvoices()">Next ›</button></span>` : '';
     $('#invoiceRows').innerHTML = rows.map(i => `<tr class="border-b last:border-0 align-top">
-      <td class="py-2 px-3 whitespace-nowrap font-medium">${esc(i.invoiceNo || i.localNo)}${i.offlineMode ? '<div class="text-xs text-indigo-700" title="Issued while FBR/internet was down (Rule 150XC)">offline mode</div>' : ''}</td><td>${esc(i.invoiceDate)}</td><td>${esc(i.buyerBusinessName)}
+      <td class="py-2 px-3 whitespace-nowrap font-medium">${esc(i.invoiceNo || i.localNo)}${i.offlineMode ? '<div class="text-xs text-indigo-700" title="Issued while FBR/internet was down (Rule 150XC)">offline mode</div>' : ''}</td><td class="whitespace-nowrap">${esc(i.invoiceDate)}</td><td class="min-w-[11rem]">${esc(i.buyerBusinessName)}
         ${i.invoiceType === 'Debit Note' ? `<div class="text-xs text-sky-700">Debit note → ${esc(i.invoiceRefNo)}</div>` : ''}</td>
       <td>${esc(i.scenarioId || (i.fbrEnv === 'PRODUCTION' ? 'Live' : ''))}</td>
-      <td class="text-right">${money(i.totalAmount)}</td>
-      <td><span class="px-2 py-0.5 rounded text-xs ${BADGE[i.status]}" title="${esc(i.errorMessage || '')}">${statusLabel(i.status)}</span>
+      <td class="text-right whitespace-nowrap font-medium">${money(i.totalAmount)}</td>
+      <td><span class="px-2 py-0.5 rounded-full text-xs whitespace-nowrap ${BADGE[i.status]}" title="${esc(i.errorMessage || '')}">${statusLabel(i.status)}</span>
         ${i.status === 'QUEUED' && !i.errorMessage ? '<div class="text-xs text-indigo-700">Waiting to be sent</div>' : ''}
       ${i.errorMessage && i.status !== 'SUBMITTED' ? `<div class="text-xs ${i.status === 'UNCERTAIN' ? 'text-orange-800' : i.status === 'QUEUED' ? 'text-indigo-800' : 'text-red-700'} max-w-xs">${esc(i.errorMessage)}</div>` : ''}
       ${i.importRef ? `<div class="text-xs text-slate-500">Import ref ${esc(i.importRef)}</div>` : ''}</td>
       <td class="font-mono text-xs">${esc(i.fbrInvoiceNumber || '')}</td>
-      <td class="text-right whitespace-nowrap pr-3">
+      <td class="text-right pr-3 min-w-[15.5rem]">
         ${invoiceActions(i)}
       </td></tr>`).join('') || '<tr><td colspan="8" class="py-6 px-3 text-slate-500">No invoices for these filters.</td></tr>';
     clearTimeout(S.listTimer);
@@ -2713,9 +3293,33 @@ async function resolveInvoice(id, btn) {
 }
 
 /* ---------- Receipt ---------- */
+// Totals block of the receipt / A4 invoice — every amount that makes up the total, so the figures add up:
+// value excl. ST (after discount) + sales tax + further tax + each more tax in the Extra Tax / FED boxes (by name)
+// + any other extra tax / FED = total. More taxes sent into the Sales Tax / Further Tax boxes are inside those lines.
+function invoiceTotalRows(inv) {
+  const sum = f => r2(inv.items.reduce((a, it) => a + Number(it[f] || 0), 0));
+  const named = new Map();
+  for (const it of inv.items) for (const x of it.extraTaxDetail || []) {
+    if (x.fbrField !== 'extraTax' && x.fbrField !== 'fedPayable') continue;
+    const k = `${x.name}${x.fbrField === 'fedPayable' ? ' (FED)' : ''}`;
+    named.set(k, r2((named.get(k) || 0) + Number(x.amount)));
+  }
+  const namedTotal = r2([...named.values()].reduce((a, v) => a + v, 0));
+  const otherExtra = r2(sum('extraTax') + sum('fedPayable') - namedTotal);
+  const rows = [];
+  if (sum('discount')) rows.push(['Discount (deducted from the value)', sum('discount')]);
+  rows.push(['Value excl. sales tax', Number(inv.totalExclST)], ['Sales tax', Number(inv.totalST)]);
+  if (Number(inv.totalFurtherTax)) rows.push(['Further tax', Number(inv.totalFurtherTax)]);
+  for (const [k, v] of named) rows.push([k, v]);
+  if (otherExtra) rows.push(['Extra tax / FED', otherExtra]);
+  return rows;
+}
+// A box's amount without the more taxes added into it (those are listed by name)
+const ownPart = (it, f) => r2(Number(it[f] || 0) - (it.extraTaxDetail || []).filter(x => x.fbrField === f).reduce((a, x) => a + Number(x.amount), 0));
 function renderReceipt(inv, seller) {
   const line = '<div style="border-top:1px dashed #000;margin:4px 0"></div>';
-  const row = (a, b, bold) => `<div style="display:flex;justify-content:space-between;${bold ? 'font-weight:bold' : ''}"><span>${a}</span><span>${b}</span></div>`;
+  // label left, amount right; a long label wraps and, if still too wide, the amount drops to the next line (80 mm paper)
+  const row = (a, b, bold) => `<div style="display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:8px;${bold ? 'font-weight:bold' : ''}"><span style="min-width:0">${a}</span><span style="text-align:right;min-width:0;margin-left:auto">${b}</span></div>`;
   $('#receipt').innerHTML = `
     <div style="text-align:center">
       <div style="font-size:13px;font-weight:bold">${esc(seller.sellerBusinessName)}</div>
@@ -2727,21 +3331,23 @@ function renderReceipt(inv, seller) {
     ${row('Invoice #', esc(inv.invoiceNo || inv.localNo))}${row('Date', esc(inv.invoiceDate))}
     ${row('Buyer', esc(inv.buyerBusinessName))}
     ${inv.buyerNtnCnic ? row('Buyer NTN/CNIC', esc(inv.buyerNtnCnic)) : ''}
+    ${inv.buyerStrn ? row('Buyer STRN', esc(inv.buyerStrn)) : ''}
+    ${inv.buyerMobile ? row('Buyer mobile', esc(inv.buyerMobile)) : ''}
     ${row('Buyer type', inv.endConsumer ? 'End consumer' : esc(inv.buyerRegistrationType))}
     ${inv.invoiceRefNo ? row('Ref invoice', esc(inv.invoiceRefNo)) : ''}
     ${inv.reason ? row('Reason', esc(inv.reason + (inv.reasonRemarks ? ' — ' + inv.reasonRemarks : ''))) : ''}
     ${line}
     ${inv.items.map(it => `
       <div>${esc(it.productDescription)} <span style="color:#555">(${esc(it.hsCode)})</span></div>
-      ${row(`${Number(it.quantity)} ${esc(it.uoM)} × ${money(it.unitPrice)}`, money(it.valueSalesExcludingST))}
-      ${row(`  ST ${esc(it.rate)}`, money(it.salesTaxApplicable))}
-      ${Number(it.furtherTax) ? row('  Further tax', money(it.furtherTax)) : ''}
-      ${Number(it.extraTax) ? row('  Extra tax', money(it.extraTax)) : ''}
-      ${Number(it.fedPayable) ? row('  FED', money(it.fedPayable)) : ''}`).join('')}
+      ${Number(it.discount) ? `${row(`${Number(it.quantity)} ${esc(it.uoM)} × ${money(it.unitPrice)}`, money(Number(it.quantity) * Number(it.unitPrice)))}${row('  Discount', '-' + money(it.discount))}${row('  Value excl. ST', money(it.valueSalesExcludingST))}`
+        : row(`${Number(it.quantity)} ${esc(it.uoM)} × ${money(it.unitPrice)}`, money(it.valueSalesExcludingST))}
+      ${row(`  ST ${esc(it.rate)}`, money(ownPart(it, 'salesTaxApplicable')))}
+      ${ownPart(it, 'furtherTax') ? row('  Further tax', money(ownPart(it, 'furtherTax'))) : ''}
+      ${ownPart(it, 'extraTax') ? row('  Extra tax', money(ownPart(it, 'extraTax'))) : ''}
+      ${ownPart(it, 'fedPayable') ? row('  FED', money(ownPart(it, 'fedPayable'))) : ''}
+      ${(it.extraTaxDetail || []).map(x => row(`  ${esc(x.name)}`, money(x.amount))).join('')}`).join('')}
     ${line}
-    ${row('Value excl. ST', money(inv.totalExclST))}
-    ${row('Sales tax', money(inv.totalST))}
-    ${Number(inv.totalFurtherTax) ? row('Further tax', money(inv.totalFurtherTax)) : ''}
+    ${invoiceTotalRows(inv).map(([k, v]) => row(esc(k.replace('Value excl. sales tax', 'Value excl. ST').replace(' (deducted from the value)', '')), money(v))).join('')}
     ${row('TOTAL (Rs)', money(inv.totalAmount), true)}
     ${line}
     <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
@@ -2789,6 +3395,10 @@ function amountInWords(n) {
 function renderA4(inv, seller) {
   const n = v => money(v);
   const anyFt = inv.items.some(i => Number(i.furtherTax)), anyExtra = inv.items.some(i => Number(i.extraTax) || Number(i.fedPayable));
+  const anyDisc = inv.items.some(i => Number(i.discount));
+  // column widths (%), the description takes what is left so the table always fits the page
+  const w = { no: 4, hs: 8, qty: 8, rate: 9, disc: anyDisc ? 7.5 : 0, value: 10, tr: 6.5, st: 9, ft: anyFt ? 8 : 0, ex: anyExtra ? 8 : 0, total: 10 };
+  w.desc = 100 - Object.values(w).reduce((a, v) => a + v, 0);
   $('#invoiceA4').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:2px solid #000;padding-bottom:8px">
       <div>
@@ -2806,17 +3416,19 @@ function renderA4(inv, seller) {
     ${inv.fbrEnv === 'SANDBOX' ? '<div style="text-align:center;font-weight:bold;margin:6px 0;border:1px dashed #000;padding:3px">SANDBOX TEST — NOT A TAX INVOICE</div>' : ''}
     <table style="margin-top:10px">
       <tr><th style="width:18%">Buyer</th><td style="width:32%">${esc(inv.buyerBusinessName)}</td><th style="width:18%">Buyer NTN / CNIC</th><td>${esc(inv.buyerNtnCnic || '—')}</td></tr>
+      ${inv.buyerStrn || inv.buyerMobile || inv.buyerEmail ? `<tr><th>Buyer STRN</th><td>${esc(inv.buyerStrn || '—')}</td><th>Contact</th><td>${esc([inv.buyerMobile, inv.buyerEmail].filter(Boolean).join(' · ') || '—')}</td></tr>` : ''}
       <tr><th>Address</th><td>${esc(inv.buyerAddress)}</td><th>Province</th><td>${esc(inv.buyerProvince)}</td></tr>
       <tr><th>Buyer type</th><td>${inv.endConsumer ? 'End consumer' : esc(inv.buyerRegistrationType)}${inv.buyerNonAtl ? ' (not active / non-ATL)' : ''}</td>
         <th>${inv.invoiceRefNo ? 'Against invoice' : 'Sale origination'}</th><td>${inv.invoiceRefNo ? esc(inv.invoiceRefNo) + (inv.reason ? ' — ' + esc(inv.reason) : '') : esc(seller.sellerProvince || '—')}</td></tr>
     </table>
-    <table style="margin-top:10px">
-      <thead><tr><th>#</th><th>HS Code</th><th>Description</th><th class="num">Qty</th><th>UOM</th><th class="num">Rate (per unit)</th><th class="num">Value excl. ST</th><th class="num">Tax rate</th><th class="num">Sales tax</th>
+    <table class="a4-items" style="margin-top:10px;table-layout:fixed">
+      <colgroup>${['no', 'hs', 'desc', 'qty', 'rate', 'disc', 'value', 'tr', 'st', 'ft', 'ex', 'total'].filter(k => w[k]).map(k => `<col style="width:${w[k]}%">`).join('')}</colgroup>
+      <thead><tr><th>#</th><th>HS Code</th><th>Description</th><th class="num">Qty</th><th class="num">Rate (per unit)</th>${anyDisc ? '<th class="num">Discount</th>' : ''}<th class="num">Value excl. ST</th><th class="num">Tax rate</th><th class="num">Sales tax</th>
         ${anyFt ? '<th class="num">Further tax</th>' : ''}${anyExtra ? '<th class="num">Extra / FED</th>' : ''}<th class="num">Total</th></tr></thead>
       <tbody>${inv.items.map((it, i) => `<tr>
         <td>${i + 1}</td><td style="white-space:nowrap">${esc(it.hsCode)}</td>
-        <td>${esc(it.productDescription)}${it.sroScheduleNo ? `<div style="color:#444">${esc(it.sroScheduleNo)}${it.sroItemSerialNo ? ', S.No ' + esc(it.sroItemSerialNo) : ''}</div>` : ''}${Number(it.fixedNotifiedValueOrRetailPrice) ? `<div style="color:#444">Retail value ${n(it.fixedNotifiedValueOrRetailPrice)}</div>` : ''}</td>
-        <td class="num">${Number(it.quantity)}</td><td>${esc(it.uoM)}</td><td class="num">${n(it.unitPrice)}</td><td class="num">${n(it.valueSalesExcludingST)}</td>
+        <td>${esc(it.productDescription)}${(it.extraTaxDetail || []).length ? `<div style="color:#444">${it.extraTaxDetail.map(x => `${esc(x.name)} ${n(x.amount)}`).join(' · ')}</div>` : ''}${it.sroScheduleNo ? `<div style="color:#444">${esc(it.sroScheduleNo)}${it.sroItemSerialNo ? ', S.No ' + esc(it.sroItemSerialNo) : ''}</div>` : ''}${Number(it.fixedNotifiedValueOrRetailPrice) ? `<div style="color:#444">Retail value ${n(it.fixedNotifiedValueOrRetailPrice)}</div>` : ''}</td>
+        <td class="num">${Number(it.quantity)}<div style="color:#444;white-space:normal">${esc(it.uoM)}</div></td><td class="num">${n(it.unitPrice)}</td>${anyDisc ? `<td class="num">${Number(it.discount) ? n(it.discount) : ''}</td>` : ''}<td class="num">${n(it.valueSalesExcludingST)}</td>
         <td class="num">${esc(it.rate)}</td><td class="num">${n(it.salesTaxApplicable)}</td>
         ${anyFt ? `<td class="num">${n(it.furtherTax)}</td>` : ''}${anyExtra ? `<td class="num">${n(Number(it.extraTax) + Number(it.fedPayable))}</td>` : ''}
         <td class="num">${n(it.totalValues)}</td></tr>`).join('')}</tbody>
@@ -2827,9 +3439,7 @@ function renderA4(inv, seller) {
         ${inv.offlineMode ? '<div style="margin-top:4px">(Offline mode invoice — filed with FBR after reconnection)</div>' : ''}
       </div>
       <table style="width:42%">
-        <tr><th>Value excl. sales tax</th><td class="num">${n(inv.totalExclST)}</td></tr>
-        <tr><th>Sales tax</th><td class="num">${n(inv.totalST)}</td></tr>
-        ${Number(inv.totalFurtherTax) ? `<tr><th>Further tax</th><td class="num">${n(inv.totalFurtherTax)}</td></tr>` : ''}
+        ${invoiceTotalRows(inv).map(([k, v]) => `<tr><th>${esc(k)}</th><td class="num">${n(v)}</td></tr>`).join('')}
         <tr><th style="font-size:12px">Total (Rs)</th><td class="num" style="font-size:12px;font-weight:bold">${n(inv.totalAmount)}</td></tr>
       </table>
     </div>

@@ -6,7 +6,8 @@ const { PrismaClient } = require('@prisma/client');
 
 const { createAuth, requireRole, requireTenant, requireTenantRole, signToken, signWorkspaceToken } = require('./src/auth');
 const { encrypt, decrypt, mask } = require('./src/crypto');
-const { calcInvoice, WHOLE_NUMBER_UOMS, SRO_REQUIRED_SALE_TYPES } = require('./src/tax');
+const itemImport = require('./src/itemImport');
+const { calcInvoice, cleanExtraTaxes, WHOLE_NUMBER_UOMS, SRO_REQUIRED_SALE_TYPES } = require('./src/tax');
 const taxRules = require('./src/hsTaxRules');
 const fbrRefs = require('./src/fbrRefs');
 const fbr = require('./src/fbr');
@@ -35,6 +36,7 @@ const OWNER_OR_ACCOUNTANT = requireTenantRole('OWNER', 'ACCOUNTANT');
 // Proxies in front of the app: Render = 1; Vercel rewrite → Render = 2. Needed so req.ip is the visitor's IP.
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 app.use('/api/import', express.json({ limit: '10mb' })); // spreadsheet rows
+app.use(['/api/products/import', '/api/buyers/import'], express.json({ limit: '10mb' })); // items / buyers from Excel
 app.use(express.json({ limit: '1mb' }));
 
 // Basic security headers (CSP is left out: the pages use the Tailwind CDN, which injects styles at runtime)
@@ -87,7 +89,7 @@ function clientTenant(t) {
         fbrEnv: t.fbrEnv,
         furtherTaxRate: Number(t.furtherTaxRate),
         cnicRequiredAbove: CNIC_REQUIRED_ABOVE,
-        industry: industryOf(t), // shown on the Tax Rules page
+        industry: industryOf(t), // shown on the Items with Tax Rules page
         // Ready = the client may file (same rule as assertCanInvoice, minus the sandbox check)
         ready: Boolean(sellerReady(t) && (t.fbrTokenEnc || process.env.FBR_MOCK === 'true')),
     };
@@ -527,6 +529,11 @@ app.get('/api/hs', authenticateToken, async (req, res) => {
     res.json(await hs.search(prisma, req.query.q));
 });
 
+// Every HS code, for the HS codes sheet of the items Excel template
+app.get('/api/hs/all', authenticateToken, async (req, res) => {
+    res.json(await prisma.hsCode.findMany({ select: { code: true, description: true, source: true }, orderBy: { code: 'asc' } }));
+});
+
 app.get('/api/hs/stats', authenticateToken, async (req, res) => {
     res.json(await hs.stats(prisma));
 });
@@ -639,15 +646,22 @@ app.post('/api/admin/tax-rules', authenticateToken, ADMIN, async (req, res) => {
 app.get('/api/admin/item-tax-rules', authenticateToken, ADMIN, async (req, res) => {
     const items = await prisma.product.findMany({
         where: { saleType: { not: '' } },
-        include: { tenant: { select: { id: true, companyName: true, sellerBusinessName: true, businessActivities: true, sector: true } } },
+        include: { tenant: { select: { id: true, companyName: true, sellerBusinessName: true, businessActivities: true, sector: true, sellerNtnCnic: true, sellerStrn: true } } },
         orderBy: [{ tenantId: 'asc' }, { name: 'asc' }],
         take: 10000,
     });
     res.json(items.map(({ tenant: t, ...p }) => ({
         id: p.id, tenantId: t.id, userName: t.sellerBusinessName || t.companyName, industry: industryOf(t),
-        name: p.name, hsCode: p.hsCode, source: p.source, uoM: p.uoM, saleType: p.saleType, rate: p.rate,
-        notifiedRate: p.notifiedRate, sroScheduleNo: p.sroScheduleNo, sroItemSerialNo: p.sroItemSerialNo, taxRuleAt: p.taxRuleAt,
+        // DI settings have one NTN / CNIC box: 13 digits is a CNIC, 7 or 9 an NTN
+        userNtn: t.sellerNtnCnic.length === 13 ? '' : t.sellerNtnCnic, userCnic: t.sellerNtnCnic.length === 13 ? t.sellerNtnCnic : '', userStrn: t.sellerStrn,
+        // the same item details the client sees on Items with Tax Rules
+        name: p.name, description: p.description, notes: p.notes, hsCode: p.hsCode, source: p.source, uoM: p.uoM, prices: p.prices, unitPrice: p.unitPrice,
+        saleType: p.saleType, rate: p.rate, lawRefs: p.lawRefs, sroScheduleNo: p.sroScheduleNo, taxComment: p.taxComment, extraTaxes: p.extraTaxes, taxRuleAt: p.taxRuleAt,
     })));
+});
+// Tax rule history of any client's item (Data Bank → Since → History)
+app.get('/api/admin/products/:id/tax-rules', authenticateToken, ADMIN, async (req, res) => {
+    res.json(await prisma.productTaxRule.findMany({ where: { productId: req.params.id }, orderBy: { createdAt: 'desc' } }));
 });
 app.delete('/api/admin/tax-rules/:id', authenticateToken, ADMIN, async (req, res) => {
     const r = await prisma.hsTaxRule.delete({ where: { id: req.params.id } }).catch(() => null);
@@ -883,13 +897,25 @@ async function prepareInvoice(tenant, b, pendingDebit = null) {
     const fail = msg => { throw new InvoiceInputError(msg); };
     const invoiceType = b.invoiceType === 'Debit Note' ? 'Debit Note' : 'Sale Invoice';
     const buyerRegistrationType = b.buyerRegistrationType === 'Registered' ? 'Registered' : 'Unregistered';
-    const buyerNtnCnic = String(b.buyerNtnCnic || '').replace(/\D/g, '');
+    // NTN, CNIC and STRN come separately (like the Buyers page); FBR gets one number: the NTN, else the CNIC
+    const digitsOf = v => String(v || '').replace(/\D/g, '');
+    let buyerNtn = digitsOf(b.buyerNtn), buyerCnic = digitsOf(b.buyerCnic);
+    const buyerStrn = digitsOf(b.buyerStrn), single = digitsOf(b.buyerNtnCnic); // single box: bulk import, older drafts
+    if (!buyerNtn && !buyerCnic && single) { if (single.length === 13) buyerCnic = single; else buyerNtn = single; }
+    const buyerNtnCnic = buyerNtn || buyerCnic;
     const endConsumer = buyerRegistrationType === 'Unregistered' && b.endConsumer === true;
     const buyerNonAtl = buyerRegistrationType === 'Registered' && b.buyerNonAtl === true;
     if (buyerRegistrationType === 'Registered' && !NTN_LENGTHS.includes(buyerNtnCnic.length)) {
         fail('Registered buyer needs NTN (7 or 9 digits) or CNIC (13 digits).');
     }
     if (buyerNtnCnic && !NTN_LENGTHS.includes(buyerNtnCnic.length)) fail('Buyer NTN must be 7 or 9 digits, or CNIC 13 digits.');
+    if (buyerNtn && ![7, 9].includes(buyerNtn.length)) fail('Buyer NTN must be 7 or 9 digits.');
+    if (buyerCnic && buyerCnic.length !== 13) fail('Buyer CNIC must be 13 digits.');
+    if (buyerStrn && ![7, 9, 13].includes(buyerStrn.length)) fail('Buyer STRN must be 13 digits.');
+    const buyerMobile = String(b.buyerMobile || '').trim().replace(/(?!^\+)[^\d]/g, '');
+    if (buyerMobile && (buyerMobile.replace(/\D/g, '').length < 10 || buyerMobile.replace(/\D/g, '').length > 15)) fail('Buyer mobile number must be 10 to 15 digits (e.g. 03001234567).');
+    const buyerEmail = String(b.buyerEmail || '').trim().toLowerCase();
+    if (buyerEmail && (buyerEmail.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(buyerEmail))) fail('Buyer email address looks wrong.');
     const isDebit = invoiceType === 'Debit Note';
     const invoiceRefNo = isDebit ? String(b.invoiceRefNo || '').trim().toUpperCase() : '';
     if (b.invoiceDate && !/^\d{4}-\d{2}-\d{2}$/.test(b.invoiceDate)) fail('Invoice date must be YYYY-MM-DD.');
@@ -957,7 +983,8 @@ async function prepareInvoice(tenant, b, pendingDebit = null) {
     return {
         fbrEnv: tenant.fbrEnv,
         invoiceType, invoiceDate, invoiceRefNo, reason, reasonRemarks, scenarioId,
-        buyerNtnCnic,
+        buyerNtnCnic, buyerNtn, buyerCnic, buyerStrn, buyerMobile, buyerEmail,
+        buyerNote: String(b.buyerNote || '').trim().slice(0, 500),
         buyerBusinessName: String(b.buyerBusinessName || '').trim().slice(0, 200) || 'Walk-in Customer',
         buyerProvince: String(b.buyerProvince || '').trim() || tenant.sellerProvince,
         buyerAddress: String(b.buyerAddress || '').trim().slice(0, 300) || tenant.sellerAddress,
@@ -1444,15 +1471,18 @@ app.get('/api/buyers/check', authenticateToken, requireTenant, async (req, res) 
     res.json(r);
 });
 
-// ---------- SROs, circulars, general orders, notices from fbr.gov.pk (searchable on the Tax Rules page) ----------
-const LEGAL_SOURCES = ['SRO', 'CIRCULAR', 'GENERAL_ORDER', 'NOTICE'];
+// ---------- Sales Tax Act and Rules, SROs, circulars, general orders, notices from fbr.gov.pk (searchable on the Items with Tax Rules page) ----------
+const LEGAL_SOURCES = ['ACT', 'RULES', 'SRO', 'CIRCULAR', 'GENERAL_ORDER', 'NOTICE'];
 app.get('/api/legal-refs', authenticateToken, async (req, res) => {
     const words = String(req.query.q || '').trim().split(/\s+/).filter(w => w.length > 0).slice(0, 6);
     const where = {};
     if (LEGAL_SOURCES.includes(req.query.source)) where.source = req.query.source;
     if (words.length) where.AND = words.map(w => ({ OR: [{ refNo: { contains: w, mode: 'insensitive' } }, { title: { contains: w, mode: 'insensitive' } }] }));
-    const rows = await prisma.legalReference.findMany({ where, orderBy: [{ issuedOn: { sort: 'desc', nulls: 'last' } }, { refNo: 'desc' }], take: 25 });
-    res.json(rows.map(r => ({ ...r, reference: fbrRefs.referenceText(r) })));
+    const orderBy = [{ issuedOn: { sort: 'desc', nulls: 'last' } }, { refNo: 'desc' }];
+    // The Act and the Rules first (a few editions, newest first), then SROs, circulars … — 25 in all
+    const law = where.source ? [] : await prisma.legalReference.findMany({ where: { ...where, source: { in: ['ACT', 'RULES'] } }, orderBy, take: 6 });
+    const rest = await prisma.legalReference.findMany({ where: where.source ? where : { ...where, source: { notIn: ['ACT', 'RULES'] } }, orderBy, take: 25 - law.length });
+    res.json([...law, ...rest].map(r => ({ ...r, reference: fbrRefs.referenceText(r) })));
 });
 async function legalStats() {
     const g = await prisma.legalReference.groupBy({ by: ['source'], _count: { _all: true }, _max: { fetchedAt: true } });
@@ -1483,7 +1513,7 @@ if (process.env.NODE_ENV !== 'test') {
     setInterval(() => legalSyncIfStale().catch(() => {}), 6 * 3600 * 1000);
 }
 
-// ---------- Guideline buttons on the client's Tax Rules page (admin edits them) ----------
+// ---------- Guideline buttons on the client's Items with Tax Rules page (admin edits them) ----------
 app.get('/api/guidelines', authenticateToken, async (req, res) => {
     const [links, note] = await Promise.all([
         prisma.guideLink.findMany({ orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }] }),
@@ -1521,18 +1551,25 @@ app.put('/api/admin/guidelines/note', authenticateToken, ADMIN, async (req, res)
 // are offered on the invoice form.
 function itemData(b) {
     // An item can have several prices (e.g. retail / wholesale); the first is also its unitPrice
+    // CA: every item field is required — each price needs a name and an amount, and an item needs at least one price
     let prices = Array.isArray(b.prices) ? b.prices : b.unitPrice !== '' && b.unitPrice != null ? [{ label: 'Price', price: b.unitPrice }] : [];
-    prices = prices.filter(x => x && x.price !== '' && x.price != null)
-        .map((x, i) => ({ label: String(x.label || '').trim().slice(0, 40) || `Price ${i + 1}`, price: Number(x.price) }));
+    prices = prices.filter(x => x && (String(x.label ?? '').trim() || (x.price !== '' && x.price != null)));
+    if (prices.some(x => !String(x.label ?? '').trim() || x.price === '' || x.price == null)) throw new HttpError(400, 'Each price needs a name and an amount.');
+    prices = prices.map(x => ({ label: String(x.label).trim().slice(0, 40), price: Number(x.price) }));
+    if (!prices.length) throw new HttpError(400, 'Add at least one price (name and amount).');
     if (prices.length > 100) throw new HttpError(400, 'An item can have up to 100 prices.');
     if (prices.some(x => !Number.isFinite(x.price) || x.price < 0)) throw new HttpError(400, 'Prices must be numbers of 0 or more.');
     const d = {
         name: String(b.name || '').trim(),
+        description: String(b.description ?? '').trim(),
+        notes: String(b.notes ?? '').trim(),
         hsCode: hs.normalizeCode(b.hsCode || ''),
         uoM: String(b.uoM || '').trim(),
         prices, unitPrice: prices.length ? prices[0].price : null,
     };
     if (!d.name || d.name.length > 200) throw new HttpError(400, 'Item name is required (max 200 characters).');
+    if (!d.description || d.description.length > 500) throw new HttpError(400, 'Item description is required (max 500 characters).');
+    if (!d.notes || d.notes.length > 1000) throw new HttpError(400, 'Item notes are required (max 1000 characters).');
     if (!hs.HS_FORMAT.test(d.hsCode)) throw new HttpError(400, 'HS code must look like 0101.2100');
     if (!d.uoM) throw new HttpError(400, 'UOM is required.');
     if (d.unitPrice !== null && (!Number.isFinite(d.unitPrice) || d.unitPrice < 0)) throw new HttpError(400, 'Unit price must be a non-negative number.');
@@ -1540,20 +1577,40 @@ function itemData(b) {
 }
 // notifiedRate: the notified price per unit (above or below the actual price). When set, the invoice uses it as the
 // line's rate (CA: "invoice should show the notified rate if applicable, else the normal rate"). Empty = none.
+// lawRefs: the documents the client read (Act, Rules, SROs, circulars …), each with their comment on the law.
+// The first one is what FBR gets as the SRO / Schedule no.; older callers send just sroScheduleNo.
+function lawRefsData(b) {
+    const text = (v, n) => String(v ?? '').trim().slice(0, n);
+    const list = Array.isArray(b.lawRefs) ? b.lawRefs : b.sroScheduleNo ? [{ reference: b.sroScheduleNo }] : [];
+    if (list.length > 20) throw new HttpError(400, 'At most 20 references per item.');
+    return list.map(x => ({
+        reference: text(x?.reference, 200), url: /^https?:\/\//i.test(String(x?.url || '')) ? text(x.url, 1000) : '',
+        source: text(x?.source, 20), comment: text(x?.comment, 2000),
+    })).filter(x => x.reference);
+}
+// Postgres stores JSON keys in its own order, so compare the values
+const refKey = list => JSON.stringify((Array.isArray(list) ? list : []).map(x => [x.reference, x.url, x.source, x.comment]));
+const sameLawRefs = (a, b) => refKey(a) === refKey(b);
+const taxKey = list => JSON.stringify((Array.isArray(list) ? list : []).map(x => [x.name, x.kind, Number(x.value), x.base, x.fbrField, refKey(x.refs), x.comment || '']));
+const sameExtraTaxes = (a, b) => taxKey(a) === taxKey(b);
 function taxRuleData(b, saleTypes) {
     const nr = b.notifiedRate === '' || b.notifiedRate == null ? null : Number(String(b.notifiedRate).replace(/,/g, ''));
+    const lawRefs = lawRefsData(b);
     const r = {
         saleType: String(b.saleType || '').trim(),
         rate: String(b.rate || '').trim().slice(0, 60),
-        sroScheduleNo: String(b.sroScheduleNo || '').trim().slice(0, 100),
+        sroScheduleNo: (lawRefs[0]?.reference || '').slice(0, 100),
         sroItemSerialNo: String(b.sroItemSerialNo || '').trim().slice(0, 50),
         notifiedRate: nr === null ? null : Math.round(nr * 100) / 100,
+        lawRefs,
+        taxComment: String(b.taxComment ?? '').trim().slice(0, 2000),
+        extraTaxes: (() => { try { return cleanExtraTaxes(b.extraTaxes); } catch (err) { throw new HttpError(400, err.message); } })(),
     };
     if (!saleTypes.includes(r.saleType)) throw new HttpError(400, 'Choose a sale type from the list.');
     if (nr !== null && !(nr > 0 && nr < 1e10)) throw new HttpError(400, 'Notified rate must be an amount per unit, more than 0 (or leave it empty).');
     if (!r.rate) throw new HttpError(400, 'Enter the tax rate, e.g. 18%, 10% or Exempt.');
-    if (SRO_REQUIRED_SALE_TYPES.has(r.saleType) && (!r.sroScheduleNo || !r.sroItemSerialNo)) {
-        throw new HttpError(400, `"${r.saleType}" needs the SRO / Schedule no. and the item serial no.`);
+    if (SRO_REQUIRED_SALE_TYPES.has(r.saleType) && !r.sroScheduleNo) {
+        throw new HttpError(400, `"${r.saleType}" needs a reference on the sales tax (the first one is sent to FBR).`);
     }
     return r;
 }
@@ -1579,7 +1636,7 @@ async function setTaxRule(req, product, r) {
         prisma.product.update({ where: { id: product.id }, data: { ...r, taxRuleAt: new Date() } }),
     ]);
     await audit(req, { action: 'product.tax_rule', entityType: 'Product', entityId: product.id,
-        summary: `Tax rule for "${product.name}": ${r.saleType}, ${r.rate}${r.notifiedRate != null ? `, notified rate ${r.notifiedRate} per unit` : ''}${r.sroScheduleNo ? `, ${r.sroScheduleNo} S.No ${r.sroItemSerialNo}` : ''}` });
+        summary: `Tax rule for "${product.name}": ${r.saleType}, ${r.rate}${r.extraTaxes?.length ? `, more taxes: ${r.extraTaxes.map(t => t.name).join(', ')}` : ''}${r.notifiedRate != null ? `, notified rate ${r.notifiedRate} per unit` : ''}${r.sroScheduleNo ? `, ${r.sroScheduleNo} S.No ${r.sroItemSerialNo}` : ''}` });
     return { rule, item: updated };
 }
 
@@ -1599,6 +1656,11 @@ app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT,
     const b = req.body || {}, tenantId = req.user.tenantId;
     const d = itemData(b);
     const rule = b.saleType || b.rate ? taxRuleData(b, (await saleTypeList(tenantId)).list) : null;
+    // The same HS code may be used again only with another sale type (CA)
+    if (rule) {
+        const dup = await prisma.product.findFirst({ where: { tenantId, hsCode: d.hsCode, saleType: rule.saleType, NOT: b.id ? { id: String(b.id) } : { name: d.name } }, select: { name: true } });
+        if (dup) throw new HttpError(409, `HS code ${d.hsCode} with sale type "${rule.saleType}" is already used by "${dup.name}".`);
+    }
     d.source = await hsSource(d.hsCode);
     try {
         let p;
@@ -1612,13 +1674,65 @@ app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT,
         await audit(req, { action: 'product.save', entityType: 'Product', entityId: p.id,
             summary: `Item "${p.name}" saved (${p.hsCode}, ${p.source === 'CUSTOMER' ? 'customer-created code' : 'official code'}${p.unitPrice != null ? `, Rs ${p.unitPrice}` : ''})` });
         const same = rule && p.saleType === rule.saleType && p.rate === rule.rate && p.sroScheduleNo === rule.sroScheduleNo
-            && p.sroItemSerialNo === rule.sroItemSerialNo && (p.notifiedRate == null ? null : Number(p.notifiedRate)) === rule.notifiedRate;
+            && p.sroItemSerialNo === rule.sroItemSerialNo && (p.notifiedRate == null ? null : Number(p.notifiedRate)) === rule.notifiedRate
+            && sameLawRefs(p.lawRefs, rule.lawRefs) && sameExtraTaxes(p.extraTaxes, rule.extraTaxes) && (p.taxComment || '') === rule.taxComment;
         if (rule && !same) p = (await setTaxRule(req, p, rule)).item;
         res.json(p);
     } catch (err) {
         if (err.code === 'P2002') throw new HttpError(400, `Another item is already named "${d.name}".`);
         throw err;
     }
+});
+
+// ---------- Items from the Excel template: check first, then import (all or nothing) ----------
+async function checkItemImport(tenantId, body) {
+    const [{ list: saleTypes }, existing, codes, refs] = await Promise.all([
+        saleTypeList(tenantId),
+        prisma.product.findMany({ where: { tenantId }, select: { name: true, hsCode: true, saleType: true } }),
+        prisma.hsCode.findMany({ select: { code: true } }),
+        prisma.legalReference.findMany({ select: { source: true, refNo: true, title: true, url: true } }),
+    ]);
+    // A reference typed in Excel is matched to FBR's list (its number or title) to keep the PDF link
+    const byText = new Map();
+    for (const r of refs) {
+        const ref = { reference: fbrRefs.referenceText(r).slice(0, 200), url: r.url, source: r.source };
+        for (const k of [ref.reference, r.refNo, r.title]) if (k && !byText.has(k.toLowerCase())) byText.set(k.toLowerCase(), ref);
+    }
+    return itemImport.checkImport(body || {}, {
+        saleTypes, existing, officialCodes: new Set(codes.map(c => c.code)),
+        findRef: t => byText.get(t.toLowerCase()) || null,
+    });
+}
+app.post('/api/products/import/check', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
+    const r = await checkItemImport(req.user.tenantId, req.body);
+    res.json({ errors: r.errors, warnings: r.warnings, ready: r.ready.length });
+});
+app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
+    const tenantId = req.user.tenantId;
+    const r = await checkItemImport(tenantId, req.body);
+    if (r.errors.length) return res.status(400).json({ error: 'The file has problems — check it again.', errors: r.errors, warnings: r.warnings });
+    const [t, { list: saleTypes }, codes] = await Promise.all([
+        prisma.tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { businessActivities: true, sector: true } }),
+        saleTypeList(tenantId),
+        prisma.hsCode.findMany({ select: { code: true } }),
+    ]);
+    const official = new Set(codes.map(c => c.code)), now = new Date(), industry = industryOf(t);
+    const products = [], rules = [];
+    for (const { item, rule } of r.ready) {
+        const d = itemData(item), tr = taxRuleData(rule, saleTypes), id = crypto.randomUUID();
+        products.push({ id, tenantId, ...d, source: official.has(d.hsCode) ? 'OFFICIAL' : 'CUSTOMER', ...tr, taxRuleAt: now });
+        rules.push({ ...tr, tenantId, productId: id, industry, createdBy: req.user.email, createdAt: now });
+    }
+    try {
+        // two statements in one transaction: every item and its first tax rule, or nothing
+        await prisma.$transaction([prisma.product.createMany({ data: products }), prisma.productTaxRule.createMany({ data: rules })]);
+    } catch (err) {
+        if (err.code === 'P2002') throw new HttpError(409, 'An item with one of these names was added meanwhile — check the file again.');
+        throw err;
+    }
+    await audit(req, { action: 'product.import', entityType: 'Product', entityId: null,
+        summary: `${products.length} item${products.length === 1 ? '' : 's'} with tax rules imported from Excel` });
+    res.json({ imported: products.length, warnings: r.warnings.length });
 });
 
 app.post('/api/products/:id/tax-rule', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
@@ -1653,6 +1767,10 @@ function buyerData(b) {
         registrationType: (b.registrationType ?? b.buyerRegistrationType) === 'Registered' ? 'Registered' : 'Unregistered',
         province: String(b.province ?? b.buyerProvince ?? '').trim(),
         address: String(b.address ?? b.buyerAddress ?? '').trim(),
+        // Contact details: mobile keeps a leading + and digits only (0300-1234567 → 03001234567)
+        mobile: String(b.mobile ?? '').trim().replace(/(?!^\+)[^\d]/g, ''),
+        email: String(b.email ?? '').trim().toLowerCase(),
+        note: String(b.note ?? '').trim(),
     };
     d.ntnCnic = d.ntn || d.cnic || null;
     if (!d.businessName || d.businessName.length > 200) throw new HttpError(400, 'Buyer name is required (max 200 characters).');
@@ -1660,6 +1778,10 @@ function buyerData(b) {
     if (d.cnic && d.cnic.length !== 13) throw new HttpError(400, 'CNIC must be 13 digits.');
     if (d.strn && ![7, 9, 13].includes(d.strn.length)) throw new HttpError(400, 'STRN must be 13 digits.');
     if (d.registrationType === 'Registered' && !d.ntnCnic) throw new HttpError(400, 'Registered buyer needs an NTN or CNIC.');
+    const mobileDigits = d.mobile.replace(/\D/g, '').length;
+    if (d.mobile && (mobileDigits < 10 || mobileDigits > 15)) throw new HttpError(400, 'Mobile number must be 10 to 15 digits (e.g. 03001234567).');
+    if (d.email && (d.email.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email))) throw new HttpError(400, 'Email address looks wrong.');
+    if (d.note.length > 500) throw new HttpError(400, 'Note can be at most 500 characters.');
     return d;
 }
 
@@ -1678,7 +1800,7 @@ const duplicateError = dup => new HttpError(409, `"${dup.businessName}" is alrea
 // After a filed invoice: remember a new buyer that has an NTN/CNIC. An existing buyer is never changed.
 async function rememberBuyer(tenantId, inv) {
     if (!inv.buyerNtnCnic) return;
-    const d = buyerData(inv);
+    const d = buyerData({ ...inv, ntn: inv.buyerNtn, cnic: inv.buyerCnic, strn: inv.buyerStrn, mobile: inv.buyerMobile, email: inv.buyerEmail, note: inv.buyerNote });
     if (!(await findDuplicateBuyer(tenantId, d))) await prisma.buyer.create({ data: { ...d, tenantId } });
 }
 
@@ -1688,8 +1810,9 @@ app.get('/api/buyers', authenticateToken, requireTenant, async (req, res) => {
     res.json(await prisma.buyer.findMany({
         where: {
             tenantId: req.user.tenantId,
-            ...(q && { OR: [{ businessName: { contains: q, mode: 'insensitive' } },
-                ...(digits ? [{ ntnCnic: { startsWith: digits } }, { ntn: { startsWith: digits } }, { cnic: { startsWith: digits } }, { strn: { startsWith: digits } }] : [])] }),
+            ...(q && { OR: [{ businessName: { contains: q, mode: 'insensitive' } }, { email: { contains: q, mode: 'insensitive' } }, { note: { contains: q, mode: 'insensitive' } }, { address: { contains: q, mode: 'insensitive' } }, { province: { contains: q, mode: 'insensitive' } },
+                ...(digits ? [{ ntnCnic: { startsWith: digits } }, { ntn: { startsWith: digits } }, { cnic: { startsWith: digits } }, { strn: { startsWith: digits } },
+                    { mobile: { contains: digits.replace(/^(92|0)/, '') } }] : [])] }),
         },
         orderBy: { businessName: 'asc' },
         take: q ? 20 : 1000,
@@ -1717,6 +1840,33 @@ app.post('/api/buyers', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, a
     await audit(req, { action: 'buyer.save', entityType: 'Buyer', entityId: b.id,
         summary: `Buyer "${b.businessName}" ${id ? 'updated' : 'added'}${[b.ntn && 'NTN ' + b.ntn, b.cnic && 'CNIC ' + b.cnic, b.strn && 'STRN ' + b.strn].filter(Boolean).map(x => ' · ' + x).join('')}` });
     res.json(b);
+});
+
+// Bulk import from the Excel template. A row whose NTN / CNIC / STRN (or, with no numbers, name) matches a saved
+// buyer updates that buyer — so an exported sheet can be edited and imported back. Each row is checked on its own.
+const BUYER_IMPORT_MAX = 2000;
+app.post('/api/buyers/import', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
+    const rows = req.body?.rows;
+    if (!Array.isArray(rows) || !rows.length) throw new HttpError(400, 'The file has no buyer rows.');
+    if (rows.length > BUYER_IMPORT_MAX) throw new HttpError(400, `At most ${BUYER_IMPORT_MAX} buyers per file.`);
+    const tenantId = req.user.tenantId, results = [];
+    for (const [i, r] of rows.entries()) {
+        const row = Number(r?.row) || i + 2; // Excel row number (row 1 is the headings)
+        try {
+            const d = buyerData(r || {});
+            const dup = await findDuplicateBuyer(tenantId, d);
+            if (dup) await prisma.buyer.update({ where: { id: dup.id }, data: d });
+            else await prisma.buyer.create({ data: { ...d, tenantId } });
+            results.push({ row, name: d.businessName, status: dup ? 'updated' : 'added' });
+        } catch (err) {
+            const msg = err.code === 'P2002' ? 'another saved buyer already has this NTN / CNIC' : err instanceof HttpError ? err.message : 'could not be saved';
+            results.push({ row, name: String(r?.businessName || ''), status: 'error', message: msg });
+        }
+    }
+    const count = s => results.filter(x => x.status === s).length;
+    await audit(req, { action: 'buyer.import', entityType: 'Buyer', entityId: null,
+        summary: `Buyers imported from Excel: ${count('added')} added, ${count('updated')} updated, ${count('error')} with errors` });
+    res.json({ results, added: count('added'), updated: count('updated'), errors: count('error') });
 });
 
 app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {

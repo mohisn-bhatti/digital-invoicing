@@ -38,8 +38,72 @@ function hasOverride(v) {
     return v !== null && v !== undefined && v !== '';
 }
 
+// "More taxes" set on the item's tax rule (CA). Each: { name, kind: PCT|FIXED, value, base, fbrField }.
+// base: one or more of VALUE (value excl. ST), SALES_TAX, TAX:<i> (an earlier extra tax), joined with "+" — the tax
+// is applied on their sum (CA: multi-select). VALUE_AFTER_TAX (older rules) = VALUE+SALES_TAX.
+// FIXED is the amount once on the line, whatever the quantity. FBR has no box per tax, so each goes into the box
+// the client chose; the receipt shows them by name.
+const EXTRA_TAX_BASES = ['VALUE', 'SALES_TAX'];
+const baseParts = base => [...new Set(String(base || 'VALUE').split('+').flatMap(x => x === 'VALUE_AFTER_TAX' ? ['VALUE', 'SALES_TAX'] : [x.trim()]).filter(Boolean))];
+const EXTRA_TAX_FIELDS = ['extraTax', 'fedPayable', 'furtherTax', 'salesTaxApplicable'];
+const MAX_EXTRA_TAXES = 10;
+function extraTaxDefs(v) {
+    if (typeof v === 'string') { try { v = v.trim() ? JSON.parse(v) : []; } catch { throw new Error('More taxes could not be read'); } }
+    return Array.isArray(v) ? v : [];
+}
+// Checks and cleans the list; throws a message the user can act on (who = "Item 2" or "Tax rule")
+function cleanExtraTaxes(v, who = 'Tax rule') {
+    const defs = extraTaxDefs(v);
+    if (defs.length > MAX_EXTRA_TAXES) throw new Error(`${who}: at most ${MAX_EXTRA_TAXES} more taxes`);
+    return defs.map((d, i) => {
+        const name = String(d?.name ?? '').trim().slice(0, 60);
+        const kind = d?.kind === 'FIXED' ? 'FIXED' : 'PCT';
+        const value = Number(d?.value);
+        const parts = kind === 'FIXED' ? [] : baseParts(d?.base);
+        const base = parts.join('+');
+        const fbrField = String(d?.fbrField || 'extraTax');
+        if (!name) throw new Error(`${who}: more tax ${i + 1} needs a name`);
+        if (!Number.isFinite(value) || value < 0) throw new Error(`${who}: "${name}" needs an amount of 0 or more`);
+        if (kind === 'PCT' && value > 1000) throw new Error(`${who}: "${name}" percent looks wrong`);
+        for (const part of parts) {
+            const ref = /^TAX:(\d+)$/.exec(part);
+            if (!EXTRA_TAX_BASES.includes(part) && !(ref && Number(ref[1]) < i)) {
+                throw new Error(`${who}: "${name}" can only be applied on a tax listed above it`);
+            }
+        }
+        if (!EXTRA_TAX_FIELDS.includes(fbrField)) throw new Error(`${who}: "${name}" — choose which FBR box it goes in`);
+        // The law the client read for this tax (record only; FBR gets the sales tax's reference)
+        const refs = (Array.isArray(d?.refs) ? d.refs : []).slice(0, 20).map(r => ({
+            reference: String(r?.reference ?? '').trim().slice(0, 200),
+            url: /^https?:\/\//i.test(String(r?.url || '')) ? String(r.url).trim().slice(0, 1000) : '',
+            source: String(r?.source ?? '').trim().slice(0, 20),
+        })).filter(r => r.reference);
+        const comment = String(d?.comment ?? '').trim().slice(0, 2000);
+        return { name, kind, value: round2(value), base, fbrField, refs, comment };
+    });
+}
+// Amounts for one line. salesTax = the line's own sales tax (before any extra tax is added to that box).
+function calcExtraTaxes(defs, { valueSalesExcludingST, salesTax }) {
+    const amounts = [];
+    return defs.map((d, i) => {
+        let amount;
+        if (d.kind === 'FIXED') amount = d.value;
+        else {
+            const base = baseParts(d.base).reduce((sum, part) => {
+                const ref = /^TAX:(\d+)$/.exec(part);
+                return sum + (ref ? amounts[Number(ref[1])] : part === 'SALES_TAX' ? salesTax : valueSalesExcludingST);
+            }, 0);
+            amount = round2(base * d.value / 100);
+        }
+        amounts[i] = amount;
+        return { name: d.name, amount, fbrField: d.fbrField };
+    });
+}
+
 function calcItem(raw, { buyerRegistrationType, furtherTaxRate, endConsumer = false, buyerNonAtl = false }) {
     const quantity = num(raw.quantity);
+    // a missing rate is an error, not Rs 0 (the invoice's rate box is read-only, so the browser doesn't check it)
+    if (raw.unitPrice === '' || raw.unitPrice === null || raw.unitPrice === undefined) throw new Error(`Item ${raw.sNo || ''}: rate (per unit) is missing — the item needs a price`);
     const unitPrice = num(raw.unitPrice);
     const discount = num(raw.discount);
     const fixedNotifiedValueOrRetailPrice = num(raw.fixedNotifiedValueOrRetailPrice);
@@ -75,7 +139,13 @@ function calcItem(raw, { buyerRegistrationType, furtherTaxRate, endConsumer = fa
         throw new Error(`Item ${raw.sNo || ''}: tax overrides must be numbers`);
     }
 
-    const totalValues = round2(valueSalesExcludingST + salesTaxApplicable + furtherTax + extraTax + fedPayable);
+    // More taxes from the item's tax rule, each added into the FBR box chosen for it
+    const extraTaxes = cleanExtraTaxes(raw.extraTaxes, `Item ${raw.sNo || ''}`);
+    const extraTaxDetail = calcExtraTaxes(extraTaxes, { valueSalesExcludingST, salesTax: salesTaxApplicable });
+    const box = { salesTaxApplicable, furtherTax, extraTax: round2(extraTax), fedPayable: round2(fedPayable) };
+    for (const t of extraTaxDetail) box[t.fbrField] = round2(box[t.fbrField] + t.amount);
+
+    const totalValues = round2(valueSalesExcludingST + box.salesTaxApplicable + box.furtherTax + box.extraTax + box.fedPayable);
 
     return {
         sNo: raw.sNo,
@@ -87,9 +157,10 @@ function calcItem(raw, { buyerRegistrationType, furtherTaxRate, endConsumer = fa
         sroScheduleNo: String(raw.sroScheduleNo || '').trim(),
         sroItemSerialNo: String(raw.sroItemSerialNo || '').trim(),
         quantity, unitPrice, discount, fixedNotifiedValueOrRetailPrice,
-        extraTax: round2(extraTax), fedPayable: round2(fedPayable),
+        extraTax: box.extraTax, fedPayable: box.fedPayable,
         salesTaxWithheldAtSource: round2(salesTaxWithheldAtSource),
-        valueSalesExcludingST, salesTaxApplicable, furtherTax, totalValues,
+        valueSalesExcludingST, salesTaxApplicable: box.salesTaxApplicable, furtherTax: box.furtherTax, totalValues,
+        extraTaxes, extraTaxDetail,
     };
 }
 
@@ -118,8 +189,9 @@ function calcInvoice(items, ctx, invoiceDiscount = 0) {
             if (!l[f]) throw new Error(`Item ${l.sNo}: ${f} is required`);
         }
         if (!/^\d{4}\.\d{4}$/.test(l.hsCode)) throw new Error(`Item ${l.sNo}: HS code must look like 0101.2100`);
-        if (SRO_REQUIRED_SALE_TYPES.has(l.saleType) && (!l.sroScheduleNo || !l.sroItemSerialNo)) {
-            throw new Error(`Item ${l.sNo}: "${l.saleType}" needs the SRO / Schedule no. and item serial (e.g. 6th Schedule Table I, 176(i)) — set it on the item's tax rule`);
+        // CA: no serial box — only the SRO / Schedule no. is required; the serial is sent when the item has one
+        if (SRO_REQUIRED_SALE_TYPES.has(l.saleType) && !l.sroScheduleNo) {
+            throw new Error(`Item ${l.sNo}: "${l.saleType}" needs the SRO / Schedule no. (e.g. 6th Schedule Table I) — add a reference on the item's sales tax`);
         }
     }
     const sum = f => round2(lines.reduce((a, l) => a + l[f], 0));
@@ -134,4 +206,4 @@ function calcInvoice(items, ctx, invoiceDiscount = 0) {
     };
 }
 
-module.exports = { calcInvoice, calcItem, spreadDiscount, ratePercent, round2, SRO_REQUIRED_SALE_TYPES, WHOLE_NUMBER_UOMS, isWholeNumberUom };
+module.exports = { calcInvoice, calcItem, spreadDiscount, cleanExtraTaxes, calcExtraTaxes, ratePercent, round2, SRO_REQUIRED_SALE_TYPES, WHOLE_NUMBER_UOMS, isWholeNumberUom };

@@ -268,3 +268,75 @@ test('one invoice discount is split over the lines by value and taxed on the net
     assert.throws(() => calcInvoice(items, { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }, 2000), /more than the invoice value/);
     assert.strictEqual(calcInvoice(items, { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }, '').totals.totalExclST, 1100);
 });
+
+// "More taxes" on the item's tax rule — the examples in the plan (Sugar 3 × 1,000, 18%, registered buyer)
+const sugar = { ...base, quantity: 3, unitPrice: 1000, rate: '18%' };
+const reg = { buyerRegistrationType: 'Registered', furtherTaxRate: 4 };
+const one = extra => calcInvoice([{ ...sugar, extraTaxes: extra }], reg).lines[0];
+
+test('more taxes: % on value, value after tax, sales tax; fixed; tax on tax; each FBR box', () => {
+    let l = one([{ name: 'Withholding', kind: 'PCT', value: 2, base: 'VALUE', fbrField: 'extraTax' }]);
+    assert.strictEqual(l.extraTax, 60); assert.strictEqual(l.totalValues, 3600);
+    l = one([{ name: 'Levy', kind: 'PCT', value: 1, base: 'VALUE_AFTER_TAX', fbrField: 'extraTax' }]);
+    assert.strictEqual(l.extraTax, 35.4); assert.strictEqual(l.totalValues, 3575.4);
+    l = one([{ name: 'Surcharge', kind: 'PCT', value: 10, base: 'SALES_TAX', fbrField: 'fedPayable' }]);
+    assert.strictEqual(l.fedPayable, 54); assert.strictEqual(l.totalValues, 3594);
+    l = one([{ name: 'Municipal', kind: 'FIXED', value: 5500, fbrField: 'extraTax' }]);
+    assert.strictEqual(l.extraTax, 5500); assert.strictEqual(l.totalValues, 9040);
+    const ten = calcInvoice([{ ...sugar, quantity: 10, extraTaxes: [{ name: 'Municipal', kind: 'FIXED', value: 5500 }] }], reg).lines[0];
+    assert.strictEqual(ten.extraTax, 5500); // fixed: not × quantity
+    l = one([{ name: 'Withholding', kind: 'PCT', value: 2, base: 'VALUE', fbrField: 'extraTax' },
+        { name: 'Cess', kind: 'PCT', value: 5, base: 'TAX:0', fbrField: 'extraTax' }]);
+    assert.strictEqual(l.extraTax, 63); assert.strictEqual(l.totalValues, 3603);
+    assert.deepStrictEqual(l.extraTaxDetail.map(t => t.amount), [60, 3]);
+    l = one([{ name: 'Additional ST', kind: 'PCT', value: 3, base: 'VALUE', fbrField: 'salesTaxApplicable' }]);
+    assert.strictEqual(l.salesTaxApplicable, 630); assert.strictEqual(l.totalValues, 3630);
+    l = one([{ name: 'Extra further', kind: 'PCT', value: 4, base: 'VALUE', fbrField: 'furtherTax' }]);
+    assert.strictEqual(l.furtherTax, 120); assert.strictEqual(l.totalValues, 3660);
+    // sent as JSON text from the invoice form
+    assert.strictEqual(calcInvoice([{ ...sugar, extraTaxes: JSON.stringify([{ name: 'W', kind: 'PCT', value: 2, base: 'VALUE' }]) }], reg).lines[0].extraTax, 60);
+});
+
+test('more taxes: worked example and the full invoice from the plan', () => {
+    const defs = [{ name: 'Withholding', kind: 'PCT', value: 2, base: 'VALUE', fbrField: 'extraTax' },
+        { name: 'Municipal', kind: 'FIXED', value: 50, fbrField: 'extraTax' },
+        { name: 'Surcharge', kind: 'PCT', value: 10, base: 'SALES_TAX', fbrField: 'fedPayable' },
+        { name: 'Cess', kind: 'PCT', value: 1, base: 'TAX:0', fbrField: 'extraTax' }];
+    const w = calcInvoice([{ ...sugar, quantity: 2, extraTaxes: defs }], reg).lines[0];
+    assert.strictEqual(w.extraTax, 90.4); assert.strictEqual(w.fedPayable, 36); assert.strictEqual(w.totalValues, 2486.4);
+
+    const a = { ...sugar, extraTaxes: [defs[0], { name: 'Municipal', kind: 'FIXED', value: 5500, fbrField: 'extraTax' }, defs[2]] };
+    const b = { ...base, hsCode: '1006.3010', saleType: 'Exempt Goods', rate: 'Exempt', quantity: 10, unitPrice: 150, sroScheduleNo: '6th Schd Table I', sroItemSerialNo: '19' };
+    const { lines, totals } = calcInvoice([a, b], { buyerRegistrationType: 'Unregistered', endConsumer: false, furtherTaxRate: 4 }, 300);
+    assert.deepStrictEqual([lines[0].valueSalesExcludingST, lines[0].salesTaxApplicable, lines[0].furtherTax, lines[0].extraTax, lines[0].fedPayable, lines[0].totalValues],
+        [2800, 504, 112, 5556, 50.4, 9022.4]);
+    assert.strictEqual(lines[1].totalValues, 1400);
+    assert.strictEqual(totals.totalAmount, 10422.4);
+});
+
+test('more taxes: bad definitions are refused', () => {
+    assert.throws(() => one([{ name: 'A', kind: 'PCT', value: 1, base: 'TAX:0' }]), /listed above it/);
+    assert.throws(() => one([{ name: '', kind: 'PCT', value: 1, base: 'VALUE' }]), /needs a name/);
+    assert.throws(() => one([{ name: 'A', kind: 'FIXED', value: -5 }]), /0 or more/);
+    assert.throws(() => one([{ name: 'A', kind: 'PCT', value: 1, base: 'VALUE', fbrField: 'discount' }]), /FBR box/);
+});
+
+test('more taxes: several bases ticked — the tax is on their sum', () => {
+    const t = (base, value = 1) => one([{ name: 'W', kind: 'PCT', value: 2, base: 'VALUE' }, { name: 'X', kind: 'PCT', value, base }]).extraTaxDetail[1].amount;
+    assert.strictEqual(t('VALUE+SALES_TAX'), 35.4); // = value after tax, 1% × 3,540
+    assert.strictEqual(t('VALUE_AFTER_TAX'), 35.4); // older rules read the same
+    assert.strictEqual(t('SALES_TAX+TAX:0', 10), 60); // 10% × (540 + 60)
+    assert.strictEqual(t('VALUE+SALES_TAX+TAX:0', 10), 360); // 10% × (3,000 + 540 + 60)
+    assert.strictEqual(t('VALUE+VALUE'), 30); // the same base twice counts once
+    assert.throws(() => one([{ name: 'A', kind: 'PCT', value: 1, base: 'VALUE+TAX:0' }]), /listed above it/);
+});
+
+test('exempt line needs only the SRO / Schedule no. (no serial box — CA)', () => {
+    const ex = { ...base, hsCode: '1006.3010', saleType: 'Exempt Goods', rate: 'Exempt', quantity: 1, unitPrice: 100 };
+    assert.throws(() => calcInvoice([ex], { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }), /SRO \/ Schedule no/);
+    assert.doesNotThrow(() => calcInvoice([{ ...ex, sroScheduleNo: '6th Schd Table I' }], { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }));
+});
+
+test('a line without a rate is refused (not filed at Rs 0)', () => {
+    assert.throws(() => calcInvoice([{ ...base, quantity: 1, unitPrice: '', rate: '18%' }], { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }), /rate \(per unit\) is missing/);
+});

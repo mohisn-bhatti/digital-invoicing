@@ -104,7 +104,13 @@ model Invoice {
   reason                String        @default("")
   reasonRemarks         String        @default("")
   scenarioId            String?
-  buyerNtnCnic          String        @default("")
+  buyerNtnCnic          String        @default("") // sent to FBR: the NTN if there is one, else the CNIC
+  buyerNtn              String        @default("")
+  buyerCnic             String        @default("")
+  buyerStrn             String        @default("")
+  buyerMobile           String        @default("")
+  buyerEmail            String        @default("")
+  buyerNote             String        @default("")
   buyerBusinessName     String
   buyerProvince         String
   buyerAddress          String
@@ -165,6 +171,8 @@ model Product {
   tenantId        String
   tenant          Tenant   @relation(fields: [tenantId], references: [id])
   name            String
+  description     String   @default("")
+  notes           String   @default("")
   hsCode          String
   source          String   @default("OFFICIAL") // OFFICIAL = picked from the FBR/PCT HS list; CUSTOMER = code typed by the client
   uoM             String
@@ -175,6 +183,9 @@ model Product {
   rate            String   @default("")
   sroScheduleNo   String   @default("")
   sroItemSerialNo String   @default("")
+  lawRefs         Json     @default("[]") // [{ reference, url, source, comment }] — the first is sent to FBR as the SRO / Schedule no.
+  taxComment      String   @default("") // the client's note on the law for the sales tax (one per tax)
+  extraTaxes      Json     @default("[]") // more taxes: [{ name, kind: PCT|FIXED, value, base, fbrField }] — src/tax.js
   notifiedRate    Decimal? @db.Decimal(14, 2) // notified price per unit; tax is charged on it instead of the actual price
   taxRuleAt       DateTime?
   taxRules        ProductTaxRule[]
@@ -195,6 +206,9 @@ model ProductTaxRule {
   rate            String
   sroScheduleNo   String   @default("")
   sroItemSerialNo String   @default("")
+  lawRefs         Json     @default("[]") // [{ reference, url, source, comment }] — the first is sent to FBR as the SRO / Schedule no.
+  taxComment      String   @default("") // the client's note on the law for the sales tax (one per tax)
+  extraTaxes      Json     @default("[]") // more taxes: [{ name, kind: PCT|FIXED, value, base, fbrField }] — src/tax.js
   notifiedRate    Decimal? @db.Decimal(14, 2)
   industry        String   @default("") // client's business nature / sector at the time (as chosen in IRIS)
   createdBy       String   @default("")
@@ -217,6 +231,9 @@ model Buyer {
   registrationType String   @default("Unregistered")
   province         String   @default("")
   address          String   @default("")
+  mobile           String   @default("")
+  email            String   @default("")
+  note             String   @default("")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -251,6 +268,8 @@ model InvoiceItem {
   extraTax                        Decimal @default(0) @db.Decimal(14, 2)
   furtherTax                      Decimal @default(0) @db.Decimal(14, 2)
   fedPayable                      Decimal @default(0) @db.Decimal(14, 2)
+  extraTaxes                      Json    @default("[]") // the item's more taxes when filed
+  extraTaxDetail                  Json    @default("[]") // [{ name, amount, fbrField }] — shown by name on the receipt
   discount                        Decimal @default(0) @db.Decimal(14, 2)
   totalValues                     Decimal @db.Decimal(14, 2)
   saleType                        String
@@ -386,7 +405,7 @@ model AppSetting {
 // SROs, circulars, general orders and notices from fbr.gov.pk, copied daily so the Tax Rules page can search them
 model LegalReference {
   id        String    @id @default(uuid())
-  source    String    // SRO, CIRCULAR, GENERAL_ORDER, NOTICE
+  source    String    // ACT, RULES (Sales Tax Act / Rules editions), SRO, CIRCULAR, GENERAL_ORDER, NOTICE
   refNo     String    @default("") // e.g. "1751(I)/2026", "Circular No. 01 of 2026 (Sales Tax)"
   title     String
   issuedOn  DateTime?

@@ -1,4 +1,4 @@
-// Copy FBR's public lists of sales tax SROs, circulars, general orders and notices into LegalReference, so the
+// Copy FBR's public lists of the Sales Tax Act and Rules, SROs, circulars, general orders and notices into LegalReference, so the
 // Tax Rules page can search them (CA's Final Outlook, step 3 point 5). Read from fbr.gov.pk the same way its own pages do;
 // these are public pages, so this does not go through the FBR_PROXY_URL static-IP proxy.
 const axios = require('axios');
@@ -35,21 +35,37 @@ async function fetchOrders(categoryId, source) {
     return rows.map(r => ({ source, refNo: clean(r.DocumentNumber), title: clean(r.DocumentTitle), issuedOn: msDate(r.CreationDate), url: String(r.UploadedFile1 || '').trim() }));
 }
 
-// The notice board is a plain HTML table: S.No | title (link to the PDF). No dates.
-async function fetchNotices() {
-    const res = await http.get(`${BASE}/categ/admin-notice-board/444`, { responseType: 'text' });
+// "Sales Tax Act 1990 amended upto 30-06-2026", "... updated upto 31st July, 2026" → that date (the edition), else null
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+function editionDate(title) {
+    const t = String(title).replace(/^.*?\bup\s*to\b/i, '');
+    let m = /(\d{1,2})[-./](\d{1,2})[-./](\d{4})/.exec(t);
+    if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
+    m = /(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3})[a-z]*,?\s+(\d{4})/i.exec(t);
+    if (m && MONTHS.includes(m[2].toLowerCase())) return new Date(Date.UTC(+m[3], MONTHS.indexOf(m[2].toLowerCase()), +m[1]));
+    return null;
+}
+
+// The notice board and the Sales Tax Act / Rules pages are plain HTML tables: S.No | title (link to the PDF). No dates.
+async function fetchTable(path, source) {
+    const res = await http.get(`${BASE}${path}`, { responseType: 'text' });
     const out = [];
     for (const tr of String(res.data).match(/<tr[\s\S]*?<\/tr>/g) || []) {
         const url = (/href="([^"]+\.pdf)"/i.exec(tr) || [])[1];
         const cells = (tr.match(/<td[\s\S]*?<\/td>/g) || []).map(clean);
-        if (url && cells.length >= 2) out.push({ source: 'NOTICE', refNo: '', title: cells[1] || cells[0], issuedOn: null, url: url.startsWith('http') ? url : BASE + url });
+        const title = cells[1] || cells[0];
+        if (url && cells.length >= 2) out.push({ source, refNo: '', title, issuedOn: source === 'NOTICE' ? null : editionDate(title), url: url.startsWith('http') ? url : BASE + url });
     }
     return out;
 }
 
 // Returns counts per source; a source that fails keeps its previous rows
 async function sync(prisma) {
-    const jobs = { SRO: fetchSros, CIRCULAR: () => fetchOrders(180, 'CIRCULAR'), GENERAL_ORDER: () => fetchOrders(151, 'GENERAL_ORDER'), NOTICE: fetchNotices };
+    const jobs = {
+        ACT: () => fetchTable('/categ/sales-tax-act/301', 'ACT'), RULES: () => fetchTable('/categ/sales-tax-rules-2006/302', 'RULES'),
+        SRO: fetchSros, CIRCULAR: () => fetchOrders(180, 'CIRCULAR'), GENERAL_ORDER: () => fetchOrders(151, 'GENERAL_ORDER'),
+        NOTICE: () => fetchTable('/categ/admin-notice-board/444', 'NOTICE'),
+    };
     const result = {};
     for (const [source, job] of Object.entries(jobs)) {
         try {
@@ -81,4 +97,4 @@ function referenceText(r) {
     return r.refNo || r.title;
 }
 
-module.exports = { sync, referenceText, msDate };
+module.exports = { sync, referenceText, msDate, editionDate };
