@@ -257,3 +257,14 @@ test('HS tax rules: every matching rule, most specific first; fill in only an un
     assert.strictEqual(autoRule(matchRules(rules, '0101.2100')).prefix, '01');
     assert.deepStrictEqual(matchRules(rules, '8471.3010'), []);
 });
+
+test('one invoice discount is split over the lines by value and taxed on the net', () => {
+    const items = [{ ...base, quantity: 1, unitPrice: 200, rate: '18%' }, { ...base, quantity: 1, unitPrice: 900, rate: '18%' }];
+    const { lines, totals } = calcInvoice(items, { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }, 100);
+    assert.strictEqual(lines[0].discount, 18.18);
+    assert.strictEqual(lines[1].discount, 81.82);
+    assert.strictEqual(totals.totalExclST, 1000);
+    assert.strictEqual(totals.totalST, 180);
+    assert.throws(() => calcInvoice(items, { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }, 2000), /more than the invoice value/);
+    assert.strictEqual(calcInvoice(items, { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }, '').totals.totalExclST, 1100);
+});

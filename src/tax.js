@@ -93,16 +93,33 @@ function calcItem(raw, { buyerRegistrationType, furtherTaxRate, endConsumer = fa
     };
 }
 
-function calcInvoice(items, ctx) {
+// One discount for the whole invoice, split over the lines by their value (qty × price) — FBR takes it per line.
+// The last line gets the rounding remainder so the parts add up exactly.
+function spreadDiscount(items, invoiceDiscount) {
+    const total = num(invoiceDiscount);
+    if (Number.isNaN(total) || total < 0) throw new Error('Discount must be a non-negative number');
+    if (!total) return items;
+    const gross = items.map(it => round2(num(it.quantity) * num(it.unitPrice)));
+    const sumGross = round2(gross.reduce((a, g) => a + (Number.isFinite(g) ? g : 0), 0));
+    if (total > sumGross) throw new Error(`Discount (${total.toFixed(2)}) is more than the invoice value (${sumGross.toFixed(2)})`);
+    let left = total;
+    return items.map((it, i) => {
+        const share = i === items.length - 1 ? round2(left) : round2(total * gross[i] / sumGross);
+        left = round2(left - share);
+        return { ...it, discount: round2(num(it.discount) + share) };
+    });
+}
+
+function calcInvoice(items, ctx, invoiceDiscount = 0) {
     if (!Array.isArray(items) || items.length === 0) throw new Error('Add at least one item');
-    const lines = items.map((it, i) => calcItem({ ...it, sNo: i + 1 }, ctx));
+    const lines = spreadDiscount(items, invoiceDiscount).map((it, i) => calcItem({ ...it, sNo: i + 1 }, ctx));
     for (const l of lines) {
         for (const f of ['hsCode', 'productDescription', 'rate', 'uoM', 'saleType']) {
             if (!l[f]) throw new Error(`Item ${l.sNo}: ${f} is required`);
         }
         if (!/^\d{4}\.\d{4}$/.test(l.hsCode)) throw new Error(`Item ${l.sNo}: HS code must look like 0101.2100`);
         if (SRO_REQUIRED_SALE_TYPES.has(l.saleType) && (!l.sroScheduleNo || !l.sroItemSerialNo)) {
-            throw new Error(`Item ${l.sNo}: "${l.saleType}" needs the SRO / Schedule no. and item serial (e.g. 6th Schedule Table I, 176(i)) — under More`);
+            throw new Error(`Item ${l.sNo}: "${l.saleType}" needs the SRO / Schedule no. and item serial (e.g. 6th Schedule Table I, 176(i)) — set it on the item's tax rule`);
         }
     }
     const sum = f => round2(lines.reduce((a, l) => a + l[f], 0));
@@ -117,4 +134,4 @@ function calcInvoice(items, ctx) {
     };
 }
 
-module.exports = { calcInvoice, calcItem, ratePercent, round2, SRO_REQUIRED_SALE_TYPES, WHOLE_NUMBER_UOMS, isWholeNumberUom };
+module.exports = { calcInvoice, calcItem, spreadDiscount, ratePercent, round2, SRO_REQUIRED_SALE_TYPES, WHOLE_NUMBER_UOMS, isWholeNumberUom };

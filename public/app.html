@@ -271,6 +271,22 @@
       </ul>
     </div>
   </div>
+  <div data-page="a-itemrules" class="page hidden space-y-6">
+    <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
+      <h2 class="font-semibold">Tax rules data bank <span class="text-xs font-normal text-slate-500">— every client's tax rules against their items. User name and industry come from each client's DI settings; the rest is as the client set it.</span></h2>
+      <div class="flex flex-wrap items-end gap-3">
+        <label class="block min-w-[16rem]"><span>Search</span><input id="ibQ" placeholder="Item, HS code, sale type, rate or SRO" autocomplete="off"></label>
+        <label><span>User</span><select id="ibUser"></select></label>
+        <label><span>Industry</span><select id="ibIndustry"></select></label>
+        <label><span>Sale type</span><select id="ibSaleType"></select></label>
+        <button type="button" onclick="exportItemBank()" class="border rounded px-3 py-1.5 text-xs">Download CSV</button>
+        <span id="ibCount" class="text-xs text-slate-500 pb-2"></span>
+      </div>
+      <div class="overflow-x-auto"><table class="w-full text-xs">
+        <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">User name</th><th>User industry</th><th>Item</th><th>HS code</th><th>Sale type</th><th>Rate</th><th>Notified rate</th><th>SRO / Schedule</th><th>Item Sr.</th><th>Set on</th></tr></thead>
+        <tbody id="ibRows"></tbody></table></div>
+    </div>
+  </div>
   <div data-page="a-activity" class="page hidden space-y-6">
   <div id="aAuditBox" class="bg-white rounded-xl shadow">
     <h2 class="p-5 pb-3 font-semibold">Activity log <span class="text-xs font-normal text-slate-500">— who did what; entries can't be edited or deleted</span></h2>
@@ -410,13 +426,14 @@
       <section>
         <div class="flex items-center justify-between mb-2">
           <h3 class="font-medium text-sm">Invoice Details <span class="text-xs font-normal text-slate-500">— one box per item</span></h3>
-          <button type="button" onclick="addItem()" class="text-sm text-emerald-700 font-medium">+ Add item</button>
+          <button type="button" onclick="addItem().querySelector('[name=productDescription]').focus()" class="text-sm text-emerald-700 font-medium">+ Add item</button>
         </div>
         <div id="items" class="space-y-3"></div>
       </section>
 
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm bg-slate-50 rounded p-3">
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm bg-slate-50 rounded p-3">
         <div>Value of Sales Excl. ST<div id="tExcl" class="font-semibold">0.00</div></div>
+        <label class="!text-sm"><span class="!text-sm !text-slate-900">Discount <span class="text-slate-400 text-xs">(whole invoice)</span></span><input name="discount" type="number" step="0.01" min="0" placeholder="0" class="!py-1 max-w-[9rem]"><span id="discountHint" class="block text-xs text-slate-500"></span></label>
         <div>Sales Tax / FED in ST<div id="tST" class="font-semibold">0.00</div></div>
         <div>Further Tax<div id="tFT" class="font-semibold">0.00</div></div>
         <div>Value incl. Sales Tax<div id="tTotal" class="font-bold text-emerald-700 text-base">0.00</div></div>
@@ -745,6 +762,7 @@ const NAV = {
     { id: 'a-clients', label: 'Clients', icon: 'building', crumb: 'Clients' },
     { id: 'a-client', label: 'Manage client', crumb: 'Clients', parent: 'a-clients' },
     { id: 'a-reports', label: 'Reports (Annex-C)', icon: 'chart', crumb: 'Reports' },
+    { id: 'a-itemrules', label: 'Tax Rules Data Bank', icon: 'layers', crumb: 'Reports' },
     { id: 'a-activity', label: 'Activity Log', icon: 'clock', crumb: 'Compliance' },
     { id: 'a-leads', label: 'Website Enquiries', icon: 'mail', crumb: 'Website' },
     { id: 'a-system', label: 'System', icon: 'cog', crumb: 'Settings' },
@@ -755,7 +773,7 @@ const PAGE_ENTER = {
   'c-drafts': () => loadDrafts(), 'c-taxrules': () => loadItemRules(),
   'c-products': () => loadSaved(), 'c-buyers': () => loadSaved(), 'c-users': () => loadUsers('c'), 'c-stock': () => loadStock(),
   'a-dashboard': () => loadAdminDash(), 'a-clients': () => loadClients(), 'a-reports': () => fillReportClients(),
-  'a-activity': () => loadAudit('a'), 'a-leads': () => loadLeads(), 'a-system': () => loadSystem(),
+  'a-itemrules': () => loadItemBank(), 'a-activity': () => loadAudit('a'), 'a-leads': () => loadLeads(), 'a-system': () => loadSystem(),
 };
 const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : NAV.client.filter(n => !n.roles || n.roles.includes(S.tenantRole || 'OWNER'));
 const canManage = () => ['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER'); // cashier can't
@@ -1306,7 +1324,9 @@ async function initClient() {
     if (!clientReady) setupInvoiceForm();
     clientReady = true;
     applyEnv();
-    $('#originProvince').textContent = provinceLabel(S.settings.sellerProvince) || '—';
+    // From the client's DI settings (seller province, set by the administrator at onboarding)
+    $('#originProvince').innerHTML = S.settings.sellerProvince ? esc(provinceLabel(S.settings.sellerProvince))
+      : '<span class="text-amber-700 font-normal">Not set yet — your administrator adds it in your DI settings</span>';
     showNextInvoiceNo();
     route();
   } catch (err) { toast(err.message); }
@@ -1428,45 +1448,73 @@ $('#settingsForm').addEventListener('submit', async e => {
   } catch (err) { toast(err.message); }
 });
 
+/* ---------- Tax rules data bank (admin) ---------- */
+async function loadItemBank() {
+  try {
+    S.itemBank = await api('/api/admin/item-tax-rules');
+    const opts = (el, label, vals) => { const cur = el.value; el.innerHTML = `<option value="">${label}</option>` + [...new Set(vals)].filter(Boolean).sort().map(v => `<option>${esc(v)}</option>`).join(''); el.value = cur; };
+    opts($('#ibUser'), 'All users', S.itemBank.map(r => r.userName));
+    opts($('#ibIndustry'), 'All industries', S.itemBank.map(r => r.industry));
+    opts($('#ibSaleType'), 'All sale types', S.itemBank.map(r => r.saleType));
+    if (!S.itemBankReady) {
+      S.itemBankReady = true;
+      $('#ibQ').addEventListener('input', renderItemBank);
+      for (const id of ['#ibUser', '#ibIndustry', '#ibSaleType']) $(id).addEventListener('change', renderItemBank);
+    }
+    renderItemBank();
+  } catch (err) { toast(err.message); }
+}
+function itemBankRows() {
+  const q = $('#ibQ').value.trim().toLowerCase(), u = $('#ibUser').value, ind = $('#ibIndustry').value, st = $('#ibSaleType').value;
+  return (S.itemBank || []).filter(r => (!u || r.userName === u) && (!ind || r.industry === ind) && (!st || r.saleType === st)
+    && (!q || [r.name, r.hsCode, r.saleType, r.rate, r.sroScheduleNo, r.sroItemSerialNo].some(v => String(v || '').toLowerCase().includes(q))));
+}
+function renderItemBank() {
+  const rows = itemBankRows();
+  $('#ibCount').textContent = `${rows.length} of ${(S.itemBank || []).length} rules`;
+  $('#ibRows').innerHTML = rows.map(r => `<tr class="border-b last:border-0 align-top">
+    <td class="py-1">${esc(r.userName)}</td><td>${esc(r.industry) || '<span class="text-slate-400">not set</span>'}</td><td>${esc(r.name)}</td>
+    <td class="font-mono">${esc(r.hsCode)}</td><td>${esc(r.saleType)}</td><td>${esc(r.rate)}</td><td>${r.notifiedRate != null ? money(r.notifiedRate) + '/unit' : '—'}</td>
+    <td>${esc(r.sroScheduleNo)}</td><td>${esc(r.sroItemSerialNo)}</td><td class="whitespace-nowrap">${r.taxRuleAt ? fmtDate(r.taxRuleAt) : ''}</td></tr>`).join('')
+    || '<tr><td colspan="10" class="py-3 text-slate-500">No tax rules match.</td></tr>';
+}
+function exportItemBank() {
+  const cols = [['userName', 'User name'], ['industry', 'User industry'], ['name', 'Item'], ['hsCode', 'HS code'], ['saleType', 'Sale type'], ['rate', 'Rate'],
+    ['notifiedRate', 'Notified rate'], ['sroScheduleNo', 'SRO / Schedule'], ['sroItemSerialNo', 'Item Sr.'], ['taxRuleAt', 'Set on']];
+  const cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = [cols.map(c => cell(c[1])).join(','), ...itemBankRows().map(r => cols.map(([k]) => cell(r[k])).join(','))].join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' }));
+  a.download = 'tax-rules-data-bank.csv'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 /* ---------- Invoice form ---------- */
 const SALE_TYPES = () => S.saleTypes || [...new Set(S.meta.scenarios.map(s => s.saleType))]; // FBR's list once the token works
 
-// One box per item: the item itself on the left, SRO references and extra / further tax on the right.
-// Labels follow FBR's Annex-C headings. Amount boxes start empty (placeholder 0) so there is no 0 to delete first.
+// One box per item. Labels follow FBR's Annex-C headings. Sale type, rate and SRO come from the item's tax rule
+// (CA: no per-line SRO / extra tax box, no per-line discount — the discount is one figure for the whole invoice).
+// Hidden fields keep values that come with an item, a draft or the original invoice of a debit note.
 function itemRow() {
   const div = document.createElement('div');
   div.className = 'item border rounded-lg p-3 relative';
   div.innerHTML = `
     <button type="button" class="absolute top-1 right-2 text-slate-400 hover:text-red-600" title="Remove" onclick="removeItem(this)">✕</button>
-    <div class="grid lg:grid-cols-3 gap-3">
-      <div class="lg:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-2 content-start">
-        <div class="col-span-2 sm:col-span-4 text-xs font-semibold text-slate-700">Item</div>
-        <label class="col-span-2 sm:col-span-4"><span>Item <span class="text-slate-400">(only items with a tax rule)</span></span><input name="productDescription" required autocomplete="off" placeholder="Type to search your items"></label>
-        <label><span>Rate <span class="text-slate-400">(per unit)</span></span><input name="unitPrice" type="number" step="0.01" min="0" placeholder="0.00" required>
-          <select class="price-pick hidden mt-1 !text-xs" aria-label="Choose the item's price"></select></label>
-        <label class="col-span-2"><span>Unit of Measurement</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
-        <label><span>Quantity</span><input name="quantity" type="number" step="1" min="1" value="1" required></label>
-        <label class="col-span-2 relative"><span>HS Code <span class="text-slate-400">(from the item)</span></span>
-          <input name="hsCode" class="hs-input" placeholder="Type code or product, e.g. laptop" autocomplete="off" required>
-          <div class="hs-list hidden absolute z-30 left-0 top-full mt-1 w-[34rem] max-w-[85vw] max-h-80 overflow-auto bg-white border rounded shadow-lg text-xs"></div>
-        </label>
-        <label><span>Sale Type</span><select name="saleType">${SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('')}</select></label>
-        <label><span>Tax rate</span><input name="rate" list="rateList" value="18%" required></label>
-        <div class="hs-desc col-span-2 sm:col-span-4 text-xs text-slate-500 -mt-1"></div>
-        <div class="tax-hint col-span-2 sm:col-span-4 text-xs -mt-1"></div>
-        <label><span>Discount</span><input name="discount" type="number" step="0.01" min="0" placeholder="0"></label>
-        <label class="col-span-2" title="3rd schedule / notified goods: total retail (or notified) value of the whole line, not per unit. Sales tax is charged on this."><span>Fixed / Notified Value or Retail Price <span class="text-slate-400">(line total)</span></span><input name="fixedNotifiedValueOrRetailPrice" type="number" step="0.01" min="0" placeholder="0"></label>
-      </div>
-      <div class="bg-slate-50 border rounded-lg p-2 grid grid-cols-2 gap-2 content-start">
-        <div class="col-span-2 text-xs font-semibold text-slate-700">More: SRO reference, extra &amp; further tax</div>
-        <label><span>SRO No. / Schedule</span><input name="sroScheduleNo" list="sroList" placeholder="e.g. 6th Schedule Table I"></label>
-        <label><span>Item Sr. No.</span><input name="sroItemSerialNo" placeholder="e.g. 176(i)"></label>
-        <label><span>Sales Tax / FED in ST <span class="text-slate-400">(override)</span></span><input name="salesTaxApplicable" type="number" step="0.01" min="0" placeholder="auto"></label>
-        <label><span>Further Tax <span class="text-slate-400">(override)</span></span><input name="furtherTax" type="number" step="0.01" min="0" placeholder="auto"></label>
-        <label><span>Extra Tax</span><input name="extraTax" type="number" step="0.01" min="0" placeholder="0"></label>
-        <label><span>FED Payable</span><input name="fedPayable" type="number" step="0.01" min="0" placeholder="0"></label>
-        <label class="col-span-2"><span>ST Withheld as WH Agent</span><input name="salesTaxWithheldAtSource" type="number" step="0.01" min="0" placeholder="0"></label>
-      </div>
+    <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 content-start">
+      <label class="col-span-2 sm:col-span-6"><span>Item <span class="text-slate-400">(only items with a tax rule)</span></span><input name="productDescription" required autocomplete="off" placeholder="Click to choose from your items, or type to search"></label>
+      <div><label><span>Rate <span class="text-slate-400">(per unit)</span></span><input name="unitPrice" type="number" step="0.01" min="0" placeholder="0.00" required></label>
+        <div class="price-pick hidden mt-1 space-y-0.5 text-xs" role="radiogroup" aria-label="Choose the item's rate"></div></div>
+      <label class="col-span-2"><span>Unit of Measurement</span><input name="uoM" list="uomList" value="Numbers, pieces, units" required></label>
+      <label><span>Quantity</span><input name="quantity" type="number" step="1" min="1" value="1" required></label>
+      <label class="col-span-2 relative"><span>HS Code <span class="text-slate-400">(from the item)</span></span>
+        <input name="hsCode" class="hs-input" placeholder="Type code or product, e.g. laptop" autocomplete="off" required>
+        <div class="hs-list hidden absolute z-30 left-0 top-full mt-1 w-[34rem] max-w-[85vw] max-h-80 overflow-auto bg-white border rounded shadow-lg text-xs"></div>
+      </label>
+      <label class="col-span-1 sm:col-span-3"><span>Sale Type</span><select name="saleType">${SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('')}</select></label>
+      <label class="col-span-1 sm:col-span-3"><span>Tax rate</span><input name="rate" list="rateList" value="18%" required></label>
+      <div class="hs-desc col-span-2 sm:col-span-6 text-xs text-slate-500 -mt-1"></div>
+      <div class="tax-hint col-span-2 sm:col-span-6 text-xs -mt-1"></div>
+      ${['sroScheduleNo', 'sroItemSerialNo', 'fixedNotifiedValueOrRetailPrice', 'extraTax', 'fedPayable', 'salesTaxWithheldAtSource'].map(n => `<input type="hidden" name="${n}">`).join('')}
     </div>
     <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
       <div class="text-xs text-slate-600 line-calc"></div>
@@ -1482,11 +1530,12 @@ function applyQtyStep(row) {
   q.step = whole ? '1' : '0.0001'; q.min = whole ? '1' : '0.0001';
 }
 
-function addItem() {
+function addItem(atEnd = false) {
   const row = itemRow();
   const sc = S.meta.scenarios.find(s => s.id === $('#scenarioSel').value);
   if (sc) row.querySelector('[name=saleType]').value = sc.saleType;
-  $('#items').appendChild(row);
+  if (atEnd) $('#items').appendChild(row);
+  else $('#items').prepend(row); // CA: a new item goes above the earlier ones
   applyQtyStep(row);
   recalc();
   return row;
@@ -1499,8 +1548,21 @@ function removeItem(btn) {
 function readItems() {
   return [...document.querySelectorAll('#items .item')].map(row => {
     const o = {};
-    for (const el of row.querySelectorAll('input[name], select[name]')) o[el.name] = el.value;
+    for (const el of row.querySelectorAll('input[name]:not([type=radio]), select[name]')) o[el.name] = el.value;
+    // 3rd schedule: tax is on the retail value — the item's notified (retail) rate × quantity
+    if (o.saleType === '3rd Schedule Goods' && row.dataset.notified) o.fixedNotifiedValueOrRetailPrice = String(r2(Number(row.dataset.notified) * Number(o.quantity || 0)));
     return o;
+  });
+}
+// The invoice discount split over the lines by value, as the server does (src/tax.js spreadDiscount)
+function spreadDiscount(items, total) {
+  const gross = items.map(it => r2(Number(it.quantity || 0) * Number(it.unitPrice || 0)));
+  const sum = gross.reduce((a, g) => a + g, 0);
+  let left = total;
+  return gross.map((g, i) => {
+    const share = !total || !sum ? 0 : i === gross.length - 1 ? r2(left) : r2(total * g / sum);
+    left = r2(left - share);
+    return share;
   });
 }
 
@@ -1513,18 +1575,22 @@ function recalc() {
   const ftRate = Number(S.settings?.furtherTaxRate || 0);
   const t = { excl: 0, st: 0, ft: 0, total: 0 };
   const items = readItems();
+  const gross = r2(items.reduce((a, it) => a + Number(it.quantity || 0) * Number(it.unitPrice || 0), 0));
+  const discount = Math.max(0, Number(f0.discount.value || 0));
+  const shares = spreadDiscount(items, Math.min(discount, gross));
+  $('#discountHint').innerHTML = discount > gross ? `<span class="text-red-700">more than the value (${money(gross)})</span>` : `on ${money(gross)}`;
   document.querySelectorAll('#items .item').forEach((row, i) => {
     const it = items[i];
     const pct = Number((String(it.rate).match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
-    const excl = r2(Number(it.quantity || 0) * Number(it.unitPrice || 0) - Number(it.discount || 0));
+    const excl = r2(Number(it.quantity || 0) * Number(it.unitPrice || 0) - shares[i]);
     const base = Number(it.fixedNotifiedValueOrRetailPrice) > 0 ? Number(it.fixedNotifiedValueOrRetailPrice) : excl;
-    const st = it.salesTaxApplicable !== '' ? r2(it.salesTaxApplicable) : r2(base * pct / 100);
-    const ft = it.furtherTax !== '' ? r2(it.furtherTax) : (unreg && pct > 0 && !NO_FT.has(it.saleType) ? r2(excl * ftRate / 100) : 0);
+    const st = r2(base * pct / 100);
+    const ft = unreg && pct > 0 && !NO_FT.has(it.saleType) ? r2(excl * ftRate / 100) : 0;
     const total = r2(excl + st + ft + Number(it.extraTax || 0) + Number(it.fedPayable || 0));
     const warn = [];
-    if (SRO_SALE_TYPES.has(it.saleType) && (!it.sroScheduleNo || !it.sroItemSerialNo)) warn.push('needs SRO No. / Schedule and Item Sr. No. (in the More box)');
+    if (SRO_SALE_TYPES.has(it.saleType) && (!it.sroScheduleNo || !it.sroItemSerialNo)) warn.push("needs the SRO / Schedule no. and item serial — set them on the item's tax rule");
     if (wholeUom(it.uoM) && it.quantity !== '' && !Number.isInteger(Number(it.quantity))) warn.push(`quantity must be a whole number for ${it.uoM}`);
-    if (it.saleType === '3rd Schedule Goods' && !(Number(it.fixedNotifiedValueOrRetailPrice) > 0)) warn.push('enter the retail price (line total) — tax is charged on it');
+    if (it.saleType === '3rd Schedule Goods' && !(Number(it.fixedNotifiedValueOrRetailPrice) > 0)) warn.push("needs a retail (notified) rate on the item's tax rule — tax is charged on it");
     row.querySelector('.line-calc').innerHTML = esc(`Value of Sales Excl. ST ${money(excl)} · Sales Tax ${money(st)} · Further Tax ${money(ft)} · Value incl. Sales Tax ${money(total)}`)
       + warn.map(w => ` <span class="text-red-700">· ${esc(w)}</span>`).join('');
     t.excl += excl; t.st += st; t.ft += ft; t.total += total;
@@ -1596,8 +1662,8 @@ function setupInvoiceForm() {
   });
   $('#items').addEventListener('input', e => { if (e.target.name === 'uoM') applyQtyStep(e.target.closest('.item')); });
   $('#items').addEventListener('change', e => {
-    if (!e.target.matches('.price-pick')) return;
-    e.target.closest('label').querySelector('[name=unitPrice]').value = e.target.value; recalc();
+    if (!e.target.matches('.price-pick input')) return;
+    e.target.closest('.item').querySelector('[name=unitPrice]').value = e.target.value; recalc();
   });
   setupHsSearch();
   setupSaved();
@@ -1624,7 +1690,7 @@ function setupInvoiceForm() {
       if (d.duplicate) toast(`This invoice was already sent (#${d.invoice.localNo}). Showing it instead of sending again.`, true);
       handleResult(d, !d.duplicate);
       refreshNextInvoiceNo();
-      if (d.invoice.status === 'SUBMITTED') resetForm();
+      resetForm(); // the invoice exists now (filed, queued or to check) — start an empty form
     } catch (err) { toast(err.message); }
     finally { btn.disabled = false; btn.textContent = 'Submit to FBR'; }
   });
@@ -1645,22 +1711,26 @@ function readForm() {
     endConsumer: f.buyerRegistrationType.value === 'Unregistered' && f.endConsumer.checked,
     buyerNonAtl: f.buyerRegistrationType.value === 'Registered' && f.buyerNonAtl.checked,
     buyerNtnCnic: f.buyerNtnCnic.value, buyerBusinessName: f.buyerBusinessName.value,
-    buyerProvince: f.buyerProvince.value, buyerAddress: f.buyerAddress.value, items: readItems(),
+    buyerProvince: f.buyerProvince.value, buyerAddress: f.buyerAddress.value,
+    discount: f.discount.value, items: readItems(),
   };
 }
-const NUM_FIELDS = ['quantity', 'unitPrice', 'discount', 'fixedNotifiedValueOrRetailPrice', 'extraTax', 'fedPayable', 'salesTaxWithheldAtSource'];
+const NUM_FIELDS = ['quantity', 'unitPrice', 'fixedNotifiedValueOrRetailPrice', 'extraTax', 'fedPayable', 'salesTaxWithheldAtSource'];
 // Put item rows back into the form (debit note from an invoice, or an opened draft). Zero amounts stay empty.
-function fillItems(items, note) {
+function fillItems(items, note, discount) {
   $('#items').innerHTML = '';
   for (const it of items.length ? items : [{}]) {
-    const row = addItem();
-    for (const k of ['hsCode', 'productDescription', 'uoM', 'rate', 'sroScheduleNo', 'sroItemSerialNo', 'salesTaxApplicable', 'furtherTax'])
+    const row = addItem(true);
+    for (const k of ['hsCode', 'productDescription', 'uoM', 'rate', 'sroScheduleNo', 'sroItemSerialNo'])
       if (it[k] != null) row.querySelector(`[name=${k}]`).value = it[k];
     if (it.saleType) setSelect(row.querySelector('[name=saleType]'), it.saleType);
     for (const k of NUM_FIELDS) if (it[k] != null && it[k] !== '') row.querySelector(`[name=${k}]`).value = Number(it[k]) || (k === 'quantity' ? 1 : '');
     if (note) row.querySelector('.hs-desc').textContent = note;
     applyQtyStep(row);
   }
+  // Discount: the invoice's own figure, else the lines' discounts added up (debit note, older drafts)
+  const lineDisc = r2(items.reduce((a, it) => a + Number(it.discount || 0), 0));
+  $('#invoiceForm').discount.value = Number(discount ?? lineDisc) || '';
   recalc();
 }
 
@@ -1710,6 +1780,7 @@ function resetForm() {
   for (const n of ['invoiceRefNo', 'reasonRemarks']) f[n].value = '';
   f.invoiceType.value = 'Sale Invoice'; f.reason.value = ''; applyDocType();
   f.invoiceDate.value = pkDate();
+  f.discount.value = '';
   $('#items').innerHTML = ''; addItem();
   formRequestId = newRequestId();
   setDraft(null);
@@ -1730,8 +1801,8 @@ async function saveDraft() {
   const btn = $('#draftBtn'); btn.disabled = true;
   try {
     const d = await api('/api/drafts', { method: 'POST', body: { id: S.draftId || undefined, data: readForm(), totalAmount: recalc().total } });
-    setDraft(d.id, d.updatedAt);
-    toast('Draft saved — find it under Sales Invoices → Drafts', true);
+    resetForm(); // CA: the screen starts empty again; the draft is under Draft Invoices
+    toast('Draft saved — open it again from Draft Invoices', true);
   } catch (err) { toast(err.message); }
   finally { btn.disabled = false; }
 }
@@ -1757,7 +1828,7 @@ async function openDraft(id) {
     fillBuyer({ businessName: v.buyerBusinessName || '', ntnCnic: v.buyerNtnCnic, registrationType: v.buyerRegistrationType || 'Unregistered',
       province: v.buyerProvince, address: v.buyerAddress, endConsumer: v.endConsumer });
     f.buyerNonAtl.checked = Boolean(v.buyerNonAtl);
-    fillItems(v.items || []);
+    fillItems(v.items || [], undefined, v.discount);
     formRequestId = newRequestId();
     setDraft(d.id, d.updatedAt);
   } catch (err) { toast(err.message); loadDrafts(); }
@@ -1967,7 +2038,7 @@ function setupHsSearch() {
     if (e.target.name === 'productDescription') e.target.dataset.auto = ''; // typed by the user: don't overwrite on next pick
     if (!e.target.matches('.hs-input')) return;
     const row = e.target.closest('.item');
-    row.querySelector('.hs-desc').textContent = ''; row.querySelector('.tax-hint').textContent = ''; row.dataset.taxFor = ''; row.querySelector('.price-pick').classList.add('hidden');
+    row.querySelector('.hs-desc').textContent = ''; row.querySelector('.tax-hint').textContent = ''; row.dataset.taxFor = ''; row.dataset.notified = ''; row.querySelector('.price-pick').classList.add('hidden');
     clearTimeout(hsTimer);
     hsTimer = setTimeout(() => hsSuggest(e.target), 250);
   });
@@ -2034,18 +2105,20 @@ function fillRowFromProduct(row, p) {
   const st = row.querySelector('[name=saleType]');
   if (p.saleType && ![...st.options].some(o => o.value === p.saleType)) st.insertAdjacentHTML('beforeend', `<option>${esc(p.saleType)}</option>`);
   set('productDescription', p.name); set('hsCode', p.hsCode); set('uoM', p.uoM); set('rate', p.rate); set('saleType', p.saleType);
-  // The invoice shows one rate: the notified rate when the item's tax rule has one, else the item's price
-  // (with several prices the first is filled in and the others can be picked under the Amount box)
-  const prices = pricesOf(p), pick = row.querySelector('.price-pick'), notified = p.notifiedRate != null;
-  if (notified) set('unitPrice', Number(p.notifiedRate));
-  else if (prices.length) set('unitPrice', Number(prices[0].price));
-  pick.innerHTML = prices.map(x => `<option value="${Number(x.price)}">${esc(x.label)}: ${money(x.price)}</option>`).join('');
-  pick.classList.toggle('hidden', notified || prices.length < 2);
+  // Every rate of the item as a tick box under Rate (CA): the notified rate from its tax rule, then its prices.
+  // The notified rate is ticked when there is one, else the first price; the user ticks another to use it.
+  const notified = p.notifiedRate != null, pick = row.querySelector('.price-pick');
+  const opts = [...(notified ? [{ label: 'Notified rate', price: Number(p.notifiedRate) }] : []), ...pricesOf(p)];
+  if (opts.length) set('unitPrice', Number(opts[0].price));
+  const group = 'pp-' + newRequestId();
+  pick.innerHTML = opts.map((x, i) => `<label class="flex items-center gap-1.5 cursor-pointer !text-xs"><input type="radio" name="${group}" value="${Number(x.price)}" ${i ? '' : 'checked'} style="width:auto"> ${esc(x.label)}: ${money(x.price)}</label>`).join('');
+  pick.classList.toggle('hidden', opts.length < 2);
+  row.dataset.notified = notified ? Number(p.notifiedRate) : '';
   set('sroScheduleNo', p.sroScheduleNo); set('sroItemSerialNo', p.sroItemSerialNo);
   row.querySelector('[name=productDescription]').dataset.auto = '';
   row.querySelector('.hs-desc').textContent = 'From your item (its tax rule)';
   row.dataset.taxFor = p.hsCode;
-  row.querySelector('.tax-hint').textContent = notified ? `Notified rate ${money(p.notifiedRate)} per unit used (from the item's tax rule)` : '';
+  row.querySelector('.tax-hint').textContent = notified ? `Notified rate ${money(p.notifiedRate)} per unit from the item's tax rule${opts.length > 1 ? ' — tick another rate below Rate to use it' : ''}` : '';
   applyQtyStep(row);
   recalc();
 }
@@ -2080,16 +2153,17 @@ async function saveRowAsProduct(row) {
 function setupSaved() {
   const f = $('#invoiceForm');
   // Items: search while typing the description. Only items with a tax rule can go on an invoice.
-  $('#items').addEventListener('input', e => {
-    const inp = e.target;
-    if (inp.name !== 'productDescription' || inp.value.trim().length < 2) return;
-    debounced(inp, async () => {
-      const rows = await api('/api/products?withRule=1&q=' + encodeURIComponent(inp.value.trim())).catch(() => []);
-      suggest(inp, rows,
-        p => `<b>${esc(p.name)}</b> <span class="font-mono text-slate-500">${esc(p.hsCode)}</span> · ${esc(p.rate)} · ${esc(p.uoM)}${p.unitPrice != null ? ' · Rs ' + money(p.unitPrice) : ''}`,
-        p => fillRowFromProduct(inp.closest('.item'), p));
-    });
-  });
+  const itemSuggest = (inp, opened) => {
+    const q = inp.value.trim().toLowerCase(), code = q.replace(/[^\d.]/g, '');
+    const rows = (S.saved?.products || []).filter(p => p.saleType
+      && (!q || p.name.toLowerCase().includes(q) || (code && p.hsCode.startsWith(code))));
+    suggest(inp, rows,
+      p => `<b>${esc(p.name)}</b> <span class="font-mono text-slate-500">${esc(p.hsCode)}</span> · ${esc(p.saleType)} · ${esc(p.rate)} · ${esc(p.uoM)}${p.unitPrice != null ? ' · Rs ' + money(p.unitPrice) : ''}`,
+      p => fillRowFromProduct(inp.closest('.item'), p));
+    if (opened && !rows.length) toast(q ? 'No item with a tax rule matches — set tax rules under Tax Rules Against Items' : 'No items with a tax rule yet — add items, then set their tax rules');
+  };
+  $('#items').addEventListener('input', e => { if (e.target.name === 'productDescription') itemSuggest(e.target); });
+  $('#items').addEventListener('focusin', e => { if (e.target.name === 'productDescription') itemSuggest(e.target, true); });
   $('#items').addEventListener('click', e => {
     const btn = e.target.closest('.save-product');
     if (btn) saveRowAsProduct(btn.closest('.item'));
@@ -2492,7 +2566,7 @@ function setupAnnexC(t) {
 
 /* ---------- Invoice list ---------- */
 // Names from the spec (§15); the stored status codes stay as they are
-const STATUS_LABEL = { DRAFT: 'Draft', QUEUED: 'Pending Submission', SUBMITTING: 'Pending Submission', SUBMITTED: 'Issued',
+const STATUS_LABEL = { DRAFT: 'Draft', QUEUED: 'Pending Submission', SUBMITTING: 'Pending Submission', SUBMITTED: 'Issued (Locked)',
   FAILED: 'Submission Failed', UNCERTAIN: 'Check IRIS', CANCELLED: 'Cancelled' };
 const statusLabel = st => STATUS_LABEL[st] || st;
 const BADGE = {

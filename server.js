@@ -634,6 +634,21 @@ app.post('/api/admin/tax-rules', authenticateToken, ADMIN, async (req, res) => {
         throw err;
     }
 });
+// Tax rules data bank: every client's current tax rule against each item, with the client's name and industry
+// from their DI settings (the rest as the client defined it)
+app.get('/api/admin/item-tax-rules', authenticateToken, ADMIN, async (req, res) => {
+    const items = await prisma.product.findMany({
+        where: { saleType: { not: '' } },
+        include: { tenant: { select: { id: true, companyName: true, sellerBusinessName: true, businessActivities: true, sector: true } } },
+        orderBy: [{ tenantId: 'asc' }, { name: 'asc' }],
+        take: 10000,
+    });
+    res.json(items.map(({ tenant: t, ...p }) => ({
+        id: p.id, tenantId: t.id, userName: t.sellerBusinessName || t.companyName, industry: industryOf(t),
+        name: p.name, hsCode: p.hsCode, source: p.source, uoM: p.uoM, saleType: p.saleType, rate: p.rate,
+        notifiedRate: p.notifiedRate, sroScheduleNo: p.sroScheduleNo, sroItemSerialNo: p.sroItemSerialNo, taxRuleAt: p.taxRuleAt,
+    })));
+});
 app.delete('/api/admin/tax-rules/:id', authenticateToken, ADMIN, async (req, res) => {
     const r = await prisma.hsTaxRule.delete({ where: { id: req.params.id } }).catch(() => null);
     if (!r) throw new HttpError(404, 'Rule not found.');
@@ -895,7 +910,7 @@ async function prepareInvoice(tenant, b, pendingDebit = null) {
 
     let calc;
     try {
-        calc = calcInvoice(b.items, { buyerRegistrationType, endConsumer, buyerNonAtl, furtherTaxRate: Number(tenant.furtherTaxRate) });
+        calc = calcInvoice(b.items, { buyerRegistrationType, endConsumer, buyerNonAtl, furtherTaxRate: Number(tenant.furtherTaxRate) }, b.discount);
     } catch (err) {
         fail(err.message);
     }
