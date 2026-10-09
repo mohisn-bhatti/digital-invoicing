@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Raseed — App</title>
+<title>ETAX — FBR Digital Invoicing</title>
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
@@ -23,8 +24,6 @@
   .page .bg-white.rounded-xl.shadow { box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .08); }
   .page h2.font-semibold, .page h3.font-medium { font-size: 1rem; color: #0f172a; }
   /* long forms: a line and space between sections */
-  #invoiceForm > section + section, #invoiceForm > section + div, #invoiceForm > div + section { border-top: 1px solid #e2e8f0; padding-top: 1.25rem; }
-  #invoiceForm { gap: 1.25rem; }
   /* tables: taller rows, clear header */
   .page table:not(.items-table) th { font-size: .78rem; font-weight: 600; color: #475569; padding: .65rem .75rem; white-space: nowrap; }
   .page table:not(.items-table) td { padding: .7rem .75rem; vertical-align: top; }
@@ -33,6 +32,34 @@
   /* small link-style actions shown as tidy pills */
   .act { display: inline-flex; align-items: center; padding: .2rem .55rem; border-radius: 9999px; border: 1px solid #e2e8f0; background: #fff; font-size: .75rem; line-height: 1.2; white-space: nowrap; }
   .act:hover { background: #f1f5f9; }
+  /* Items with Tax Rules: two tabs, a step bar and numbered section cards */
+  .seg { display: inline-flex; background: #e2e8f0; border-radius: .75rem; padding: .25rem; gap: .25rem; }
+  .seg-btn { padding: .5rem 1rem; border-radius: .6rem; font-size: .9rem; font-weight: 500; color: #475569; display: inline-flex; align-items: center; gap: .45rem; }
+  .seg-btn.on { background: #fff; color: #065f46; box-shadow: 0 1px 2px rgba(15, 23, 42, .12); }
+  .seg-count { background: #d1fae5; color: #065f46; border-radius: 9999px; padding: 0 .5rem; font-size: .75rem; }
+  /* stays in view under the 4rem page header while scrolling (never slides under it) */
+  .stepper { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: .5rem; gap: .25rem; position: sticky; top: 4.75rem; z-index: 15; box-shadow: 0 4px 12px rgba(15, 23, 42, .08); }
+  .stepper::before { content: ''; position: absolute; left: -1.5rem; right: -1.5rem; top: -.8rem; height: .8rem; background: #f1f5f9; } /* cover the gap under the header */
+  .stepper-item { display: flex; align-items: center; gap: .6rem; text-align: left; padding: .55rem .7rem; border-radius: .6rem; }
+  .stepper-item:hover { background: #f8fafc; }
+  .stepper-item b { display: block; font-size: .875rem; color: #0f172a; }
+  .stepper-item small { display: block; font-size: .72rem; color: #64748b; line-height: 1.2; }
+  .step-no { flex-shrink: 0; width: 1.75rem; height: 1.75rem; border-radius: 9999px; display: inline-flex; align-items: center; justify-content: center; font-size: .85rem; font-weight: 600; background: #e2e8f0; color: #475569; }
+  .done .step-no { background: #059669; color: #fff; }
+  .todo .step-no { background: #fef3c7; color: #92400e; }
+  .done small { color: #047857; }
+  .todo small { color: #b45309; }
+  .step-card { padding: 1.5rem; scroll-margin-top: 10.5rem; } /* jump lands below the header and the step bar */
+  .done .step-no { font-size: .95rem; }
+  .step-head { display: flex; align-items: flex-start; gap: .75rem; margin-bottom: 1.1rem; padding-bottom: .9rem; border-bottom: 1px solid #f1f5f9; }
+  .step-state { font-size: .75rem; border-radius: 9999px; padding: .15rem .6rem; white-space: nowrap; }
+  .step-state.ok { background: #d1fae5; color: #065f46; }
+  .step-state.miss { background: #fef3c7; color: #92400e; }
+  .guide-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: .6rem; padding: .75rem 1rem; }
+  .review-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .75rem; }
+  .review-grid > div { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: .6rem; padding: .7rem .85rem; font-size: .85rem; }
+  .review-grid .k { font-size: .72rem; color: #64748b; margin-bottom: .2rem; }
+  .review-grid .miss { color: #b45309; }
   /* the item form's tax table is dense by nature: slightly smaller boxes so values aren't cut off */
   #trTaxes input, #trTaxes select, #trTaxes textarea, #trTaxes summary { padding: .4rem .5rem; font-size: .85rem; min-height: 2.25rem; }
   #trTaxes td { vertical-align: top; }
@@ -105,7 +132,7 @@
 <!-- Login -->
 <section id="loginView" class="hidden min-h-screen flex items-center justify-center px-4">
   <form id="loginForm" class="bg-white rounded-xl shadow p-6 w-full max-w-sm space-y-4">
-    <a href="/" class="block text-2xl font-extrabold text-emerald-700">Raseed</a>
+    <a href="/" class="flex items-center gap-2.5"><img src="/logo.svg" alt="" class="w-9 h-9"><span class="text-xl font-extrabold tracking-wide text-slate-900"><span class="text-emerald-600">E</span>TAX</span></a>
     <h1 class="text-xl font-semibold">Sign in</h1>
     <label><span>Email</span><input name="email" type="email" required autocomplete="username"></label>
     <label><span>Password</span><input name="password" type="password" required autocomplete="current-password"></label>
@@ -117,8 +144,8 @@
 <div id="shell" class="hidden">
   <div id="navBackdrop" class="hidden fixed inset-0 bg-black/40 z-30 lg:hidden" onclick="toggleNav(false)"></div>
   <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-60 bg-slate-900 text-slate-200 flex flex-col -translate-x-full lg:translate-x-0 transition-transform">
-    <a href="/" class="flex items-center gap-2 px-5 h-16 font-extrabold text-lg text-white border-b border-white/10">
-      <span class="inline-flex w-8 h-8 rounded-lg bg-emerald-600 items-center justify-center">R</span> Raseed
+    <a href="/" class="flex items-center gap-2.5 px-5 h-16 text-white border-b border-white/10">
+      <img src="/logo.svg" alt="" class="w-9 h-9"><span class="leading-tight"><span class="block text-xl font-extrabold tracking-wide"><span class="text-emerald-400">E</span>TAX</span><span class="block text-[10px] font-medium tracking-wider text-slate-400 uppercase">FBR Digital Invoicing</span></span>
     </a>
     <nav id="nav" class="flex-1 overflow-y-auto py-3 text-sm"></nav>
     <div class="border-t border-white/10 p-4 text-xs">
@@ -231,7 +258,7 @@
         </div>
       </fieldset>
       <fieldset class="border rounded-lg p-4">
-        <legend class="px-1 text-sm font-semibold">3. Entered by you (used inside Raseed)</legend>
+        <legend class="px-1 text-sm font-semibold">3. Entered by you (used inside ETAX)</legend>
         <div class="grid sm:grid-cols-3 gap-3">
           <label><span>Further tax % (unregistered buyers)</span><input name="furtherTaxRate" type="number" step="0.01" min="0" max="100"></label>
           <div><label><span>Invoice number format</span><input name="invoiceNumberFormat" maxlength="40" placeholder="INV-{YYYY}-{NNNN}" autocomplete="off"></label>
@@ -317,7 +344,7 @@
     <div class="bg-white rounded-xl shadow p-5 text-sm">
       <h2 class="font-semibold mb-2">Where the rules come from <span class="text-xs font-normal text-slate-500">— check these when FBR issues something new</span></h2>
       <ul class="space-y-1.5">
-        <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://download1.fbr.gov.pk/Docs/2017112112112348253CustomsTariff2017-18Ch1-99.pdf">Customs Tariff (PCT / HS codes)</a> <span class="text-slate-500">— 2017 edition; the HS list in Raseed comes from it</span></li>
+        <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://download1.fbr.gov.pk/Docs/2017112112112348253CustomsTariff2017-18Ch1-99.pdf">Customs Tariff (PCT / HS codes)</a> <span class="text-slate-500">— 2017 edition; the HS list in ETAX comes from it</span></li>
         <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://www.fbr.gov.pk/categ/sales-tax-act/301">Sales Tax Act, 1990</a> <span class="text-slate-500">— updated every year (budget)</span></li>
         <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://www.fbr.gov.pk/categ/sales-tax-rules-2006/302">Sales Tax Rules, 2006</a> <span class="text-slate-500">— updated every year</span></li>
         <li><a class="text-emerald-700 underline" target="_blank" rel="noopener" href="https://www.fbr.gov.pk/ShowSROs?Department=Sales%20Tax">Sales tax SROs</a> <span class="text-slate-500">— can be issued at any time</span></li>
@@ -420,7 +447,7 @@
   <div id="cdStats" class="grid grid-cols-2 lg:grid-cols-4 gap-4"></div>
   <div class="flex flex-wrap gap-3">
     <a href="#/c-new" class="bg-emerald-700 text-white rounded-lg px-4 py-2 font-medium">+ New invoice</a>
-    <a href="#/c-import" class="bg-white border rounded-lg px-4 py-2 font-medium">Bulk import</a>
+    <a href="#/c-guide" class="bg-white border rounded-lg px-4 py-2 font-medium">▶ How ETAX works (1-min demo)</a>
     <a href="#/c-drafts" class="bg-white border rounded-lg px-4 py-2 font-medium">Draft invoices</a>
     <a href="#/c-invoices" class="bg-white border rounded-lg px-4 py-2 font-medium">Issued invoices</a>
   </div>
@@ -430,18 +457,26 @@
   </div>
   </div>
   <div data-page="c-new" class="page hidden space-y-6">
-    <form id="invoiceForm" class="bg-white rounded-xl shadow p-5 space-y-5">
+    <form id="invoiceForm" class="space-y-5">
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="font-semibold">Sales invoice <span id="draftBadge" class="hidden ml-2 px-2 py-0.5 rounded bg-slate-200 text-slate-700 text-xs font-normal"></span></h2>
+        <h2 class="font-semibold text-base">Sales invoice <span id="draftBadge" class="hidden ml-2 px-2 py-0.5 rounded bg-slate-200 text-slate-700 text-xs font-normal"></span></h2>
         <button type="button" id="newFormBtn" onclick="startNewInvoice()" class="hidden text-sm text-slate-600 underline">Start a new invoice</button>
       </div>
 
-      <div id="scenarioRow" class="hidden bg-amber-50 border border-amber-200 rounded p-3">
+      <!-- step bar: where you are and what is left (same pattern as Items with Tax Rules) -->
+      <nav class="stepper bg-white rounded-xl shadow" id="invStepper">
+        <button type="button" class="stepper-item" data-go="invDoc"><span class="step-no">1</span><span><b>Document</b><small></small></span></button>
+        <button type="button" class="stepper-item" data-go="invBuyer"><span class="step-no">2</span><span><b>Buyer</b><small></small></span></button>
+        <button type="button" class="stepper-item" data-go="invItems"><span class="step-no">3</span><span><b>Items</b><small></small></span></button>
+        <button type="button" class="stepper-item" data-go="invSubmit"><span class="step-no">4</span><span><b>Review &amp; submit</b><small></small></span></button>
+      </nav>
+
+      <section id="invDoc" class="step-card bg-white rounded-xl shadow">
+        <div class="step-head"><span class="step-no">1</span><div class="flex-1"><h3 class="font-semibold text-base">Document</h3><p class="text-xs text-slate-500">Invoice date and document details — number and FBR number come automatically</p></div><span class="step-state" data-step="1"></span></div>
+      <div id="scenarioRow" class="hidden mb-4 bg-amber-50 border border-amber-200 rounded p-3">
         <label><span>Sandbox scenario (required in sandbox)</span><select name="scenarioId" id="scenarioSel"></select></label>
       </div>
 
-      <section>
-        <h3 class="font-medium text-sm mb-2">Particulars of Document</h3>
         <div class="grid sm:grid-cols-3 gap-3">
           <label><span>Invoice Date</span><input name="invoiceDate" type="date" required></label>
           <div><span class="block text-xs text-slate-600 mb-0.5">Invoice Number <span class="text-slate-400">(automatic)</span></span><div id="nextInvoiceNo" class="py-1.5 text-sm font-medium">—</div></div>
@@ -456,15 +491,16 @@
         </div>
       </section>
 
-      <div class="flex flex-wrap items-end gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+      <section id="invBuyer" class="step-card bg-white rounded-xl shadow">
+        <div class="step-head"><span class="step-no">2</span><div class="flex-1"><h3 class="font-semibold text-base">Buyer</h3><p class="text-xs text-slate-500">Search a saved buyer (details are fixed), add a new customer, or leave empty for a walk-in customer</p></div><span class="step-state" data-step="2"></span></div>
+      <div class="flex flex-wrap items-end gap-2 mb-4 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
         <label class="flex-1 min-w-[16rem] relative"><span>Buyer <span class="text-slate-500">— search by name, NTN, CNIC, STRN, mobile, email, province, address or note; leave empty for a walk-in customer</span></span>
           <input id="buyerSearch" autocomplete="off" placeholder="Search saved buyers…"></label>
-        <button type="button" id="walkInBtn" onclick="clearBuyer(); $('#buyerSearch').focus()" class="hidden bg-white border rounded px-3 py-1.5 text-sm">✕ Walk-in customer</button>
+        <button type="button" id="walkInBtn" onclick="chooseWalkIn()" class="bg-white border border-slate-300 text-slate-700 rounded px-3 py-1.5 text-sm font-medium">🚶 Walk-in customer</button>
         <button type="button" id="addCustomerBtn" onclick="openCustomer()" class="bg-white border border-emerald-600 text-emerald-800 rounded px-3 py-1.5 text-sm font-medium">+ Add new customer</button>
       </div>
 
-      <section>
-        <h3 class="font-medium text-sm mb-2">Particulars of Buyer <span id="buyerMode" class="text-xs font-normal text-slate-500"></span></h3>
+        <h4 class="text-sm font-medium text-slate-700 mb-2">Particulars of buyer <span id="buyerMode" class="text-xs font-normal text-slate-500"></span></h4>
         <div class="grid sm:grid-cols-3 gap-3 buyer-find">
           <div>
             <label><span>NTN <span id="ntnReq" class="text-red-600 hidden">*</span></span><input name="buyerNtn" inputmode="numeric" data-digits="9" autocomplete="off" placeholder="7 or 9 digits"></label>
@@ -489,19 +525,17 @@
         </div>
       </section>
 
-      <section>
-        <h3 class="font-medium text-sm mb-1">Sent to FBR — invoice header <span class="text-xs font-normal text-slate-500">(exactly what FBR receives; updates as you fill the form)</span></h3>
-        <div id="fbrHeader" class="fbr-grid"></div>
-      </section>
-
-      <section>
-        <div class="flex items-center justify-between mb-2">
-          <h3 class="font-medium text-sm">Invoice Details <span class="text-xs font-normal text-slate-500">— one box per item</span></h3>
-          <button type="button" onclick="addItem().querySelector('[name=productDescription]').focus()" class="text-sm text-emerald-700 font-medium">+ Add item</button>
-        </div>
+      <section id="invItems" class="step-card bg-white rounded-xl shadow">
+        <div class="step-head"><span class="step-no">3</span><div class="flex-1"><h3 class="font-semibold text-base">Items</h3><p class="text-xs text-slate-500">Pick items with a tax rule — only the quantity and the item’s own prices can change</p></div><span class="step-state" data-step="3"></span></div>
+        <div class="flex justify-end mb-2"><button type="button" onclick="addItem().querySelector('[name=productDescription]').focus()" class="text-sm text-emerald-700 font-medium">＋ Add item</button></div>
         <div id="items" class="space-y-3"></div>
       </section>
 
+      <section id="invSubmit" class="step-card bg-white rounded-xl shadow">
+        <div class="step-head"><span class="step-no">4</span><div class="flex-1"><h3 class="font-semibold text-base">Review &amp; submit</h3><p class="text-xs text-slate-500">Exactly what FBR receives, the totals and the whole-invoice discount — then submit</p></div><span class="step-state" data-step="4"></span></div>
+        <h4 class="text-sm font-medium text-slate-700 mb-1">Sent to FBR — invoice header <span class="text-xs font-normal text-slate-500">(exactly what FBR receives; updates as you fill the form)</span></h4>
+        <div id="fbrHeader" class="fbr-grid"></div>
+        <div class="mt-4">
       <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm bg-slate-50 rounded p-3">
         <div>Value of Sales Excl. ST<div id="tExcl" class="font-semibold">0.00</div></div>
         <label class="!text-sm"><span class="!text-sm !text-slate-900">Discount <span class="text-slate-400 text-xs">(whole invoice)</span></span><input name="discount" type="number" step="0.01" min="0" placeholder="0" class="!py-1 max-w-[9rem]"><span id="discountHint" class="block text-xs text-slate-500"></span></label>
@@ -510,11 +544,64 @@
         <div>Value incl. Sales Tax<div id="tTotal" class="font-bold text-emerald-700 text-base">0.00</div></div>
       </div>
 
+        </div>
+        <div class="mt-4">
       <div class="flex flex-col sm:flex-row gap-2">
         <button type="button" id="draftBtn" onclick="saveDraft()" class="sm:w-48 border border-slate-400 bg-white hover:bg-slate-50 rounded py-2.5 font-medium">Save as draft</button>
         <button id="submitBtn" class="flex-1 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded py-2.5 font-medium">Submit to FBR</button>
       </div>
+        </div>
+      </section>
     </form>
+  </div>
+  <div data-page="c-guide" class="page hidden space-y-6">
+    <div class="bg-white rounded-xl shadow p-6">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="font-semibold text-lg">How ETAX works <span class="text-sm font-normal text-slate-500">— four steps from a new buyer to an invoice filed with FBR</span></h2>
+          <p class="text-sm text-slate-500 mt-1">Watch the 1-minute demo, or follow the steps below. Each step opens the page where you do it.</p>
+        </div>
+        <a href="#/c-new" class="bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">＋ Create an invoice</a>
+      </div>
+      <video class="mt-5 w-full max-w-4xl mx-auto block rounded-xl border shadow-sm bg-slate-900" controls preload="metadata" poster="/guide/demo-poster.png">
+        <source src="/guide/etax-demo.webm" type="video/webm">
+        Your browser can't play this video — follow the steps below.
+      </video>
+    </div>
+    <div class="grid md:grid-cols-2 gap-6">
+      <article class="bg-white rounded-xl shadow overflow-hidden flex flex-col">
+        <a href="/guide/step1-buyer.png" target="_blank" rel="noopener" title="Open full size"><img src="/guide/step1-buyer.png" alt="Buyers page with the buyer form filled in" loading="lazy" class="w-full aspect-[16/9] object-cover object-top border-b bg-slate-50"></a>
+        <div class="p-5 flex-1 flex flex-col">
+          <div class="flex items-center gap-3"><span class="step-no" style="background:#059669;color:#fff">1</span><h3 class="font-semibold text-base">Add your buyer</h3></div>
+          <ul class="mt-3 space-y-1.5 text-sm text-slate-700 list-disc pl-5"><li>Open <b>Buyers / Customers</b>.</li><li>Enter the NTN or CNIC, STRN, registered / unregistered, name, province and address.</li><li>Add mobile, email and a note if you like, then <b>Save buyer</b>.</li><li>Many buyers at once? Use <b>Excel template → Import from Excel</b>.</li></ul>
+          <div class="mt-auto pt-4"><a href="#/c-buyers" class="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 hover:underline">Go to Buyers / Customers →</a></div>
+        </div>
+      </article>
+      <article class="bg-white rounded-xl shadow overflow-hidden flex flex-col">
+        <a href="/guide/step2-item.png" target="_blank" rel="noopener" title="Open full size"><img src="/guide/step2-item.png" alt="Items with Tax Rules form with the sections filled in" loading="lazy" class="w-full aspect-[16/9] object-cover object-top border-b bg-slate-50"></a>
+        <div class="p-5 flex-1 flex flex-col">
+          <div class="flex items-center gap-3"><span class="step-no" style="background:#059669;color:#fff">2</span><h3 class="font-semibold text-base">Set up your items and tax rules</h3></div>
+          <ul class="mt-3 space-y-1.5 text-sm text-slate-700 list-disc pl-5"><li>Open <b>Items with Tax Rules → ＋ Add / edit item</b>.</li><li><b>1 Item details</b> and <b>2 Prices</b> (one or more, e.g. Retail and Wholesale).</li><li><b>3 Tax rule</b>: sale type, sales tax rate, the law reference (the first ★ goes to FBR) and any more taxes.</li><li><b>4 Review &amp; save</b> — every section shows a green ✓ when it is complete.</li></ul>
+          <div class="mt-auto pt-4"><a href="#/c-products" class="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 hover:underline">Go to Items with Tax Rules →</a></div>
+        </div>
+      </article>
+      <article class="bg-white rounded-xl shadow overflow-hidden flex flex-col">
+        <a href="/guide/step3-invoice.png" target="_blank" rel="noopener" title="Open full size"><img src="/guide/step3-invoice.png" alt="New invoice with the buyer and item chosen" loading="lazy" class="w-full aspect-[16/9] object-cover object-top border-b bg-slate-50"></a>
+        <div class="p-5 flex-1 flex flex-col">
+          <div class="flex items-center gap-3"><span class="step-no" style="background:#059669;color:#fff">3</span><h3 class="font-semibold text-base">Create a new invoice</h3></div>
+          <ul class="mt-3 space-y-1.5 text-sm text-slate-700 list-disc pl-5"><li>Open <b>＋ New Invoice</b>.</li><li><b>Buyer</b>: search a saved buyer, <b>+ Add new customer</b>, or <b>Walk-in customer</b>.</li><li><b>Items</b>: pick the item, enter the quantity and tick the price — the tax is calculated automatically.</li><li>Under each item you see exactly what is sent to FBR.</li></ul>
+          <div class="mt-auto pt-4"><a href="#/c-new" class="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 hover:underline">Go to New Invoice →</a></div>
+        </div>
+      </article>
+      <article class="bg-white rounded-xl shadow overflow-hidden flex flex-col">
+        <a href="/guide/step4-receipt.png" target="_blank" rel="noopener" title="Open full size"><img src="/guide/step4-receipt.png" alt="Receipt with the FBR invoice number and QR code" loading="lazy" class="w-full aspect-[16/9] object-cover object-top border-b bg-slate-50"></a>
+        <div class="p-5 flex-1 flex flex-col">
+          <div class="flex items-center gap-3"><span class="step-no" style="background:#059669;color:#fff">4</span><h3 class="font-semibold text-base">Save as draft, or submit to FBR</h3></div>
+          <ul class="mt-3 space-y-1.5 text-sm text-slate-700 list-disc pl-5"><li><b>Save as draft</b> to finish later (Draft Invoices), or <b>Submit to FBR</b>.</li><li>FBR returns its invoice number; print the A4 invoice or the 80 mm receipt with the QR code.</li><li>The invoice is now <b>Issued (Locked)</b> — corrections go through a debit note.</li><li>Find every filed invoice under <b>Issued Invoices</b>.</li></ul>
+          <div class="mt-auto pt-4"><a href="#/c-invoices" class="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 hover:underline">Go to Issued Invoices →</a></div>
+        </div>
+      </article>
+    </div>
   </div>
   <div data-page="c-drafts" class="page hidden space-y-6">
     <div class="bg-white rounded-xl shadow overflow-x-auto">
@@ -570,40 +657,80 @@
     <div id="importBatches" class="text-sm"></div>
   </div>
   </div>
-  <div data-page="c-products" class="page hidden space-y-6">
-    <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
-      <h2 class="font-semibold">Guidelines <span class="text-xs font-normal text-slate-500">— check the law for your item, then set its sale type and rate below. Raseed does not decide the tax for you.</span></h2>
-      <div id="guideLinks" class="flex flex-wrap gap-2"></div>
-      <p id="guideNote" class="text-xs text-slate-500"></p>
+  <div data-page="c-products" class="page hidden space-y-5">
+    <!-- Two parts: the list of items, and the form to add / edit one (4 numbered sections) -->
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="seg" role="tablist">
+        <button type="button" id="tabItemsList" class="seg-btn" onclick="itemsTab('list')">📋 My items <span id="itemsCount" class="seg-count">0</span></button>
+        <button type="button" id="tabItemsForm" class="seg-btn" onclick="itemsTab('form')">＋ Add / edit item</button>
+      </div>
+      <span class="text-xs text-slate-500">Only items with a tax rule appear on invoices.</span>
     </div>
-    <div class="bg-white rounded-xl shadow p-5 text-sm">
-      <h2 class="font-semibold mb-2">Items with tax rules <span class="text-xs font-normal text-slate-500">— each item with its tax rule; only items with a tax rule appear on invoices</span></h2>
-      <form id="productForm" class="bg-slate-50 border rounded p-3 mb-3 space-y-3">
-        <input type="hidden" name="id">
-        <div>
-          <div class="text-xs font-semibold text-slate-700 mb-1">A. Item <span class="font-normal text-slate-500">— all fields are required</span></div>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <label class="col-span-2 sm:col-span-4"><span>1. Item name</span><input name="name" required maxlength="200" autocomplete="off" placeholder="e.g. Yogurt 500g"></label>
-            <label class="col-span-2"><span>2. Item description</span><textarea name="description" rows="2" maxlength="500" required placeholder="e.g. Plain yogurt, 500 g cup"></textarea></label>
-            <label class="col-span-2"><span>3. Item notes <span class="text-slate-400">(for your own use)</span></span><textarea name="notes" rows="2" maxlength="1000" required placeholder="e.g. supplier, storage, remarks"></textarea></label>
-            <label class="col-span-2"><span>HS code <span class="text-slate-400">(pick from the official list, or type your own)</span></span><input name="hsCode" class="pf-hs" required autocomplete="off" placeholder="Type code or product, e.g. yogurt"></label>
-            <label class="col-span-2"><span>UOM</span><input name="uoM" list="uomList" required autocomplete="off" placeholder="e.g. KG, Numbers, pieces, units"></label>
-            <div class="col-span-2 sm:col-span-4"><span class="block text-xs text-slate-600 mb-0.5">Prices <span class="text-slate-400">(as many as you need, e.g. A 150 · B 155 · C 180; ticked on the invoice)</span></span>
-              <div id="pfPrices" class="space-y-1"></div>
-              <button type="button" onclick="addPriceRow()" class="mt-1 text-xs text-emerald-700 underline">+ Add price</button></div>
-          </div>
+
+    <div id="itemsListView" class="bg-white rounded-xl shadow p-5 text-sm space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="font-semibold">My items <span class="text-xs font-normal text-slate-500">— each item with its tax rule</span></h2>
+        <button type="button" onclick="clearProductForm(); itemsTab('form')" class="bg-emerald-700 text-white rounded px-3 py-1.5 text-sm font-medium">＋ Add new item</button>
+      </div>
+      <div class="flex flex-wrap items-end gap-3 mb-2">
+        <label><span>Show</span><select id="itemSource"><option value="">All items</option><option value="OFFICIAL">Official HS codes</option><option value="CUSTOMER" id="itemSourceOwn">Codes created by this client</option></select></label>
+        <label><span>Search</span><input id="itemQ" placeholder="Name or HS code" autocomplete="off"></label>
+        <div class="ml-auto flex flex-wrap gap-2 text-xs">
+          <button type="button" onclick="itemTemplate()" class="border rounded px-3 py-1.5 bg-white">Excel template</button>
+          <label class="border rounded px-3 py-1.5 cursor-pointer bg-emerald-700 text-white">Import from Excel<input type="file" id="itemImportFile" accept=".xlsx,.xls" class="hidden"></label>
+          <button type="button" onclick="exportItems()" class="border rounded px-3 py-1.5 bg-white">Export to Excel</button>
         </div>
-        <div class="border-t pt-3">
-          <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1">
-            <div class="text-xs font-semibold text-slate-700">B. Tax rule against this item</div>
-            <div class="text-xs text-slate-500">Date and time: <b id="trNow">—</b> · Industry (as in IRIS): <b id="trIndustry">—</b> <span class="text-slate-400">(automatic)</span></div>
-          </div>
-          <div class="grid sm:grid-cols-4 gap-3 items-start">
-            <label class="sm:col-span-2"><span>Sale type</span><select name="saleType" id="trSaleType" required></select></label>
-            <input type="hidden" name="notifiedRate"><!-- CA: no notified rate box; an existing one is kept when the item is edited -->
-            <div class="sm:col-span-4">
-              <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1"><span class="text-xs text-slate-600">Taxes <span class="text-slate-400">(the sales tax, plus any more taxes — each with its own references and one comment)</span></span>
-                <button type="button" onclick="addTaxRow()" class="text-xs text-emerald-700 underline">+ Add tax</button></div>
+      </div>
+      <div id="itemImportOut" class="hidden"></div>
+      <p class="text-xs text-slate-500">Scroll right to see all columns →</p>
+      <div class="items-scroll overflow-x-auto border rounded-lg">
+      <table class="items-table w-max min-w-full text-sm"><thead class="text-left text-slate-600 bg-slate-50 border-b"><tr class="align-bottom"><th class="items-sticky-l px-3 py-2.5 font-semibold" style="min-width:12rem">Name</th><th class="px-3 py-2.5 font-semibold" style="min-width:14rem">Description</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Notes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">HS code</th><th class="px-3 py-2.5 font-semibold" style="min-width:8rem">Source</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">UOM</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem">Prices</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Sale type</th><th class="px-3 py-2.5 font-semibold" style="min-width:5rem">Rate</th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">References <span class="font-normal text-slate-400">(★ sent to FBR)</span></th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">Comment</th><th class="px-3 py-2.5 font-semibold" style="min-width:20rem">More taxes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">Since</th><th class="items-sticky-r px-3 py-2.5"></th></tr></thead>
+        <tbody id="productRows"></tbody></table>
+      </div>
+    </div>
+
+    <div id="itemsFormView" class="hidden">
+      <form id="productForm" class="space-y-5">
+        <input type="hidden" name="id">
+        <div id="pfBanner" class="hidden rounded-lg border border-sky-200 bg-sky-50 text-sky-900 px-4 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2"></div>
+        <!-- step bar: where you are and what is left -->
+        <nav class="stepper bg-white rounded-xl shadow">
+          <button type="button" class="stepper-item" data-go="stepItem"><span class="step-no">1</span><span><b>Item details</b><small data-step-text="1"></small></span></button>
+          <button type="button" class="stepper-item" data-go="stepPrices"><span class="step-no">2</span><span><b>Prices</b><small data-step-text="2"></small></span></button>
+          <button type="button" class="stepper-item" data-go="stepTax"><span class="step-no">3</span><span><b>Tax rule</b><small data-step-text="3"></small></span></button>
+          <button type="button" class="stepper-item" data-go="stepSave"><span class="step-no">4</span><span><b>Review &amp; save</b><small data-step-text="4"></small></span></button>
+        </nav>
+
+      <section id="stepItem" class="step-card bg-white rounded-xl shadow">
+        <div class="step-head"><span class="step-no">1</span><div class="flex-1"><h3 class="font-semibold text-base">Item details</h3><p class="text-xs text-slate-500">What the item is — all fields are required</p></div><span class="step-state" data-step="1"></span></div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <label class="col-span-2 sm:col-span-4"><span>Item name</span><input name="name" required maxlength="200" autocomplete="off" placeholder="e.g. Yogurt 500g"></label>
+          <label class="col-span-2"><span>Item description</span><textarea name="description" rows="2" maxlength="500" required placeholder="e.g. Plain yogurt, 500 g cup"></textarea></label>
+          <label class="col-span-2"><span>Item notes <span class="text-slate-400">(for your own use)</span></span><textarea name="notes" rows="2" maxlength="1000" required placeholder="e.g. supplier, storage, remarks"></textarea></label>
+          <label class="col-span-2"><span>HS code <span class="text-slate-400">(pick from the official list, or type your own)</span></span><input name="hsCode" class="pf-hs" required autocomplete="off" placeholder="Type code or product, e.g. yogurt"></label>
+          <label class="col-span-2"><span>UOM</span><input name="uoM" list="uomList" required autocomplete="off" placeholder="e.g. KG, Numbers, pieces, units"></label>
+        </div>
+      </section>
+
+      <section id="stepPrices" class="step-card bg-white rounded-xl shadow">
+        <div class="step-head"><span class="step-no">2</span><div class="flex-1"><h3 class="font-semibold text-base">Prices</h3><p class="text-xs text-slate-500">One or more named prices — on the invoice the user ticks one (e.g. Retail 150 · Wholesale 140)</p></div><span class="step-state" data-step="2"></span></div>
+        <div id="pfPrices" class="space-y-2"></div>
+        <button type="button" onclick="addPriceRow()" class="mt-2 text-sm text-emerald-700 font-medium">＋ Add price</button>
+      </section>
+
+      <section id="stepTax" class="step-card bg-white rounded-xl shadow">
+        <div class="step-head"><span class="step-no">3</span><div class="flex-1"><h3 class="font-semibold text-base">Tax rule</h3><p class="text-xs text-slate-500">Sale type, the sales tax rate and any more taxes — each with the law you read</p></div><span class="step-state" data-step="3"></span></div>
+        <details class="guide-box mb-4" open><summary class="cursor-pointer text-sm font-medium text-slate-700">Tax law guidelines <span class="text-xs font-normal text-slate-500">— check the law for your item; ETAX does not decide the tax for you</span></summary>
+          <div id="guideLinks" class="flex flex-wrap gap-2 mt-2"></div>
+          <p id="guideNote" class="text-xs text-slate-500 mt-2"></p>
+        </details>
+        <div class="grid sm:grid-cols-4 gap-3 items-end mb-3">
+          <label class="sm:col-span-2"><span>Sale type</span><select name="saleType" id="trSaleType" required></select></label>
+          <div class="sm:col-span-2 text-xs text-slate-500 pb-2">Date and time: <b id="trNow">—</b> · Industry (as in IRIS): <b id="trIndustry">—</b> <span class="text-slate-400">(automatic)</span></div>
+          <input type="hidden" name="notifiedRate"><!-- CA: no notified rate box; an existing one is kept when the item is edited -->
+        </div>
+        <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1"><span class="text-sm font-medium text-slate-700">Taxes <span class="text-xs font-normal text-slate-500">— the sales tax, plus any more taxes; each with its own references and one comment</span></span>
+          <button type="button" onclick="addTaxRow()" class="text-sm text-emerald-700 font-medium">＋ Add tax</button></div>
               <table class="w-full table-fixed text-sm bg-white border rounded">
                 <colgroup><col class="w-[13%]"><col class="w-[9%]"><col class="w-[12%]"><col class="w-[14%]"><col class="w-[12%]"><col class="w-[20%]"><col class="w-[17%]"><col class="w-8"></colgroup>
                 <thead class="bg-slate-50 text-left text-xs text-slate-600"><tr><th class="p-2">Tax</th><th class="p-2">Type</th><th class="p-2">Rate / Rs</th><th class="p-2">Apply on</th><th class="p-2">FBR box</th><th class="p-2">References <span class="font-normal text-slate-400">(pick several)</span></th><th class="p-2">Comment</th><th></th></tr></thead>
@@ -620,32 +747,21 @@
                   </tr>
                 </tbody>
               </table>
-              <p class="text-xs text-slate-500 mt-1">★ The sales tax's first reference is sent to FBR as the SRO / Schedule no. References of more taxes are kept for your record.</p>
-            </div>
-          </div>
-        </div>
-        <div class="flex flex-wrap items-center gap-3">
-          <button id="pfSubmit" class="bg-emerald-700 text-white rounded px-3 py-1.5">Save item with tax rule</button>
-          <button type="button" class="text-xs text-slate-600 underline" onclick="clearProductForm()">Clear</button>
+        <p class="text-xs text-slate-500 mt-2">★ The sales tax's first reference is sent to FBR as the SRO / Schedule no. References of more taxes are kept for your record.</p>
+      </section>
+
+      <section id="stepSave" class="step-card bg-white rounded-xl shadow">
+        <div class="step-head"><span class="step-no">4</span><div class="flex-1"><h3 class="font-semibold text-base">Review &amp; save</h3><p class="text-xs text-slate-500">Check what will be saved, then save</p></div><span class="step-state" data-step="4"></span></div>
+        <div id="pfReview" class="review-grid"></div>
+        <div class="flex flex-wrap items-center gap-3 mt-4">
+          <button id="pfSubmit" class="bg-emerald-700 text-white rounded-lg px-4 py-2 font-medium">Save item with tax rule</button>
+          <button type="button" class="border rounded-lg px-4 py-2 text-sm" onclick="clearProductForm()">Clear</button>
+          <button type="button" class="text-sm text-slate-600 underline" onclick="itemsTab('list')">Back to my items</button>
           <span id="pfMode" class="text-xs text-slate-500"></span>
         </div>
-        <p class="text-xs text-slate-500">Changing the tax rule replaces the item's current rule from now on. Invoices already filed keep the tax they were filed with; old rules stay in the item's history.</p>
+        <p class="text-xs text-slate-500 mt-3">Changing the tax rule replaces the item's current rule from now on. Invoices already filed keep the tax they were filed with; old rules stay in the item's history.</p>
+      </section>
       </form>
-      <div class="flex flex-wrap items-end gap-3 mb-2">
-        <label><span>Show</span><select id="itemSource"><option value="">All items</option><option value="NORULE">Without a tax rule</option><option value="OFFICIAL">Official HS codes</option><option value="CUSTOMER" id="itemSourceOwn">Codes created by this client</option></select></label>
-        <label><span>Search</span><input id="itemQ" placeholder="Name or HS code" autocomplete="off"></label>
-        <div class="ml-auto flex flex-wrap gap-2 text-xs">
-          <button type="button" onclick="itemTemplate()" class="border rounded px-3 py-1.5 bg-white">Excel template</button>
-          <label class="border rounded px-3 py-1.5 cursor-pointer bg-emerald-700 text-white">Import from Excel<input type="file" id="itemImportFile" accept=".xlsx,.xls" class="hidden"></label>
-          <button type="button" onclick="exportItems()" class="border rounded px-3 py-1.5 bg-white">Export to Excel</button>
-        </div>
-      </div>
-      <div id="itemImportOut" class="hidden mb-3"></div>
-      <p class="text-xs text-slate-500 mb-1">Scroll right to see all columns →</p>
-      <div class="items-scroll overflow-x-auto border rounded-lg">
-      <table class="items-table w-max min-w-full text-sm"><thead class="text-left text-slate-600 bg-slate-50 border-b"><tr class="align-bottom"><th class="items-sticky-l px-3 py-2.5 font-semibold" style="min-width:12rem">Name</th><th class="px-3 py-2.5 font-semibold" style="min-width:14rem">Description</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Notes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">HS code</th><th class="px-3 py-2.5 font-semibold" style="min-width:8rem">Source</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">UOM</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem">Prices</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Sale type</th><th class="px-3 py-2.5 font-semibold" style="min-width:5rem">Rate</th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">References <span class="font-normal text-slate-400">(★ sent to FBR)</span></th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">Comment</th><th class="px-3 py-2.5 font-semibold" style="min-width:20rem">More taxes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">Since</th><th class="items-sticky-r px-3 py-2.5"></th></tr></thead>
-        <tbody id="productRows"></tbody></table>
-      </div>
     </div>
   </div>
   <div data-page="c-stock" class="page hidden space-y-6">
@@ -832,6 +948,7 @@ function logout() {
 
 /* ---------- Left menu + pages ---------- */
 const ICON = {
+  book: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z',
   home: 'M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10',
   plus: 'M12 5v14M5 12h14',
   draft: 'M14 3H6v18h12V7l-4-4zM14 3v4h4M9 13h6M9 17h4',
@@ -855,9 +972,8 @@ const NAV = {
     { id: 'c-invoices', label: 'Issued Invoices', icon: 'list', crumb: 'Sales' },
     { id: 'c-buyers', label: 'Buyers / Customers', icon: 'users', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'c-products', label: 'Items with Tax Rules', icon: 'box', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
-    { id: 'c-import', label: 'Bulk Import', icon: 'upload', crumb: 'Sales', roles: ['OWNER', 'ACCOUNTANT'] },
-    { id: 'c-stock', label: 'Stock', icon: 'layers', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
-    { id: 'c-users', label: 'Users', icon: 'cog', crumb: 'Account', roles: ['OWNER'] },
+    { id: 'c-guide', label: 'Guide', icon: 'book', crumb: 'Help' },
+    // CA: Bulk Import, Stock and Users are not shown to clients (users are managed by the admin under Clients)
   ],
   admin: [
     { id: 'a-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
@@ -1767,11 +1883,42 @@ function recalc() {
   // CNIC/NTN: always for B2B (registered, or unregistered business); for consumers above Rs 100,000
   const limit = S.settings?.cnicRequiredAbove || 100000;
   const needNtn = regd || !f0.endConsumer.checked || t.total > limit;
+  syncInvoiceSteps(t, needNtn);
   $('#ntnReq').classList.toggle('hidden', !needNtn);
   $('#ntnReq').title = !regd && f0.endConsumer.checked ? `Required above Rs ${limit.toLocaleString('en-PK')}` : 'Required';
   return t;
 }
 const SRO_SALE_TYPES = new Set(['Exempt Goods', 'Goods at Reduced Rate', 'Goods as per SRO.297(|)/2023']);
+// New invoice: 4 sections with a ✓ and a short summary when done, else what is missing
+function syncInvoiceSteps(t, needNtn) {
+  const f = $('#invoiceForm'), debit = f.invoiceType.value === 'Debit Note';
+  const m1 = [...(!f.invoiceDate.value ? ['invoice date'] : []),
+    ...(!$('#scenarioRow').classList.contains('hidden') && !f.scenarioId.value ? ['sandbox scenario'] : []),
+    ...(debit && !f.invoiceRefNo.value.trim() ? ['original FBR invoice no.'] : []), ...(debit && !f.reason.value ? ['reason'] : []),
+    ...(debit && f.reason.value === 'Others' && !f.reasonRemarks.value.trim() ? ['remarks'] : [])];
+  const hasNo = f.buyerNtn.value.trim() || f.buyerCnic.value.trim();
+  const m2 = !S.buyerChosen ? ['choose a buyer — search a saved buyer, "+ Add new customer" or "Walk-in customer"']
+    : needNtn && !hasNo ? ['buyer NTN or CNIC — search a saved buyer or "+ Add new customer"'] : [];
+  const items = readItems();
+  const m3 = items.flatMap((it, i) => !it.productDescription || !it.hsCode ? [`pick an item on line ${i + 1}`]
+    : it.unitPrice === '' ? [`line ${i + 1} has no rate`] : !(Number(it.quantity) > 0) ? [`quantity on line ${i + 1}`] : []);
+  const picked = items.filter(it => it.productDescription && it.hsCode).length;
+  const ready = !m1.length && !m2.length && !m3.length;
+  const summary = [`✓ ${f.invoiceDate.value || ''}`, `✓ ${f.buyerBusinessName.value.trim() || 'Walk-in customer'}`, `✓ ${picked} item${picked === 1 ? '' : 's'}`, `Ready — Rs ${money(t.total)}`];
+  [m1, m2, m3, ready ? [] : ['finish the sections above']].forEach((m, i) => {
+    const ok = !m.length, n = i + 1;
+    const item = document.querySelector(`#invStepper .stepper-item:nth-child(${n})`);
+    item.classList.toggle('done', ok); item.classList.toggle('todo', !ok);
+    item.querySelector('.step-no').textContent = ok ? '✓' : n;
+    item.querySelector('small').textContent = ok ? summary[i] : `${m.length} to fill`;
+    const card = document.querySelectorAll('#invoiceForm .step-card')[i];
+    card.classList.toggle('done', ok); card.classList.toggle('todo', !ok);
+    card.querySelector('.step-head .step-no').textContent = ok ? '✓' : n;
+    const chip = card.querySelector('.step-state');
+    chip.className = 'step-state ' + (ok ? 'ok' : 'miss');
+    chip.textContent = ok ? (n === 4 ? '✓ Ready to submit' : '✓ Done') : `Missing: ${m.join(', ')}`;
+  });
+}
 // [fbrKey, label, value] → read-only cells; hover shows FBR's own field name
 const fbrCells = list => list.map(([k, label, v]) => `<div title="FBR field: ${k}"><div class="k">${esc(label)}</div><div class="v${v === '' || v == null ? ' empty' : ''}">${v === '' || v == null ? '—' : esc(v)}</div></div>`).join('');
 // Invoice header as the server sends it (src/fbr.js buildPayload; defaults as in prepareInvoice)
@@ -1841,6 +1988,9 @@ function setupInvoiceForm() {
   $('#invoiceForm').reason.innerHTML = '<option value="">— select reason —</option>' + S.meta.debitReasons.map(r => `<option>${esc(r)}</option>`).join('');
   $('#invoiceForm').reason.addEventListener('change', () => $('#remarksReq').classList.toggle('hidden', $('#invoiceForm').reason.value !== 'Others'));
   setupBuyerSearch();
+  $('#invStepper').addEventListener('click', e => {
+    const b = e.target.closest('[data-go]'); if (b) $('#' + b.dataset.go).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
   $('#items').addEventListener('input', e => { if (e.target.name === 'uoM') applyQtyStep(e.target.closest('.item')); });
   $('#items').addEventListener('change', e => {
     if (!e.target.matches('.price-pick input')) return;
@@ -1860,6 +2010,7 @@ function setupInvoiceForm() {
   $('#invoiceForm').addEventListener('submit', async e => {
     e.preventDefault();
     // read-only boxes are skipped by the browser's own checks: each line needs an item with a rate
+    if (!S.buyerChosen) { $('#invBuyer').scrollIntoView({ behavior: 'smooth', block: 'start' }); return toast('Choose the buyer first: a saved buyer, "+ Add new customer", or "Walk-in customer"'); }
     const bad = readItems().findIndex(it => !it.productDescription || !it.hsCode || it.unitPrice === '');
     if (bad >= 0) return toast(`Item ${bad + 1}: pick an item that has a price (Rate is empty)`);
     const btn = $('#submitBtn');
@@ -1970,7 +2121,7 @@ function clearBuyer() {
 }
 function resetForm() {
   const f = $('#invoiceForm');
-  clearBuyer();
+  clearBuyer(); S.buyerChosen = null; lockBuyer(false);
   for (const n of ['invoiceRefNo', 'reasonRemarks']) f[n].value = '';
   f.invoiceType.value = 'Sale Invoice'; f.reason.value = ''; applyDocType();
   f.invoiceDate.value = pkDate();
@@ -2343,16 +2494,24 @@ function fillBuyer(b) {
   setSelect(f.buyerProvince, b.province || '');
   f.buyerAddress.value = b.address || '';
   $('#buyerSearch').value = b.businessName || '';
-  lockBuyer(true);
+  S.buyerChosen = b.businessName || ntn || cnic ? 'saved' : 'walkin'; // a walk-in draft reopens as walk-in
+  lockBuyer(S.buyerChosen === 'saved');
   recalc();
 }
 // Walk-in (no buyer chosen): the details are empty and fixed too — a buyer with details is picked or added as a customer
+// The buyer must be chosen on purpose: a saved buyer (or a new customer), or "Walk-in customer" — not assumed
+function chooseWalkIn() {
+  clearBuyer(); S.buyerChosen = 'walkin'; lockBuyer(false); recalc();
+}
 function lockBuyer(chosen) {
   const f = $('#invoiceForm');
   for (const n of BUYER_INPUTS) { f[n].readOnly = true; f[n].placeholder = n === 'buyerBusinessName' ? 'Walk-in Customer' : n === 'buyerAddress' ? 'Seller address is used' : '—'; }
   for (const n of ['buyerRegistrationType', 'buyerProvince']) { f[n].classList.add('locked'); f[n].tabIndex = -1; }
-  $('#walkInBtn').classList.toggle('hidden', !chosen);
-  $('#buyerMode').textContent = chosen ? '— from the saved buyer (change it on the Buyers page)' : '— walk-in customer (end consumer). Search above or "+ Add new customer" for a buyer with details';
+  const walk = S.buyerChosen === 'walkin';
+  $('#walkInBtn').textContent = walk ? '✓ Walk-in customer' : '🚶 Walk-in customer';
+  $('#walkInBtn').className = 'rounded px-3 py-1.5 text-sm font-medium border ' + (walk ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-white text-slate-700 border-slate-300');
+  $('#buyerMode').textContent = chosen ? '— from the saved buyer (change it on the Buyers page)'
+    : walk ? '— walk-in customer (end consumer)' : '— no buyer chosen yet: search a saved buyer, "+ Add new customer", or "Walk-in customer"';
 }
 // One search box: any of name, NTN, CNIC, STRN, mobile, email; the list shows on click as well
 function setupBuyerSearch() {
@@ -2444,9 +2603,10 @@ const extraTaxesCell = p => (p.extraTaxes || []).map(t => `<div class="mb-1.5"><
 const salesTaxRefs = p => refLinks(p.lawRefs?.length ? p.lawRefs : p.sroScheduleNo ? [{ reference: p.sroScheduleNo }] : [], true);
 const salesTaxComment = p => p.taxComment || (p.lawRefs || []).filter(r => r.comment).map(r => `${r.reference}: ${r.comment}`).join('\n');
 function renderItems() {
+  $('#itemsCount').textContent = (S.saved?.products || []).length;
   $('#itemSourceOwn').textContent = `Codes created by ${clientName()}`;
   const src = $('#itemSource').value, q = $('#itemQ').value.trim().toLowerCase();
-  const rows = (S.saved?.products || []).filter(p => (!src || (src === 'NORULE' ? !p.saleType : p.source === src)) && (!q || p.name.toLowerCase().includes(q) || p.hsCode.startsWith(q)));
+  const rows = (S.saved?.products || []).filter(p => (!src || p.source === src) && (!q || p.name.toLowerCase().includes(q) || p.hsCode.startsWith(q)));
   const cell = (v, cls = '') => `<td class="px-3 py-3 ${cls}">${v || '<span class="text-slate-300">—</span>'}</td>`;
   $('#productRows').innerHTML = rows.map(p => `<tr class="item-row align-top">
     <td class="items-sticky-l px-3 py-3 font-medium">${esc(p.name)}</td>${cell(esc(p.description), 'whitespace-pre-line')}${cell(esc(p.notes), 'whitespace-pre-line text-slate-600')}
@@ -2459,12 +2619,77 @@ function renderItems() {
     <tr id="hist-${p.id}" class="hidden"><td colspan="14" class="pb-2"></td></tr>`).join('')
     || `<tr><td colspan="14" class="py-2 text-slate-500">${(S.saved?.products || []).length ? 'No items match.' : 'No items yet — add your first item with its tax rule above.'}</td></tr>`;
 }
+// ---- Items page: list tab / form tab; 4 sections with live status and a review
+function itemsTab(t) {
+  S.itemsTab = t;
+  $('#itemsListView').classList.toggle('hidden', t !== 'list');
+  $('#itemsFormView').classList.toggle('hidden', t !== 'form');
+  $('#tabItemsList').classList.toggle('on', t === 'list');
+  $('#tabItemsForm').classList.toggle('on', t === 'form');
+  if (t === 'form') syncSteps();
+  document.querySelector('main')?.scrollTo?.({ top: 0 }); window.scrollTo(0, 0);
+}
+function stepStatus() {
+  const f = $('#productForm'), v = n => String(f[n]?.value || '').trim();
+  const m1 = [['name', 'name'], ['description', 'description'], ['notes', 'notes'], ['hsCode', 'HS code'], ['uoM', 'UOM']].filter(([n]) => !v(n)).map(([, l]) => l);
+  if (v('hsCode') && !/^\d{4}\.?\d{4}$/.test(v('hsCode'))) m1.push('HS code like 0101.2100');
+  const rows = [...document.querySelectorAll('#pfPrices .price-row')].map(r => [r.querySelector('.pr-label').value.trim(), r.querySelector('.pr-price').value]);
+  const full = rows.filter(([l, p]) => l && p !== ''), half = rows.filter(([l, p]) => (l || p !== '') && !(l && p !== ''));
+  const m2 = [...(!full.length ? ['at least one price'] : []), ...(half.length ? ['each price needs a name and an amount'] : [])];
+  const refs = $('#trMainRefs')._refs || [];
+  const m3 = [...(!v('saleType') ? ['sale type'] : []), ...(!v('rate') ? ['sales tax rate'] : []),
+    ...(SRO_SALE_TYPES.has(v('saleType')) && !refs.length ? ['a reference (this sale type needs one)'] : []),
+    ...readTaxes().flatMap((t, i) => [!t.name && `name of more tax ${i + 1}`, t.value === '' && `amount of "${t.name || 'more tax ' + (i + 1)}"`, t.kind === 'PCT' && !t.base && `"Apply on" of "${t.name || 'more tax ' + (i + 1)}"`].filter(Boolean))];
+  return { m1, m2, m3, prices: full, refs };
+}
+function syncSteps() {
+  if (!$('#itemsFormView') || $('#itemsFormView').classList.contains('hidden')) return;
+  const st = stepStatus(), all = [st.m1, st.m2, st.m3];
+  const ready = all.every(m => !m.length);
+  all.concat([ready ? [] : ['finish the sections above']]).forEach((m, i) => {
+    const ok = !m.length, n = i + 1;
+    const text = ok ? (n === 4 ? 'Ready to save' : 'Done') : `Missing: ${m.join(', ')}`;
+    const item = document.querySelector(`#itemsFormView .stepper-item:nth-child(${n})`);
+    item.classList.toggle('done', ok); item.classList.toggle('todo', !ok);
+    item.querySelector('.step-no').textContent = ok ? '✓' : n;
+    item.querySelector('small').textContent = ok ? (n === 4 ? 'Ready to save' : '✓ Done') : `${m.length} to fill`;
+    const card = document.querySelectorAll('#productForm .step-card')[i];
+    card.classList.toggle('done', ok); card.classList.toggle('todo', !ok);
+    card.querySelector('.step-head .step-no').textContent = ok ? '✓' : n;
+    const chip = document.querySelector(`#itemsFormView .step-state[data-step="${n}"]`);
+    chip.className = 'step-state ' + (ok ? 'ok' : 'miss'); chip.textContent = ok ? (n === 4 ? '✓ Ready' : '✓ Done') : text;
+  });
+  // review: what will be saved
+  const f = $('#productForm'), v = n => String(f[n]?.value || '').trim(), miss = t => `<span class="miss">${t}</span>`;
+  const box = (k, html) => `<div><div class="k">${k}</div>${html}</div>`;
+  const taxes = readTaxes();
+  $('#pfReview').innerHTML = [
+    box('Item', v('name') ? `<b>${esc(v('name'))}</b>${v('description') ? `<div class="text-slate-500">${esc(v('description'))}</div>` : ''}` : miss('no name yet')),
+    box('HS code · UOM', `${v('hsCode') ? esc(v('hsCode')) : miss('no HS code')} · ${v('uoM') ? esc(v('uoM')) : miss('no UOM')}`),
+    box('Prices', st.prices.length ? st.prices.map(([l, p]) => `${esc(l)} ${money(p)}`).join('<br>') : miss('no price yet')),
+    box('Sale type · sales tax', `${v('saleType') ? esc(v('saleType')) : miss('no sale type')} · ${v('rate') ? `<b>${esc(v('rate'))}</b>` : miss('no rate')}`),
+    box('Sent to FBR as SRO / Schedule', st.refs.length ? `★ ${esc(st.refs[0].reference)}${st.refs.length > 1 ? `<div class="text-slate-500">+ ${st.refs.length - 1} more reference(s)</div>` : ''}` : '<span class="text-slate-400">none</span>'),
+    box('More taxes', taxes.length ? taxes.map(t => esc(`${t.name || '(no name)'} ${t.kind === 'FIXED' ? 'Rs ' + (t.value || '?') + ' fixed' : (t.value || '?') + '%'} → ${fbrBoxName(t.fbrField)}`)).join('<br>') : '<span class="text-slate-400">none</span>'),
+  ].join('');
+}
+function setupItemSteps() {
+  if (S.itemStepsReady) return; S.itemStepsReady = true;
+  const f = $('#productForm');
+  let t; const later = () => { clearTimeout(t); t = setTimeout(syncSteps, 60); };
+  f.addEventListener('input', later); f.addEventListener('change', later); f.addEventListener('click', later);
+  new MutationObserver(later).observe(f, { childList: true, subtree: true }); // price / tax / reference rows added or removed
+  document.querySelector('#itemsFormView .stepper').addEventListener('click', e => {
+    const b = e.target.closest('[data-go]'); if (b) $('#' + b.dataset.go).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
 function clearProductForm() {
   const f = $('#productForm');
   f.reset(); f.id.value = '';
   $('#pfPrices').innerHTML = ''; addPriceRow();
   $('#pfSubmit').textContent = 'Save item with tax rule'; $('#pfMode').textContent = '';
+  $('#pfBanner').classList.add('hidden');
   fillRuleForm(null);
+  syncSteps();
 }
 function editProduct(id) {
   const p = S.saved.products.find(x => x.id === id), f = $('#productForm');
@@ -2473,19 +2698,23 @@ function editProduct(id) {
   for (const x of pricesOf(p)) addPriceRow(x.label, Number(x.price));
   if (!pricesOf(p).length) addPriceRow();
   fillRuleForm(p);
-  $('#pfSubmit').textContent = 'Update item and tax rule'; $('#pfMode').textContent = `Editing "${p.name}"${p.saleType ? '' : ' — set its tax rule below'}`;
-  f.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#pfSubmit').textContent = 'Update item and tax rule'; $('#pfMode').textContent = '';
+  $('#pfBanner').innerHTML = `<span>Editing <b>${esc(p.name)}</b>${p.saleType ? '' : ' — set its tax rule in section 3'}</span><button type="button" class="underline" onclick="clearProductForm(); itemsTab('list')">Cancel</button>`;
+  $('#pfBanner').classList.remove('hidden');
+  itemsTab('form');
   f.name.focus({ preventScroll: true });
 }
 
-/* ---------- Tax rules against items (client sets them; Raseed only links the FBR guidance) ---------- */
+/* ---------- Tax rules against items (client sets them; ETAX only links the FBR guidance) ---------- */
 async function loadItemsPage() {
   setupItemRuleForm();
   loadGuides();
   $('#trNow').textContent = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   $('#trIndustry').textContent = S.settings?.industry || 'not set by your administrator';
+  setupItemSteps();
   await loadSaved();
   if (!$('#productForm').id.value) fillRuleForm(null);
+  itemsTab(S.itemsTab || 'list');
 }
 function fillRuleForm(p) {
   const f = $('#productForm');
@@ -2700,7 +2929,7 @@ function setupSavedForms() {
     try {
       const p = await api('/api/products', { method: 'POST', body }); // saves the item and, if changed, its tax rule
       toast(`${body.id ? 'Updated' : 'Saved'} "${p.name}" with its tax rule — it appears on invoices`, true);
-      clearProductForm(); loadSaved();
+      clearProductForm(); await loadSaved(); itemsTab('list');
     } catch (err) { toast(err.message); }
   });
   bf.addEventListener('submit', async e => {

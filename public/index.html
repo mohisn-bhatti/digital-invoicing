@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Raseed — FBR Digital Invoicing for Pakistani businesses</title>
-<meta name="description" content="Raseed files every sales invoice with FBR Digital Invoicing in real time, prints receipts with the official FBR invoice number and QR, and keeps your sales tax records ready for your return.">
+<title>ETAX — FBR Digital Invoicing for Pakistani businesses</title>
+<meta name="description" content="ETAX files every sales invoice with FBR Digital Invoicing in real time, prints receipts with the official FBR invoice number and QR, and keeps your sales tax records ready for your return.">
 <meta name="theme-color" content="#047857">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23047857'/><text x='50%' y='58%' font-size='38' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle' dominant-baseline='middle'>R</text></svg>">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
@@ -21,7 +21,7 @@
 <header class="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-100">
   <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
     <a href="/" class="flex items-center gap-2 font-extrabold text-xl text-emerald-700">
-      <span class="inline-flex w-8 h-8 rounded-lg bg-emerald-700 text-white items-center justify-center text-lg">R</span> Raseed
+      <img src="/logo.svg" alt="" class="w-9 h-9"><span class="text-xl font-extrabold tracking-wide text-slate-900"><span class="text-emerald-600">E</span>TAX</span>
     </a>
     <nav class="hidden md:flex items-center gap-6 text-sm text-slate-600">
       <a href="#features" class="hover:text-emerald-700">Features</a>
@@ -41,9 +41,9 @@
 <section class="bg-gradient-to-b from-emerald-50 to-white">
   <div class="max-w-6xl mx-auto px-4 py-16 md:py-24 grid md:grid-cols-2 gap-12 items-center">
     <div>
-      <span class="inline-block text-xs font-semibold tracking-wide uppercase text-emerald-800 bg-emerald-100 rounded-full px-3 py-1">FBR Digital Invoicing · PRAL DI API</span>
-      <h1 class="mt-5 text-4xl md:text-5xl font-extrabold leading-tight text-slate-900">Har bill, FBR ke saath.<br><span class="text-emerald-700">Bina jhanjhat.</span></h1>
-      <p class="mt-5 text-lg text-slate-600 max-w-xl">Raseed files every sales invoice with FBR in real time, prints receipts with the official FBR invoice number and QR code, and keeps your sales tax records ready for the monthly return.</p>
+      <span class="inline-block text-xs font-semibold tracking-wide uppercase text-emerald-800 bg-emerald-100 rounded-full px-3 py-1">FBR Digital Invoicing · Direct connection to FBR</span>
+      <h1 class="mt-5 text-4xl md:text-5xl font-extrabold leading-tight text-slate-900">Every invoice, filed with FBR.<br><span class="text-emerald-700">No hassle.</span></h1>
+      <p class="mt-5 text-lg text-slate-600 max-w-xl">ETAX files every sales invoice with FBR in real time, prints receipts with the official FBR invoice number and QR code, and keeps your sales tax records ready for the monthly return.</p>
       <div class="mt-8 flex flex-wrap gap-3">
         <a href="/contact" class="px-5 py-3 rounded-lg bg-emerald-700 text-white font-semibold hover:bg-emerald-800">Book a free demo</a>
         <a href="#how" class="px-5 py-3 rounded-lg border border-slate-300 font-semibold hover:border-emerald-700 hover:text-emerald-700">See how it works</a>
@@ -111,7 +111,7 @@
 <section id="features" class="bg-slate-50 py-16">
   <div class="max-w-6xl mx-auto px-4">
     <h2 class="text-3xl font-extrabold text-slate-900 text-center">Everything you need to invoice the FBR way</h2>
-    <p class="mt-3 text-center text-slate-600 max-w-2xl mx-auto">Built around the FBR Digital Invoicing rules — sale types, HS codes, further tax, debit notes and the scenarios FBR tests before you go live.</p>
+    <p class="mt-3 text-center text-slate-600 max-w-2xl mx-auto">Built around the FBR Digital Invoicing rules — sale types, HS codes, further tax, debit notes and the practice invoices FBR asks for before you go live.</p>
     <div class="mt-10 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
       <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🧾</div><h3 class="mt-3 font-semibold">FBR invoice number &amp; QR</h3><p class="mt-2 text-sm text-slate-600">Each invoice carries the official FBR number and a QR code your customers can verify. Prints on 80mm thermal receipts.</p></div>
       <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">📊</div><h3 class="mt-3 font-semibold">Excel bulk upload</h3><p class="mt-2 text-sm text-slate-600">Upload hundreds of invoices from Excel or CSV. See errors before sending; valid invoices are filed one by one in the background.</p></div>
@@ -129,12 +129,17 @@
 <!-- How it works -->
 <section id="how" class="py-16">
   <div class="max-w-6xl mx-auto px-4">
-    <h2 class="text-3xl font-extrabold text-slate-900 text-center">From registration to your first FBR invoice</h2>
+    <h2 class="text-3xl font-extrabold text-slate-900 text-center">From sign-up to your first FBR invoice</h2>
+    <p class="mt-2 text-center text-slate-600">Four simple steps — we handle the technical FBR setup for you.</p>
+    <p class="mt-3 text-center text-slate-600">See it in action — a 1-minute tour of ETAX: add a buyer, set up an item and its tax rule, create an invoice and file it with FBR.</p>
+    <video class="mt-8 w-full max-w-4xl mx-auto block rounded-2xl border shadow-lg bg-slate-900" controls preload="metadata" poster="/guide/demo-poster.png">
+      <source src="/guide/etax-demo.webm" type="video/webm">
+    </video>
     <div class="mt-10 grid md:grid-cols-4 gap-6">
-      <div class="relative p-6 rounded-xl border"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">1</div><h3 class="mt-4 font-semibold">Register in IRIS</h3><p class="mt-2 text-sm text-slate-600">Choose Digital Invoicing → API integration → PRAL. We guide you through every field.</p></div>
-      <div class="relative p-6 rounded-xl border"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">2</div><h3 class="mt-4 font-semibold">We set you up</h3><p class="mt-2 text-sm text-slate-600">Your business details, FBR token and products go in. Your account is ready to test.</p></div>
-      <div class="relative p-6 rounded-xl border"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">3</div><h3 class="mt-4 font-semibold">FBR testing, handled</h3><p class="mt-2 text-sm text-slate-600">We run the sandbox scenarios FBR assigns to your business type until IRIS marks them complete.</p></div>
-      <div class="relative p-6 rounded-xl border border-emerald-600 bg-emerald-50"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">4</div><h3 class="mt-4 font-semibold">Go live</h3><p class="mt-2 text-sm text-slate-600">With your production token, every invoice you issue is filed with FBR instantly.</p></div>
+      <div class="relative p-6 rounded-xl border"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">1</div><h3 class="mt-4 font-semibold">Tell us about your business</h3><p class="mt-2 text-sm text-slate-600">Share your NTN, business name and address. We help you switch on Digital Invoicing in your FBR account (IRIS) — step by step, on a short call.</p></div>
+      <div class="relative p-6 rounded-xl border"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">2</div><h3 class="mt-4 font-semibold">We set up your account</h3><p class="mt-2 text-sm text-slate-600">We connect ETAX to FBR for you and add your products, their tax rates and your customers. You get your own login.</p></div>
+      <div class="relative p-6 rounded-xl border"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">3</div><h3 class="mt-4 font-semibold">FBR approval — we do it</h3><p class="mt-2 text-sm text-slate-600">Before you go live, FBR asks for a few practice invoices. We prepare and send them for you until FBR approves — nothing for you to learn.</p></div>
+      <div class="relative p-6 rounded-xl border border-emerald-600 bg-emerald-50"><div class="w-9 h-9 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center">4</div><h3 class="mt-4 font-semibold">Start invoicing</h3><p class="mt-2 text-sm text-slate-600">Create an invoice and press Submit. It is filed with FBR in seconds and prints with the official FBR number and QR code.</p></div>
     </div>
   </div>
 </section>
@@ -158,15 +163,15 @@
     <h2 class="text-3xl font-extrabold text-slate-900 text-center">Questions</h2>
     <div class="mt-8 space-y-3">
       <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">Do I need anything from FBR first?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
-        <p class="mt-3 text-slate-600 text-sm">You need an active NTN/STRN and an IRIS login. In IRIS you select Digital Invoicing with PRAL as the integrator; we help you fill it in and whitelist the server.</p></details>
+        <p class="mt-3 text-slate-600 text-sm">You need an active NTN/STRN and an IRIS login. We help you switch on Digital Invoicing in IRIS and do the technical FBR connection for you.</p></details>
       <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">What happens if the internet or FBR is down?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
-        <p class="mt-3 text-slate-600 text-sm">Your invoice is saved and queued. Raseed retries automatically and files it as soon as FBR responds — and it never files the same sale twice.</p></details>
+        <p class="mt-3 text-slate-600 text-sm">Your invoice is saved and queued. ETAX retries automatically and files it as soon as FBR responds — and it never files the same sale twice.</p></details>
       <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">Can I upload invoices from Excel?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
         <p class="mt-3 text-slate-600 text-sm">Yes. Download our template, fill one row per item, and upload. You see every error before anything is sent, and re-uploading the same file never creates duplicates.</p></details>
       <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">Can my customers verify the invoice?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
         <p class="mt-3 text-slate-600 text-sm">Every receipt shows the FBR invoice number and a QR code with the FBR Digital Invoicing logo, which customers can check in FBR's Tax Asaan app.</p></details>
       <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">Is my data safe?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
-        <p class="mt-3 text-slate-600 text-sm">Each business only sees its own data. Your FBR token is stored encrypted, and every action is recorded in a log that cannot be edited or deleted.</p></details>
+        <p class="mt-3 text-slate-600 text-sm">Each business only sees its own data. Your FBR connection key is stored encrypted, and every action is recorded in a log that cannot be edited or deleted.</p></details>
       <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">How much does it cost?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
         <p class="mt-3 text-slate-600 text-sm">It depends on your business and invoice volume. <a href="/contact" class="text-emerald-700 underline">Contact us</a> for a free demo and a quote.</p></details>
     </div>
@@ -178,7 +183,7 @@
   <div class="max-w-6xl mx-auto rounded-2xl bg-emerald-700 text-white p-10 md:p-14 flex flex-col md:flex-row items-center justify-between gap-6">
     <div>
       <h2 class="text-3xl font-extrabold">Ready to file with FBR the easy way?</h2>
-      <p class="mt-2 text-emerald-50">Tell us about your business — we'll show you Raseed with your own products.</p>
+      <p class="mt-2 text-emerald-50">Tell us about your business — we'll show you ETAX with your own products.</p>
     </div>
     <div class="flex flex-wrap gap-3">
       <a href="/contact" class="px-5 py-3 rounded-lg bg-white text-emerald-800 font-semibold hover:bg-emerald-50">Book a free demo</a>
@@ -189,10 +194,10 @@
 
 <footer class="border-t">
   <div class="max-w-6xl mx-auto px-4 py-8 flex flex-col md:flex-row gap-4 justify-between text-sm text-slate-500">
-    <div><span class="font-bold text-emerald-700">Raseed</span> · FBR Digital Invoicing for Pakistani businesses <span data-contact class="block mt-1"></span></div>
+    <div><span class="font-bold text-emerald-700">ETAX</span> · FBR Digital Invoicing for Pakistani businesses <span data-contact class="block mt-1"></span></div>
     <div class="flex gap-4"><a href="/contact" class="hover:text-emerald-700">Contact</a><a href="/app" class="hover:text-emerald-700">Log in</a></div>
   </div>
-  <p class="max-w-6xl mx-auto px-4 pb-8 text-xs text-slate-400">Raseed is independent software that connects to FBR Digital Invoicing through PRAL. It is not affiliated with or endorsed by the Federal Board of Revenue or PRAL.</p>
+  <p class="max-w-6xl mx-auto px-4 pb-8 text-xs text-slate-400">ETAX is independent software that connects to FBR Digital Invoicing through PRAL. It is not affiliated with or endorsed by the Federal Board of Revenue or PRAL.</p>
 </footer>
 
 <script>
@@ -200,7 +205,7 @@ try { new QRCode(document.getElementById('heroQr'), { text: '1234567DI1791300004
 // Contact details come from the server (.env CONTACT_*); hidden when not set
 fetch('/api/public/site').then(r => r.json()).then(s => {
   if (s.whatsapp) document.querySelectorAll('[data-wa]').forEach(a => {
-    a.href = `https://wa.me/${s.whatsapp}?text=${encodeURIComponent('Assalam o Alaikum! I would like to know more about Raseed.')}`;
+    a.href = `https://wa.me/${s.whatsapp}?text=${encodeURIComponent('Hello! I would like to know more about ETAX.')}`;
     a.target = '_blank'; a.rel = 'noopener'; a.classList.remove('hidden');
   });
   const bits = [s.phone, s.email, s.city].filter(Boolean);

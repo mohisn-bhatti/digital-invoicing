@@ -31,8 +31,8 @@ _Last updated: 2026-10-07 (CA feedback)_ · summary: [GUIDE.md](GUIDE.md)
 - Audit log: append-only (database trigger), client and admin views, filters, CSV export
 
 **Website**
-- Raseed landing page (`/`), contact page (`/contact`) with WhatsApp; enquiries → admin "Website enquiries" (spam honeypot,
-  per-IP limit); app moved to `/app`. To do: buy domain (check raseed.pk at PKNIC), set CONTACT_* in .env, real screenshots.
+- ETAX landing page (`/`), contact page (`/contact`) with WhatsApp; enquiries → admin "Website enquiries" (spam honeypot,
+  per-IP limit); app moved to `/app`. To do: buy domain (check etax.pk at PKNIC), set CONTACT_* in .env, real screenshots.
 
 **Before go-live set (done 2026-10-07)**
 - Users and roles (Owner / Accountant / Cashier), change and reset password, forced change at first login
@@ -42,7 +42,7 @@ _Last updated: 2026-10-07 (CA feedback)_ · summary: [GUIDE.md](GUIDE.md)
 - Stock entries and the Annex-H1 stock statement
 
 **CA feedback, Phase 1 sheet (done 2026-10-07)**
-- Admin FBR settings in three groups: must match IRIS / received from FBR / entered in Raseed. STRN first,
+- Admin FBR settings in three groups: must match IRIS / received from FBR / entered in ETAX. STRN first,
   "(Sent to FBR)" in red, invoice number format explained as a note, "Check registration with FBR" for the seller
 - Tax Rules (admin): HS code → sale type, rate and SRO reference from the CA's Document 1 (50 starting rules,
   longest prefix wins, standard 18% otherwise). The invoice form fills them in when an HS code is chosen and shows why

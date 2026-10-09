@@ -132,7 +132,7 @@ function sellerReady(t) {
 }
 
 // ---------- Website pages ----------
-// "/" is the Raseed landing page (public/index.html); the app itself lives at /app
+// "/" is the ETAX landing page (public/index.html); the app itself lives at /app
 const page = file => (req, res) => res.sendFile(path.join(__dirname, 'public', file));
 app.get('/app', page('app.html'));
 app.get('/contact', page('contact.html'));
@@ -140,7 +140,7 @@ app.get('/contact', page('contact.html'));
 // ---------- Public website API (no login) ----------
 app.get('/api/public/site', (req, res) => {
     res.json({
-        name: 'Raseed',
+        name: 'ETAX',
         whatsapp: (process.env.CONTACT_WHATSAPP || '').replace(/\D/g, ''), // e.g. 923001234567
         phone: process.env.CONTACT_PHONE || '',
         email: process.env.CONTACT_EMAIL || '',
@@ -1547,7 +1547,7 @@ app.put('/api/admin/guidelines/note', authenticateToken, ADMIN, async (req, res)
 });
 
 // ---------- Items and their tax rules ----------
-// Phase 1: the client sets the tax on each item; Raseed doesn't decide it from the HS code. Only items with a tax rule
+// Phase 1: the client sets the tax on each item; ETAX doesn't decide it from the HS code. Only items with a tax rule
 // are offered on the invoice form.
 function itemData(b) {
     // An item can have several prices (e.g. retail / wholesale); the first is also its unitPrice

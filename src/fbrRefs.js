@@ -4,7 +4,7 @@
 const axios = require('axios');
 
 const BASE = 'https://www.fbr.gov.pk';
-const http = axios.create({ timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0 (Raseed)', 'X-Requested-With': 'XMLHttpRequest' } });
+const http = axios.create({ timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0 (ETAX)', 'X-Requested-With': 'XMLHttpRequest' } });
 const form = o => new URLSearchParams(o).toString();
 const FORM = { headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' } };
 

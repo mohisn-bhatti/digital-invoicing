@@ -195,7 +195,7 @@ model Product {
   @@unique([tenantId, name])
 }
 
-// Tax rule set by the client against an item (Phase 1: the client decides, Raseed only links the FBR guidance).
+// Tax rule set by the client against an item (Phase 1: the client decides, ETAX only links the FBR guidance).
 // Rules are never edited: a new rule replaces the current one and the old one stays as history.
 model ProductTaxRule {
   id              String   @id @default(uuid())

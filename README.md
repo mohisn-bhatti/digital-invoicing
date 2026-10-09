@@ -1,4 +1,4 @@
-# Raseed — FBR Digital Invoicing
+# ETAX — FBR Digital Invoicing
 
 **Start here:** [docs/GUIDE.md](docs/GUIDE.md) covers what's done, how to use the app and what's left.
 

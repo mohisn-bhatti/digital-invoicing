@@ -13,7 +13,7 @@ const { spawn, spawnSync } = require('child_process');
 const MAGIC = Buffer.from('RSDBK1');
 
 function decrypt(buf, passphrase) {
-    if (!buf.subarray(0, MAGIC.length).equals(MAGIC)) throw new Error('Not a Raseed encrypted backup.');
+    if (!buf.subarray(0, MAGIC.length).equals(MAGIC)) throw new Error('Not an ETAX encrypted backup.');
     const salt = buf.subarray(6, 22), iv = buf.subarray(22, 34), tag = buf.subarray(buf.length - 16), body = buf.subarray(34, buf.length - 16);
     const d = crypto.createDecipheriv('aes-256-gcm', crypto.scryptSync(passphrase, salt, 32), iv);
     d.setAuthTag(tag);
