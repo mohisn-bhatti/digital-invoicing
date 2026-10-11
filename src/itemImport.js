@@ -4,12 +4,14 @@
 // Rows arrive with canonical keys (the browser maps the headings): see ITEM_REQUIRED / TAX_REQUIRED below.
 const { normalizeCode, HS_FORMAT } = require('./hscodes');
 const { cleanExtraTaxes, SRO_REQUIRED_SALE_TYPES } = require('./tax');
+const { compareRecord, ITEM_FIELDS } = require('./importMerge');
 
 const MAX_ITEMS = 2000;
 const ITEM_REQUIRED = { name: 'Item name', description: 'Item description', notes: 'Item notes', hsCode: 'HS code', uoM: 'UOM',
     p1Name: 'Price 1 name', p1Amount: 'Price 1 amount', saleType: 'Sale type', rate: 'Sales tax rate' };
 const TAX_REQUIRED = { itemName: 'Item name', name: 'Tax name', kind: 'Type', value: 'Rate or Rs', fbrBox: 'FBR box' };
-const FBR_BOXES = { extratax: 'extraTax', fedpayable: 'fedPayable', fed: 'fedPayable', furthertax: 'furtherTax', salestax: 'salesTaxApplicable' };
+// FBR DI API v1.12: more taxes only in Extra Tax or FED Payable (sales tax is checked against rate × value — 0104)
+const FBR_BOXES = { extratax: 'extraTax', fedpayable: 'fedPayable', fed: 'fedPayable' };
 
 const text = v => (v === null || v === undefined ? '' : String(v).trim());
 const key = v => text(v).toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -29,8 +31,10 @@ function rateText(v) {
 
 /**
  * @param {{ itemHeaders: string[], items: object[], taxHeaders?: string[], taxes?: object[] }} file
- * @param {{ saleTypes: string[], existing: {name,hsCode,saleType}[], officialCodes: Set<string>, findRef: (t:string)=>object|null }} ctx
- * @returns {{ errors: {sheet,row,name,messages}[], warnings: {sheet,row,name,messages}[], ready: {row,item,rule}[] }}
+ * An item already saved (same name, or same HS code + sale type) is not an error: its row comes back with the saved
+ * item's id, what the file fills in (fills) and where the two differ (conflicts) — the uploader chooses, see importMerge.
+ * @param {{ saleTypes: string[], existing: {id,name,hsCode,saleType,…}[], officialCodes: Set<string>, findRef: (t:string)=>object|null }} ctx
+ * @returns {{ errors: {sheet,row,name,messages}[], warnings: {sheet,row,name,messages}[], ready: {row,item,rule,existing?,fills?,conflicts?}[] }}
  */
 function checkImport(file, ctx) {
     const errors = [], warnings = [], ready = [];
@@ -93,31 +97,43 @@ function checkImport(file, ctx) {
         const rate = rateText(r.rate);
         if (!rate) msgs.push('Sales tax rate is missing');
 
+        // References are optional (a record of the law read); FBR gets the SRO / Schedule no. (0077) — its own
+        // column, else the first reference
         const lawRefs = refsOf(r.refs);
-        if (saleType && SRO_REQUIRED_SALE_TYPES.has(saleType) && !lawRefs.length) {
-            msgs.push(`"${saleType}" needs at least one Sales tax reference (the first is sent to FBR)`);
-        }
+        const sroNo = (text(r.sro) || lawRefs[0]?.reference || '').slice(0, 100);
+        if (saleType && SRO_REQUIRED_SALE_TYPES.has(saleType) && !sroNo) msgs.push(`"${saleType}" needs the SRO / Schedule no. (FBR rule 0077)`);
+        // FBR DI API v1.12: item serial for exempt / reduced / SRO lines (0078); retail price for 3rd schedule (0090)
+        const serial = text(r.serial).slice(0, 50);
+        if (saleType && SRO_REQUIRED_SALE_TYPES.has(saleType) && !serial) msgs.push(`"${saleType}" needs the Item serial no. (FBR rule 0078)`);
+        const retail = text(r.retail) === '' ? null : amount(r.retail);
+        if (saleType === '3rd Schedule Goods' && !(retail > 0)) msgs.push('3rd schedule goods need the Retail price per unit (FBR rule 0090)');
+        else if (retail !== null && !(retail > 0)) msgs.push(`Retail price per unit "${text(r.retail)}" is not a number above 0`);
 
-        // Duplicates: item name; HS code + sale type (the same code with another sale type is fine)
+        // Twice in the file: item name, or HS code + sale type (the same code with another sale type is fine).
+        // Already saved (same name, else same HS code + sale type): that item is updated, not added
+        let match = null, byPair = false;
         if (name) {
             const k = key(name);
-            if (existingName.has(k)) msgs.push(`An item named "${existingName.get(k).name}" already exists`);
-            else if (seenName.has(k)) msgs.push(`The item name is also on row ${seenName.get(k)}`);
+            if (seenName.has(k)) msgs.push(`The item name is also on row ${seenName.get(k)}`);
             else seenName.set(k, row);
+            match = existingName.get(k) || null;
         }
         if (HS_FORMAT.test(hsCode) && saleType) {
-            const k = `${hsCode}|${key(saleType)}`;
-            if (existingPair.has(k)) msgs.push(`HS code ${hsCode} with sale type "${saleType}" is already used by your item "${existingPair.get(k).name}"`);
-            else if (seenPair.has(k)) msgs.push(`HS code ${hsCode} with sale type "${saleType}" is also on row ${seenPair.get(k)}`);
+            const k = `${hsCode}|${key(saleType)}`, other = existingPair.get(k);
+            if (seenPair.has(k)) msgs.push(`HS code ${hsCode} with sale type "${saleType}" is also on row ${seenPair.get(k)}`);
             else seenPair.set(k, row);
+            if (other && match && other !== match) msgs.push(`HS code ${hsCode} with sale type "${saleType}" is already used by your item "${other.name}"`);
+            else if (other && !match) { match = other; byPair = true; }
         }
         if (HS_FORMAT.test(hsCode) && ctx.officialCodes && !ctx.officialCodes.has(hsCode)) {
             warnings.push({ sheet: 'Items', row, name, messages: [`HS code ${hsCode} is not in the FBR list — it will be saved as a code created by you`] });
         }
 
-        const entry = { row, name, msgs, extra: [],
+        const entry = { row, name, msgs, extra: [], match, byPair,
             item: { name, description: text(r.description), notes: text(r.notes), hsCode, uoM: text(r.uoM), prices },
-            rule: { saleType: saleType || saleTypeRaw, rate, lawRefs, taxComment: text(r.comment).slice(0, 2000), sroItemSerialNo: '', notifiedRate: '' } };
+            rule: { saleType: saleType || saleTypeRaw, rate, lawRefs, taxComment: text(r.comment).slice(0, 2000), sroItemSerialNo: serial,
+                ...(sroNo && { sroScheduleNo: sroNo }),
+                notifiedRate: saleType === '3rd Schedule Goods' && retail > 0 ? Math.round(retail * 100) / 100 : '' } };
         if (name && !byName.has(key(name))) byName.set(key(name), entry);
         errors.push({ sheet: 'Items', row, name, messages: msgs }); // emptied later if clean
         ready.push(entry);
@@ -140,8 +156,8 @@ function checkImport(file, ctx) {
         if (text(t.value) === '') msgs.push('Rate or Rs is missing');
         else if (!Number.isFinite(value) || value < 0) msgs.push(`Rate or Rs "${text(t.value)}" is not a number of 0 or more`);
         const fbrField = FBR_BOXES[key(t.fbrBox)];
-        if (!text(t.fbrBox)) msgs.push('FBR box is missing (Extra Tax, FED Payable, Further Tax or Sales Tax)');
-        else if (!fbrField) msgs.push(`FBR box "${text(t.fbrBox)}" should be Extra Tax, FED Payable, Further Tax or Sales Tax`);
+        if (!text(t.fbrBox)) msgs.push('FBR box is missing (Extra Tax or FED Payable)');
+        else if (!fbrField) msgs.push(`FBR box "${text(t.fbrBox)}" should be Extra Tax or FED Payable (FBR checks sales tax against the rate)`);
 
         // Apply on: "Value before tax + Sales tax amount + Withholding" → VALUE+SALES_TAX+TAX:0 (taxes above, same item)
         let base = '';
@@ -178,8 +194,19 @@ function checkImport(file, ctx) {
     return {
         errors: errors.filter(x => x.messages.length),
         warnings,
-        ready: ready.filter(e => !e.msgs.length).map(({ row, item, rule }) => ({ row, item, rule })),
+        ready: ready.filter(e => !e.msgs.length).map(({ row, item, rule, match, byPair }) => {
+            if (!match) return { row, item, rule };
+            const incoming = { ...item, ...rule };
+            if (!byPair) delete incoming.name; // matched by its name: the name is the same
+            return { row, item, rule, existing: { id: match.id, name: match.name }, ...compareRecord(savedItem(match), incoming, ITEM_FIELDS) };
+        }),
     };
 }
 
-module.exports = { checkImport, MAX_ITEMS, ITEM_REQUIRED, TAX_REQUIRED };
+// A saved item in the shape of a file row (older items may have one unitPrice instead of prices)
+function savedItem(p) {
+    const prices = Array.isArray(p.prices) && p.prices.length ? p.prices : p.unitPrice != null ? [{ label: 'Price', price: Number(p.unitPrice) }] : [];
+    return { ...p, prices, lawRefs: Array.isArray(p.lawRefs) ? p.lawRefs : [], extraTaxes: Array.isArray(p.extraTaxes) ? p.extraTaxes : [] };
+}
+
+module.exports = { savedItem, checkImport, MAX_ITEMS, ITEM_REQUIRED, TAX_REQUIRED };

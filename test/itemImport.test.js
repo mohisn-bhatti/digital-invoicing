@@ -48,28 +48,42 @@ test('every missing field is reported at once', () => {
     assert.strictEqual(r.ready.length, 0);
 });
 
-test('half-filled prices, wrong sale type, bad HS code, exempt without reference', () => {
+test('half-filled prices, wrong sale type, bad HS code, exempt without an SRO / Schedule no.', () => {
     const m = msgs(run([good({ p1Amount: '', p2Name: '', p2Amount: 5 }), good({ row: 3, name: 'B', hsCode: '12', saleType: 'Std' }),
         good({ row: 4, name: 'C', hsCode: '0401.1000', saleType: 'Exempt Goods', refs: '' })])).join('\n');
     assert.match(m, /Items:2:Price 1 \("Retail"\) has a name but no amount/);
     assert.match(m, /Items:2:Price 2 has an amount but no name/);
     assert.match(m, /Items:3:HS code "12" should look like 0101.2100/);
     assert.match(m, /Items:3:Sale type "Std" is not in the list/);
-    assert.match(m, /Items:4:"Exempt Goods" needs at least one Sales tax reference/);
+    assert.match(m, /Items:4:"Exempt Goods" needs the SRO \/ Schedule no\. \(FBR rule 0077\)/);
+    assert.doesNotMatch(m, /reference/i); // references are optional
 });
 
-test('duplicates: HS code + sale type (existing and in the file), names; same HS with another sale type is fine', () => {
+test('saved items are matched (name, else HS code + sale type): missing details filled, differences listed; duplicates in the file are errors', () => {
+    const c = ctx({ existing: [
+        { id: 'r1', name: 'Rice 6155', hsCode: '1006.3010', saleType: 'Exempt Goods', description: 'Basmati', notes: '', uoM: 'KG', prices: [{ label: 'Retail', price: 150 }], rate: 'Exempt', lawRefs: [{ reference: '6th Schd Table I' }], sroItemSerialNo: '19' },
+        { id: 'm1', name: 'Milk', hsCode: '0401.1000', saleType: 'Goods at standard rate (default)', description: 'd', notes: 'n', uoM: 'KG', prices: [] },
+    ] });
     const r = run([
-        good({ name: 'Rice new', hsCode: '1006.3010', saleType: 'Exempt Goods', refs: '6th Schd Table I' }), // same pair as Rice 6155
-        good({ row: 3, name: 'Rice std', hsCode: '1006.3010' }),                                           // other sale type → ok
-        good({ row: 4, name: 'Sugar 2' }), good({ row: 5, name: 'Sugar 3' }),                               // same pair twice in file
-        good({ row: 6, name: 'rice 6155', hsCode: '0401.1000' }),                                           // existing name
-    ]);
+        good({ name: 'Rice new', hsCode: '1006.3010', saleType: 'Exempt Goods', rate: 'Exempt', refs: '6th Schd Table I', serial: '19', description: 'Basmati', notes: 'Bulk', prices: undefined }), // same pair as Rice 6155
+        good({ row: 3, name: 'Rice std', hsCode: '1006.3010' }),                       // other sale type → new item
+        good({ row: 4, name: 'Sugar 2' }), good({ row: 5, name: 'Sugar 3' }),           // same pair twice in the file
+        good({ row: 6, name: 'rice 6155', hsCode: '1701.9930' }),                       // saved name, its pair belongs to nobody
+        good({ row: 7, name: 'Milk', hsCode: '1006.3010', saleType: 'Exempt Goods', refs: 'x', serial: '1' }), // name = Milk, pair = Rice 6155
+    ], [], c);
     const m = msgs(r).join('\n');
-    assert.match(m, /Items:2:HS code 1006.3010 with sale type "Exempt Goods" is already used by your item "Rice 6155"/);
-    assert.doesNotMatch(m, /Items:3:/);
     assert.match(m, /Items:5:HS code 1701.9910 with sale type "Goods at standard rate \(default\)" is also on row 4/);
-    assert.match(m, /Items:6:An item named "Rice 6155" already exists/);
+    assert.match(m, /Items:7:HS code 1006.3010 with sale type "Exempt Goods" is already used by your item "Rice 6155"/);
+    assert.doesNotMatch(m, /Items:(2|3|6):/);
+    const row = n => r.ready.find(x => x.row === n);
+    assert.strictEqual(row(3).existing, undefined);
+    // matched by HS code + sale type: the name differs (a choice), the empty notes are filled in
+    assert.deepStrictEqual(row(2).existing, { id: 'r1', name: 'Rice 6155' });
+    assert.deepStrictEqual(row(2).fills.map(f => f.label), ['Item notes', 'SRO / Schedule no.', 'Sales tax comment']);
+    assert.deepStrictEqual(row(2).conflicts.map(f => [f.label, f.saved, f.file]), [['Item name', 'Rice 6155', 'Rice new']]);
+    // matched by name: the name is not a difference; HS code, sale type, rate … are
+    assert.deepStrictEqual(row(6).existing.id, 'r1');
+    assert.deepStrictEqual(row(6).conflicts.map(f => f.label), ['Item description', 'HS code', 'Sale type', 'Sales tax rate', 'Sales tax references']);
 });
 
 test('more taxes: unknown item, bad type / box / apply-on, missing columns', () => {
@@ -95,3 +109,43 @@ test('HS code not in the FBR list is a warning, not an error', () => {
     assert.deepStrictEqual(r.errors, []);
     assert.match(r.warnings[0].messages[0], /not in the FBR list/);
 });
+
+test('FBR rules in the Excel import: serial for exempt (0078), retail price for 3rd schedule (0090), boxes limited', () => {
+    const c = ctx({ saleTypes: ['Goods at standard rate (default)', 'Exempt Goods', '3rd Schedule Goods'] });
+    const head = [...HEAD, 'serial', 'retail'];
+    const m = r => checkImport({ itemHeaders: head, items: r.items, taxHeaders: TAX_HEAD, taxes: r.taxes || [] }, c).errors.flatMap(e => e.messages).join('\n');
+    assert.match(m({ items: [good({ hsCode: '0401.1000', saleType: 'Exempt Goods', rate: 'Exempt', refs: '6th Schd Table I' })] }), /Item serial no\. \(FBR rule 0078\)/);
+    assert.match(m({ items: [good({ hsCode: '3402.9000', saleType: '3rd Schedule Goods' })] }), /Retail price per unit \(FBR rule 0090\)/);
+    const ok = checkImport({ itemHeaders: head, items: [good({ hsCode: '3402.9000', saleType: '3rd Schedule Goods', retail: 160 }), good({ row: 3, name: 'Ex', hsCode: '0401.1000', saleType: 'Exempt Goods', rate: 'Exempt', refs: '6th Schd Table I', serial: '19' })] }, c);
+    assert.deepStrictEqual(ok.errors, []);
+    assert.strictEqual(ok.ready[0].rule.notifiedRate, 160);
+    assert.strictEqual(ok.ready[1].rule.sroItemSerialNo, '19');
+    assert.match(m({ items: [good()], taxes: [{ row: 2, itemName: 'Sugar', name: 'X', kind: '%', value: 1, applyOn: 'Value before tax', fbrBox: 'Sales Tax' }] }), /should be Extra Tax or FED Payable/);
+});
+
+test('merging a file row onto a saved record: fill the empty, choose on differences, keep the saved when the file is empty', () => {
+    const { compareRecord, mergeRecord, mergeMessage, BUYER_FIELDS } = require('../src/importMerge');
+    const saved = { businessName: 'Ali Traders', ntn: '7654321', cnic: '', strn: '', registrationType: 'Registered', province: 'Sindh', address: 'Karachi', mobile: '03001234567', email: '', note: 'old' };
+    const file = { businessName: 'ali  traders', ntn: '7654321', cnic: '', strn: '', province: 'PUNJAB', address: '', mobile: '+923001234567', email: 'a@b.com', note: 'new' };
+    const c = compareRecord(saved, file, BUYER_FIELDS);
+    assert.deepStrictEqual(c.fills, [{ field: 'email', label: 'Email', file: 'a@b.com' }]); // name case / spaces and +92 mobile are the same
+    assert.deepStrictEqual(c.conflicts.map(x => x.field), ['province', 'note']);           // empty address in the file keeps the saved one
+    const m = mergeRecord(saved, file, BUYER_FIELDS, { province: 'file' });                 // note: no choice → saved stays
+    assert.deepStrictEqual(m.patch, { email: 'a@b.com', province: 'PUNJAB' });
+    assert.strictEqual(mergeMessage(m), "already exists — updated the missing: Email; used the file's: Province; kept the saved: Additional note");
+    assert.strictEqual(mergeMessage(mergeRecord(saved, { ntn: '7654321' }, BUYER_FIELDS)), 'already exists — nothing new in the file');
+});
+
+test('references and comments are optional: an exempt item needs only its SRO / Schedule no. and serial', () => {
+    const c = ctx({ saleTypes: ['Goods at standard rate (default)', 'Exempt Goods'] });
+    const head = [...HEAD, 'sro', 'serial'];
+    const r = checkImport({ itemHeaders: head, items: [
+        good({ hsCode: '0401.1000', saleType: 'Exempt Goods', rate: 'Exempt', refs: '', comment: '', sro: '6th Schd Table I', serial: '19' }),
+        good({ row: 3, name: 'Plain', refs: '', comment: '' }),
+    ] }, c);
+    assert.deepStrictEqual(r.errors, []);
+    assert.strictEqual(r.ready[0].rule.sroScheduleNo, '6th Schd Table I');
+    assert.deepStrictEqual(r.ready[0].rule.lawRefs, []);
+    assert.strictEqual(r.ready[1].rule.sroScheduleNo, undefined);
+});
+

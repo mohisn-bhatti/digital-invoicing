@@ -7,6 +7,8 @@ const { PrismaClient } = require('@prisma/client');
 const { createAuth, requireRole, requireTenant, requireTenantRole, signToken, signWorkspaceToken } = require('./src/auth');
 const { encrypt, decrypt, mask } = require('./src/crypto');
 const itemImport = require('./src/itemImport');
+const importMerge = require('./src/importMerge');
+const squashName = v => String(v ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 const { calcInvoice, cleanExtraTaxes, WHOLE_NUMBER_UOMS, SRO_REQUIRED_SALE_TYPES } = require('./src/tax');
 const taxRules = require('./src/hsTaxRules');
 const fbrRefs = require('./src/fbrRefs');
@@ -106,6 +108,10 @@ function publicTenant(t) {
         sellerAddress: t.sellerAddress,
         sellerStrn: t.sellerStrn,
         fbrEnv: t.fbrEnv,
+        // FBR token: valid 5 years from issue (spec §3.1); "expiring" 60 days before
+        tokenIssuedAt: t.tokenIssuedAt,
+        tokenExpiresAt: t.tokenIssuedAt ? new Date(new Date(t.tokenIssuedAt).setFullYear(new Date(t.tokenIssuedAt).getFullYear() + 5)) : null,
+        tokenExpiring: Boolean(t.tokenIssuedAt && Date.now() > new Date(t.tokenIssuedAt).setFullYear(new Date(t.tokenIssuedAt).getFullYear() + 5) - 60 * 86400000),
         businessActivities: t.businessActivities,
         sector: t.sector,
         invoiceNumberFormat: t.invoiceNumberFormat,
@@ -423,6 +429,14 @@ app.patch('/api/admin/leads/:id', authenticateToken, requireRole('SUPER_ADMIN'),
     res.json(lead);
 });
 
+app.post('/api/admin/clients/:id/fbr-test', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const t = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+    if (!t) throw new HttpError(404, 'Client not found.');
+    if (process.env.FBR_MOCK === 'true') res.set('X-Note', 'mock'); // the test always calls the real FBR
+    const r = await fbr.testConnection(tenantToken(t));
+    await audit(req, { tenantId: t.id, action: 'fbr.test', entityType: 'Tenant', entityId: t.id, summary: `FBR connection test: ${r.ok ? 'OK' : 'failed'} — ${r.verdict}`.slice(0, 480) });
+    res.json(r);
+});
 app.get('/api/admin/egress-ip', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
     res.json(await fbr.egressIp());
 });
@@ -494,9 +508,24 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
         data.sector = String(b.sector);
     }
     // Empty token field = keep existing token
-    if (b.fbrToken) data.fbrTokenEnc = encrypt(String(b.fbrToken).trim());
+    if (b.fbrToken) {
+        // PRAL's security token is a long code from IRIS (Digital Invoicing → API Integration); a short value is a
+        // placeholder or something else (e.g. the DI-CRM password) and FBR answers "Invalid Credentials"
+        const tok = String(b.fbrToken).trim();
+        if (tok.length < 20 || /\s/.test(tok)) throw new HttpError(400, 'This does not look like an FBR security token — copy the "Sandbox Security Token" (or production token) from IRIS → Digital Invoicing → API Integration.');
+        data.fbrTokenEnc = encrypt(tok);
+    }
+    // FBR tokens are valid for 5 years (spec §3.1): the issue date is kept for a reminder
+    if (b.tokenIssuedAt !== undefined && b.tokenIssuedAt !== '') {
+        const d = new Date(String(b.tokenIssuedAt));
+        if (Number.isNaN(d.getTime())) throw new HttpError(400, 'Token issue date is not a valid date.');
+        data.tokenIssuedAt = d;
+    }
 
     const before = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
+    // a new token starts a new 5-year period, unless the admin typed a different issue date
+    const sameDay = (a, c) => a && c && new Date(a).toISOString().slice(0, 10) === new Date(c).toISOString().slice(0, 10);
+    if (b.fbrToken && (!data.tokenIssuedAt || sameDay(data.tokenIssuedAt, before.tokenIssuedAt))) data.tokenIssuedAt = new Date();
     const t = await prisma.tenant.update({ where: { id: tenantId }, data });
     const show = v => Array.isArray(v) ? v.join(', ') : v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '');
     const changed = {};
@@ -903,6 +932,9 @@ async function prepareInvoice(tenant, b, pendingDebit = null) {
     const buyerStrn = digitsOf(b.buyerStrn), single = digitsOf(b.buyerNtnCnic); // single box: bulk import, older drafts
     if (!buyerNtn && !buyerCnic && single) { if (single.length === 13) buyerCnic = single; else buyerNtn = single; }
     const buyerNtnCnic = buyerNtn || buyerCnic;
+    // FBR DI API v1.12 error 0058: the buyer can't be the seller itself
+    const sellerNo = String(tenant.sellerNtnCnic || '').replace(/\D/g, '');
+    if (sellerNo && [buyerNtn, buyerCnic].includes(sellerNo)) fail('Self-invoicing is not allowed — the buyer NTN / CNIC is your own (FBR rule 0058).');
     const endConsumer = buyerRegistrationType === 'Unregistered' && b.endConsumer === true;
     const buyerNonAtl = buyerRegistrationType === 'Registered' && b.buyerNonAtl === true;
     if (buyerRegistrationType === 'Registered' && !NTN_LENGTHS.includes(buyerNtnCnic.length)) {
@@ -1599,7 +1631,11 @@ function taxRuleData(b, saleTypes) {
     const r = {
         saleType: String(b.saleType || '').trim(),
         rate: String(b.rate || '').trim().slice(0, 60),
-        sroScheduleNo: (lawRefs[0]?.reference || '').slice(0, 100),
+        // FBR's own SRO / Schedule (picked from SroSchedule, spec §5.7) when the list was available; else the one typed;
+        // else (older screens / files) the first reference — references themselves are optional
+        sroScheduleNo: String(b.fbrSroDesc || b.sroScheduleNo || lawRefs[0]?.reference || '').trim().slice(0, 100),
+        fbrRateId: Number.isInteger(Number(b.fbrRateId)) && String(b.fbrRateId) !== '' ? Number(b.fbrRateId) : null,
+        fbrSroId: Number.isInteger(Number(b.fbrSroId)) && String(b.fbrSroId) !== '' && b.fbrSroDesc ? Number(b.fbrSroId) : null,
         sroItemSerialNo: String(b.sroItemSerialNo || '').trim().slice(0, 50),
         notifiedRate: nr === null ? null : Math.round(nr * 100) / 100,
         lawRefs,
@@ -1609,8 +1645,16 @@ function taxRuleData(b, saleTypes) {
     if (!saleTypes.includes(r.saleType)) throw new HttpError(400, 'Choose a sale type from the list.');
     if (nr !== null && !(nr > 0 && nr < 1e10)) throw new HttpError(400, 'Notified rate must be an amount per unit, more than 0 (or leave it empty).');
     if (!r.rate) throw new HttpError(400, 'Enter the tax rate, e.g. 18%, 10% or Exempt.');
+    // FBR DI API v1.12: exempt / reduced rate / SRO lines need the SRO no. and item serial (0077 / 0078);
+    // 3rd schedule goods need the retail price (0090 / 0102) — kept as the item's retail price per unit (notifiedRate)
     if (SRO_REQUIRED_SALE_TYPES.has(r.saleType) && !r.sroScheduleNo) {
-        throw new HttpError(400, `"${r.saleType}" needs a reference on the sales tax (the first one is sent to FBR).`);
+        throw new HttpError(400, `"${r.saleType}" needs the SRO / Schedule no. (FBR rule 0077).`);
+    }
+    if (SRO_REQUIRED_SALE_TYPES.has(r.saleType) && !r.sroItemSerialNo) {
+        throw new HttpError(400, `"${r.saleType}" needs the item serial no. from the reference (FBR rule 0078).`);
+    }
+    if (r.saleType === '3rd Schedule Goods' && !(r.notifiedRate > 0)) {
+        throw new HttpError(400, '3rd schedule goods need the retail price per unit (FBR rule 0090).');
     }
     return r;
 }
@@ -1624,18 +1668,53 @@ async function saleTypeList(tenantId) {
 }
 app.get('/api/sale-types', authenticateToken, requireTenant, async (req, res) => res.json(await saleTypeList(req.user.tenantId)));
 
+// FBR DI API v1.12 chain for an item's tax: sale type → rates (§5.8) → SRO schedules (§5.7) → SRO item serials (§5.10).
+// Each answers { live, list }; live:false (mock mode, no token, FBR error) means the screen lets the user type instead.
+async function fbrChainContext(tenantId) {
+    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
+    const token = tenantToken(t);
+    const provinces = await fbr.reference('provinces', token).catch(() => null);
+    const prov = (provinces || []).find(p => String(p.stateProvinceDesc || '').toUpperCase() === String(t.sellerProvince || '').toUpperCase());
+    return { token, provinceCode: prov?.stateProvinceCode ?? null };
+}
+const chainReply = (res, list) => res.json({ live: Array.isArray(list) && list.length > 0, list: list || [] });
+app.get('/api/fbr/rates', authenticateToken, requireTenant, async (req, res) => {
+    const { token, provinceCode } = await fbrChainContext(req.user.tenantId);
+    const types = await fbr.reference('transtypecode', token).catch(() => null);
+    const want = String(req.query.saleType || '').trim().toLowerCase();
+    const type = (types || []).find(x => String(x.transactioN_DESC || '').trim().toLowerCase() === want);
+    if (!type || provinceCode == null) return chainReply(res, null);
+    chainReply(res, await fbr.saleTypeRates(token, { transTypeId: type.transactioN_TYPE_ID, provinceCode }).catch(() => null));
+});
+app.get('/api/fbr/sro', authenticateToken, requireTenant, async (req, res) => {
+    const { token, provinceCode } = await fbrChainContext(req.user.tenantId);
+    const rateId = Number(req.query.rateId);
+    if (!Number.isInteger(rateId) || provinceCode == null) return chainReply(res, null);
+    chainReply(res, await fbr.sroSchedules(token, { rateId, provinceCode }).catch(() => null));
+});
+app.get('/api/fbr/sro-items', authenticateToken, requireTenant, async (req, res) => {
+    const { token } = await fbrChainContext(req.user.tenantId);
+    const sroId = Number(req.query.sroId);
+    if (!Number.isInteger(sroId)) return chainReply(res, null);
+    chainReply(res, await fbr.sroItems(token, { sroId }).catch(() => null));
+});
+
 // Codes found in the FBR / PCT list are Official; anything else was made up by the client
 async function hsSource(code) {
     return (await prisma.hsCode.findUnique({ where: { code }, select: { code: true } })) ? 'OFFICIAL' : 'CUSTOMER';
 }
 // New current rule for an item; the previous one stays in the history
+// Field lists for the change history (item details / its tax rule)
+const ITEM_DETAIL_FIELDS = importMerge.ITEM_FIELDS.filter(f => !importMerge.RULE_KEYS.has(f.key));
+const ITEM_RULE_FIELDS = importMerge.ITEM_FIELDS.filter(f => importMerge.RULE_KEYS.has(f.key));
 async function setTaxRule(req, product, r) {
     const t = await prisma.tenant.findUniqueOrThrow({ where: { id: product.tenantId }, select: { businessActivities: true, sector: true } });
+    const changes = importMerge.diffRecord(itemImport.savedItem(product), itemImport.savedItem(r), ITEM_RULE_FIELDS);
     const [rule, updated] = await prisma.$transaction([
         prisma.productTaxRule.create({ data: { ...r, tenantId: product.tenantId, productId: product.id, industry: industryOf(t), createdBy: req.user.email } }),
         prisma.product.update({ where: { id: product.id }, data: { ...r, taxRuleAt: new Date() } }),
     ]);
-    await audit(req, { action: 'product.tax_rule', entityType: 'Product', entityId: product.id,
+    await audit(req, { action: 'product.tax_rule', entityType: 'Product', entityId: product.id, details: { changes },
         summary: `Tax rule for "${product.name}": ${r.saleType}, ${r.rate}${r.extraTaxes?.length ? `, more taxes: ${r.extraTaxes.map(t => t.name).join(', ')}` : ''}${r.notifiedRate != null ? `, notified rate ${r.notifiedRate} per unit` : ''}${r.sroScheduleNo ? `, ${r.sroScheduleNo} S.No ${r.sroItemSerialNo}` : ''}` });
     return { rule, item: updated };
 }
@@ -1656,6 +1735,14 @@ app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT,
     const b = req.body || {}, tenantId = req.user.tenantId;
     const d = itemData(b);
     const rule = b.saleType || b.rate ? taxRuleData(b, (await saleTypeList(tenantId)).list) : null;
+    // FBR DI API v1.12 error 0099: the unit must be one FBR allows for the HS code (HS_UOM, §5.9) — checked when FBR answers
+    {
+        const t = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
+        const allowed = await fbr.hsUom(d.hsCode, tenantToken(t)).catch(() => null);
+        if (Array.isArray(allowed) && allowed.length && !allowed.some(u => u.toLowerCase() === d.uoM.toLowerCase())) {
+            throw new HttpError(400, `FBR allows only ${allowed.join(' / ')} as the unit for HS code ${d.hsCode} (FBR rule 0099).`);
+        }
+    }
     // The same HS code may be used again only with another sale type (CA)
     if (rule) {
         const dup = await prisma.product.findFirst({ where: { tenantId, hsCode: d.hsCode, saleType: rule.saleType, NOT: b.id ? { id: String(b.id) } : { name: d.name } }, select: { name: true } });
@@ -1664,6 +1751,7 @@ app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT,
     d.source = await hsSource(d.hsCode);
     try {
         let p;
+        const before = await prisma.product.findFirst({ where: b.id ? { id: String(b.id), tenantId } : { tenantId, name: d.name } });
         if (b.id) {
             const { count } = await prisma.product.updateMany({ where: { id: String(b.id), tenantId }, data: d });
             if (!count) throw new HttpError(404, 'Item not found.');
@@ -1671,11 +1759,13 @@ app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT,
         } else {
             p = await prisma.product.upsert({ where: { tenantId_name: { tenantId, name: d.name } }, update: d, create: { ...d, tenantId } });
         }
-        await audit(req, { action: 'product.save', entityType: 'Product', entityId: p.id,
-            summary: `Item "${p.name}" saved (${p.hsCode}, ${p.source === 'CUSTOMER' ? 'customer-created code' : 'official code'}${p.unitPrice != null ? `, Rs ${p.unitPrice}` : ''})` });
+        const changes = before ? importMerge.diffRecord(itemImport.savedItem(before), itemImport.savedItem(p), ITEM_DETAIL_FIELDS) : [];
+        if (!before || changes.length) await audit(req, { action: 'product.save', entityType: 'Product', entityId: p.id, details: { changes, created: !before },
+            summary: `Item "${p.name}" ${before ? 'updated' : 'added'} (${p.hsCode}, ${p.source === 'CUSTOMER' ? 'customer-created code' : 'official code'}${p.unitPrice != null ? `, Rs ${p.unitPrice}` : ''})` });
         const same = rule && p.saleType === rule.saleType && p.rate === rule.rate && p.sroScheduleNo === rule.sroScheduleNo
             && p.sroItemSerialNo === rule.sroItemSerialNo && (p.notifiedRate == null ? null : Number(p.notifiedRate)) === rule.notifiedRate
-            && sameLawRefs(p.lawRefs, rule.lawRefs) && sameExtraTaxes(p.extraTaxes, rule.extraTaxes) && (p.taxComment || '') === rule.taxComment;
+            && sameLawRefs(p.lawRefs, rule.lawRefs) && sameExtraTaxes(p.extraTaxes, rule.extraTaxes) && (p.taxComment || '') === rule.taxComment
+            && (p.fbrRateId ?? null) === rule.fbrRateId && (p.fbrSroId ?? null) === rule.fbrSroId;
         if (rule && !same) p = (await setTaxRule(req, p, rule)).item;
         res.json(p);
     } catch (err) {
@@ -1688,7 +1778,7 @@ app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT,
 async function checkItemImport(tenantId, body) {
     const [{ list: saleTypes }, existing, codes, refs] = await Promise.all([
         saleTypeList(tenantId),
-        prisma.product.findMany({ where: { tenantId }, select: { name: true, hsCode: true, saleType: true } }),
+        prisma.product.findMany({ where: { tenantId } }), // whole items: a row for a saved item is compared field by field
         prisma.hsCode.findMany({ select: { code: true } }),
         prisma.legalReference.findMany({ select: { source: true, refNo: true, title: true, url: true } }),
     ]);
@@ -1705,7 +1795,8 @@ async function checkItemImport(tenantId, body) {
 }
 app.post('/api/products/import/check', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const r = await checkItemImport(req.user.tenantId, req.body);
-    res.json({ errors: r.errors, warnings: r.warnings, ready: r.ready.length });
+    const updates = r.ready.filter(e => e.existing).map(({ row, item, existing, fills, conflicts }) => ({ row, name: item.name, existing, fills, conflicts }));
+    res.json({ errors: r.errors, warnings: r.warnings, ready: r.ready.length - updates.length, updates });
 });
 app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const tenantId = req.user.tenantId;
@@ -1717,22 +1808,60 @@ app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_
         prisma.hsCode.findMany({ select: { code: true } }),
     ]);
     const official = new Set(codes.map(c => c.code)), now = new Date(), industry = industryOf(t);
-    const products = [], rules = [];
-    for (const { item, rule } of r.ready) {
-        const d = itemData(item), tr = taxRuleData(rule, saleTypes), id = crypto.randomUUID();
-        products.push({ id, tenantId, ...d, source: official.has(d.hsCode) ? 'OFFICIAL' : 'CUSTOMER', ...tr, taxRuleAt: now });
-        rules.push({ ...tr, tenantId, productId: id, industry, createdBy: req.user.email, createdAt: now });
+    const products = [], rules = [], updates = [], details = [], problems = [];
+    const choices = req.body?.choices || {}; // { [row]: { [field]: 'file' | 'saved' } } from the uploader's pop-up
+    const saved = new Map((await prisma.product.findMany({ where: { tenantId } })).map(p => [p.id, p]));
+    for (const { row, item, rule, existing } of r.ready) {
+        if (!existing) {
+            const d = itemData(item), tr = taxRuleData(rule, saleTypes), id = crypto.randomUUID();
+            products.push({ id, tenantId, ...d, source: official.has(d.hsCode) ? 'OFFICIAL' : 'CUSTOMER', ...tr, taxRuleAt: now });
+            rules.push({ ...tr, tenantId, productId: id, industry, createdBy: req.user.email, createdAt: now });
+            continue;
+        }
+        // A saved item: fill what it is missing, and take the file's value only where the uploader chose it
+        const p = saved.get(existing.id), base = itemImport.savedItem(p);
+        const incoming = { ...item, ...rule };
+        if (squashName(item.name) === squashName(p.name)) delete incoming.name;
+        const m = importMerge.mergeRecord(base, incoming, importMerge.ITEM_FIELDS, choices[row]);
+        try {
+            const d = itemData({ ...base, ...m.patch });
+            const ruleChanged = Object.keys(m.patch).some(k => importMerge.RULE_KEYS.has(k));
+            let tr = null;
+            if (ruleChanged) {
+                // FBR's rate / SRO ids stay only while the sale type and rate are unchanged
+                const keepFbr = !('saleType' in m.patch) && !('rate' in m.patch);
+                tr = taxRuleData({ ...base, ...m.patch, fbrRateId: keepFbr ? p.fbrRateId : null, fbrSroId: keepFbr ? p.fbrSroId : null,
+                    fbrSroDesc: keepFbr && p.fbrSroId ? p.sroScheduleNo : '' }, saleTypes);
+            }
+            const pairTaken = [...saved.values()].find(x => x.id !== p.id && x.hsCode === d.hsCode && x.saleType && x.saleType === (tr ? tr.saleType : p.saleType));
+            if (pairTaken) throw new HttpError(400, `HS code ${d.hsCode} with sale type "${pairTaken.saleType}" is already used by your item "${pairTaken.name}"`);
+            if (Object.keys(m.patch).length) {
+                updates.push(prisma.product.update({ where: { id: p.id }, data: { ...d, source: official.has(d.hsCode) ? 'OFFICIAL' : 'CUSTOMER', ...(tr && { ...tr, taxRuleAt: now }) } }));
+                if (tr) rules.push({ ...tr, tenantId, productId: p.id, industry, createdBy: req.user.email, createdAt: now });
+            }
+            details.push({ row, name: p.name, message: importMerge.mergeMessage(m), changed: Object.keys(m.patch).length > 0, id: p.id,
+                changes: importMerge.diffRecord(base, itemImport.savedItem({ ...base, ...d, ...(tr || {}) }), importMerge.ITEM_FIELDS) });
+        } catch (err) {
+            if (!(err instanceof HttpError)) throw err;
+            problems.push({ sheet: 'Items', row, name: p.name, messages: [`with your choices: ${err.message}`] });
+        }
     }
+    if (problems.length) return res.status(400).json({ error: 'Some choices don\'t make a valid item — choose again.', errors: problems, warnings: r.warnings });
     try {
-        // two statements in one transaction: every item and its first tax rule, or nothing
-        await prisma.$transaction([prisma.product.createMany({ data: products }), prisma.productTaxRule.createMany({ data: rules })]);
+        // one transaction: every new item and its first tax rule, every update and its new tax rule entry, or nothing
+        await prisma.$transaction([prisma.product.createMany({ data: products }), ...updates, prisma.productTaxRule.createMany({ data: rules })]);
     } catch (err) {
         if (err.code === 'P2002') throw new HttpError(409, 'An item with one of these names was added meanwhile — check the file again.');
         throw err;
     }
+    // each item's own history: added from / updated by this file
+    for (const x of products) await audit(req, { action: 'product.import', entityType: 'Product', entityId: x.id, details: { created: true, file: req.body?.fileName || '' },
+        summary: `Item "${x.name}" added from Excel${req.body?.fileName ? ` (${String(req.body.fileName).slice(0, 100)})` : ''}` });
+    for (const x of details.filter(x => x.changed)) await audit(req, { action: 'product.import', entityType: 'Product', entityId: x.id, details: { changes: x.changes, file: req.body?.fileName || '' },
+        summary: `Item "${x.name}" updated from Excel${req.body?.fileName ? ` (${String(req.body.fileName).slice(0, 100)})` : ''}` });
     await audit(req, { action: 'product.import', entityType: 'Product', entityId: null,
-        summary: `${products.length} item${products.length === 1 ? '' : 's'} with tax rules imported from Excel` });
-    res.json({ imported: products.length, warnings: r.warnings.length });
+        summary: `Items with tax rules imported from Excel: ${products.length} added, ${details.filter(x => x.changed).length} updated` });
+    res.json({ imported: products.length, updated: details.filter(x => x.changed).length, details: details.map(({ changes, id, ...x }) => x), warnings: r.warnings.length });
 });
 
 app.post('/api/products/:id/tax-rule', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
@@ -1825,6 +1954,7 @@ app.post('/api/buyers', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, a
     const dup = await findDuplicateBuyer(tenantId, d, id);
     if (dup) throw duplicateError(dup);
     let b;
+    const before = id ? await prisma.buyer.findFirst({ where: { id, tenantId } }) : null;
     try {
         if (id) {
             const { count } = await prisma.buyer.updateMany({ where: { id, tenantId }, data: d });
@@ -1837,7 +1967,8 @@ app.post('/api/buyers', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, a
         if (err.code === 'P2002') throw new HttpError(409, `Another saved buyer already has NTN / CNIC ${d.ntnCnic}.`);
         throw err;
     }
-    await audit(req, { action: 'buyer.save', entityType: 'Buyer', entityId: b.id,
+    const changes = before ? importMerge.diffRecord(before, b, importMerge.BUYER_FIELDS) : [];
+    if (!before || changes.length) await audit(req, { action: 'buyer.save', entityType: 'Buyer', entityId: b.id, details: { changes, created: !before },
         summary: `Buyer "${b.businessName}" ${id ? 'updated' : 'added'}${[b.ntn && 'NTN ' + b.ntn, b.cnic && 'CNIC ' + b.cnic, b.strn && 'STRN ' + b.strn].filter(Boolean).map(x => ' · ' + x).join('')}` });
     res.json(b);
 });
@@ -1845,19 +1976,55 @@ app.post('/api/buyers', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, a
 // Bulk import from the Excel template. A row whose NTN / CNIC / STRN (or, with no numbers, name) matches a saved
 // buyer updates that buyer — so an exported sheet can be edited and imported back. Each row is checked on its own.
 const BUYER_IMPORT_MAX = 2000;
-app.post('/api/buyers/import', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
-    const rows = req.body?.rows;
+const buyerRows = rows => {
     if (!Array.isArray(rows) || !rows.length) throw new HttpError(400, 'The file has no buyer rows.');
     if (rows.length > BUYER_IMPORT_MAX) throw new HttpError(400, `At most ${BUYER_IMPORT_MAX} buyers per file.`);
+    return rows;
+};
+// The row as the file gives it: an empty Registered / Unregistered cell says nothing (not "Unregistered")
+const buyerIncoming = (r, d) => { const x = { ...d }; delete x.ntnCnic; if (!String(r.registrationType || '').trim()) delete x.registrationType; return x; };
+// Before importing: which rows are new, which match a saved buyer, what they fill in and where they differ
+app.post('/api/buyers/import/check', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
+    const rows = buyerRows(req.body?.rows), tenantId = req.user.tenantId, results = [];
+    for (const [i, r] of rows.entries()) {
+        const row = Number(r?.row) || i + 2;
+        try {
+            const d = buyerData(r || {});
+            const dup = await findDuplicateBuyer(tenantId, d);
+            if (!dup) { results.push({ row, name: d.businessName, status: 'new' }); continue; }
+            const c = importMerge.compareRecord(dup, buyerIncoming(r, d), importMerge.BUYER_FIELDS);
+            results.push({ row, name: d.businessName, status: 'existing', existing: { id: dup.id, name: dup.businessName }, ...c });
+        } catch (err) {
+            results.push({ row, name: String(r?.businessName || ''), status: 'error', message: err instanceof HttpError ? err.message : 'could not be read' });
+        }
+    }
+    res.json({ results });
+});
+// A row whose NTN / CNIC / STRN (or, with no numbers, name) matches a saved buyer fills in that buyer's missing
+// details; where both have a value and they differ, the uploader's choice (body.choices[row][field]) decides —
+// without a choice the saved value stays.
+app.post('/api/buyers/import', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
+    const rows = buyerRows(req.body?.rows), choices = req.body?.choices || {};
     const tenantId = req.user.tenantId, results = [];
     for (const [i, r] of rows.entries()) {
         const row = Number(r?.row) || i + 2; // Excel row number (row 1 is the headings)
         try {
             const d = buyerData(r || {});
             const dup = await findDuplicateBuyer(tenantId, d);
-            if (dup) await prisma.buyer.update({ where: { id: dup.id }, data: d });
-            else await prisma.buyer.create({ data: { ...d, tenantId } });
-            results.push({ row, name: d.businessName, status: dup ? 'updated' : 'added' });
+            const file = String(req.body?.fileName || '').slice(0, 100), from = `from Excel${file ? ` (${file})` : ''}`;
+            if (!dup) {
+                const nb = await prisma.buyer.create({ data: { ...d, tenantId } });
+                await audit(req, { action: 'buyer.import', entityType: 'Buyer', entityId: nb.id, details: { created: true, file }, summary: `Buyer "${nb.businessName}" added ${from}` });
+                results.push({ row, name: d.businessName, status: 'added' });
+                continue;
+            }
+            const m = importMerge.mergeRecord(dup, buyerIncoming(r, d), importMerge.BUYER_FIELDS, choices[row]);
+            if (Object.keys(m.patch).length) {
+                const nb = await prisma.buyer.update({ where: { id: dup.id }, data: buyerData({ ...dup, ...m.patch }) });
+                await audit(req, { action: 'buyer.import', entityType: 'Buyer', entityId: dup.id, details: { changes: importMerge.diffRecord(dup, nb, importMerge.BUYER_FIELDS), file },
+                    summary: `Buyer "${dup.businessName}" updated ${from}` });
+            }
+            results.push({ row, name: dup.businessName, status: Object.keys(m.patch).length ? 'updated' : 'unchanged', message: importMerge.mergeMessage(m) });
         } catch (err) {
             const msg = err.code === 'P2002' ? 'another saved buyer already has this NTN / CNIC' : err instanceof HttpError ? err.message : 'could not be saved';
             results.push({ row, name: String(r?.businessName || ''), status: 'error', message: msg });
@@ -1865,8 +2032,16 @@ app.post('/api/buyers/import', authenticateToken, requireTenant, OWNER_OR_ACCOUN
     }
     const count = s => results.filter(x => x.status === s).length;
     await audit(req, { action: 'buyer.import', entityType: 'Buyer', entityId: null,
-        summary: `Buyers imported from Excel: ${count('added')} added, ${count('updated')} updated, ${count('error')} with errors` });
-    res.json({ results, added: count('added'), updated: count('updated'), errors: count('error') });
+        summary: `Buyers imported from Excel: ${count('added')} added, ${count('updated')} updated, ${count('unchanged')} already saved, ${count('error')} with errors` });
+    res.json({ results, added: count('added'), updated: count('updated'), unchanged: count('unchanged'), errors: count('error') });
+});
+
+// Change history of one buyer or item: who changed what, when (from the activity log)
+app.get('/api/history/:type/:id', authenticateToken, requireTenant, async (req, res) => {
+    const entityType = { buyers: 'Buyer', products: 'Product' }[req.params.type];
+    if (!entityType) throw new HttpError(404, 'Not found.');
+    const rows = await prisma.auditLog.findMany({ where: { tenantId: req.user.tenantId, entityType, entityId: req.params.id }, orderBy: { createdAt: 'desc' }, take: 200 });
+    res.json(rows.map(x => ({ at: x.createdAt, by: x.userEmail, action: x.action, summary: x.summary, changes: x.details?.changes || [], created: Boolean(x.details?.created), file: x.details?.file || '' })));
 });
 
 app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {

@@ -63,6 +63,7 @@ model Tenant {
   sellerAddress      String    @default("")
   // Sales tax registration no. — printed on invoices (STA s.23); not part of the DI API payload
   sellerStrn         String    @default("")
+  tokenIssuedAt      DateTime? // FBR token is valid for 5 years (spec §3.1)
   // PRAL security token, AES-256-GCM encrypted (src/crypto.js)
   fbrTokenEnc        String?
   fbrEnv             FbrEnv    @default(SANDBOX)
@@ -185,6 +186,8 @@ model Product {
   sroItemSerialNo String   @default("")
   lawRefs         Json     @default("[]") // [{ reference, url, source, comment }] — the first is sent to FBR as the SRO / Schedule no.
   taxComment      String   @default("") // the client's note on the law for the sales tax (one per tax)
+  fbrRateId       Int?     // rate id from FBR SaleTypeToRate (spec §5.8)
+  fbrSroId        Int?     // SRO id from FBR SroSchedule (spec §5.7)
   extraTaxes      Json     @default("[]") // more taxes: [{ name, kind: PCT|FIXED, value, base, fbrField }] — src/tax.js
   notifiedRate    Decimal? @db.Decimal(14, 2) // notified price per unit; tax is charged on it instead of the actual price
   taxRuleAt       DateTime?
@@ -208,6 +211,8 @@ model ProductTaxRule {
   sroItemSerialNo String   @default("")
   lawRefs         Json     @default("[]") // [{ reference, url, source, comment }] — the first is sent to FBR as the SRO / Schedule no.
   taxComment      String   @default("") // the client's note on the law for the sales tax (one per tax)
+  fbrRateId       Int?     // rate id from FBR SaleTypeToRate (spec §5.8)
+  fbrSroId        Int?     // SRO id from FBR SroSchedule (spec §5.7)
   extraTaxes      Json     @default("[]") // more taxes: [{ name, kind: PCT|FIXED, value, base, fbrField }] — src/tax.js
   notifiedRate    Decimal? @db.Decimal(14, 2)
   industry        String   @default("") // client's business nature / sector at the time (as chosen in IRIS)

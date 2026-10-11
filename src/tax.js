@@ -33,6 +33,11 @@ function ratePercent(rate) {
     const m = String(rate || '').match(/^\s*(\d+(?:\.\d+)?)\s*%/);
     return m ? Number(m[1]) : 0;
 }
+// FBR rates like "18% along with rupees 60 per kilogram" (spec §5.8) also charge Rs 60 per unit sold (error 0105)
+function rupeesPerUnit(rate) {
+    const m = String(rate || '').match(/rupees?\s*([\d,]+(?:\.\d+)?)\s*per\b/i);
+    return m ? Number(m[1].replace(/,/g, '')) : 0;
+}
 
 function hasOverride(v) {
     return v !== null && v !== undefined && v !== '';
@@ -45,7 +50,9 @@ function hasOverride(v) {
 // the client chose; the receipt shows them by name.
 const EXTRA_TAX_BASES = ['VALUE', 'SALES_TAX'];
 const baseParts = base => [...new Set(String(base || 'VALUE').split('+').flatMap(x => x === 'VALUE_AFTER_TAX' ? ['VALUE', 'SALES_TAX'] : [x.trim()]).filter(Boolean))];
-const EXTRA_TAX_FIELDS = ['extraTax', 'fedPayable', 'furtherTax', 'salesTaxApplicable'];
+// FBR DI API v1.12: salesTaxApplicable is the sales tax only ("excluding further & extra tax") and is checked against
+// rate × value (error 0104), and further tax has its own rule — so more taxes can only go to Extra Tax or FED Payable
+const EXTRA_TAX_FIELDS = ['extraTax', 'fedPayable'];
 const MAX_EXTRA_TAXES = 10;
 function extraTaxDefs(v) {
     if (typeof v === 'string') { try { v = v.trim() ? JSON.parse(v) : []; } catch { throw new Error('More taxes could not be read'); } }
@@ -71,7 +78,7 @@ function cleanExtraTaxes(v, who = 'Tax rule') {
                 throw new Error(`${who}: "${name}" can only be applied on a tax listed above it`);
             }
         }
-        if (!EXTRA_TAX_FIELDS.includes(fbrField)) throw new Error(`${who}: "${name}" — choose which FBR box it goes in`);
+        if (!EXTRA_TAX_FIELDS.includes(fbrField)) throw new Error(`${who}: "${name}" can only go to FBR's Extra Tax or FED Payable box`);
         // The law the client read for this tax (record only; FBR gets the sales tax's reference)
         const refs = (Array.isArray(d?.refs) ? d.refs : []).slice(0, 20).map(r => ({
             reference: String(r?.reference ?? '').trim().slice(0, 200),
@@ -123,11 +130,15 @@ function calcItem(raw, { buyerRegistrationType, furtherTaxRate, endConsumer = fa
 
     const valueSalesExcludingST = round2(quantity * unitPrice - discount);
     if (valueSalesExcludingST < 0) throw new Error(`Item ${raw.sNo || ''}: discount exceeds value`);
+    // FBR DI API v1.12 error 0079: above Rs 20,000 the 5% rate is not allowed
+    if (pct === 5 && valueSalesExcludingST > 20000) {
+        throw new Error(`Item ${raw.sNo || ''}: FBR does not allow the 5% rate when the value is above Rs 20,000 (FBR rule 0079)`);
+    }
 
     const stBase = fixedNotifiedValueOrRetailPrice > 0 ? fixedNotifiedValueOrRetailPrice : valueSalesExcludingST;
     const salesTaxApplicable = hasOverride(raw.salesTaxApplicable)
         ? round2(num(raw.salesTaxApplicable))
-        : round2(stBase * pct / 100);
+        : round2(stBase * pct / 100 + rupeesPerUnit(raw.rate) * quantity);
 
     const furtherBuyer = buyerRegistrationType === 'Unregistered' ? !endConsumer : buyerNonAtl;
     const furtherApplies = furtherBuyer && pct > 0 && !NO_FURTHER_TAX_SALE_TYPES.has(raw.saleType);
@@ -190,8 +201,13 @@ function calcInvoice(items, ctx, invoiceDiscount = 0) {
         }
         if (!/^\d{4}\.\d{4}$/.test(l.hsCode)) throw new Error(`Item ${l.sNo}: HS code must look like 0101.2100`);
         // CA: no serial box — only the SRO / Schedule no. is required; the serial is sent when the item has one
-        if (SRO_REQUIRED_SALE_TYPES.has(l.saleType) && !l.sroScheduleNo) {
-            throw new Error(`Item ${l.sNo}: "${l.saleType}" needs the SRO / Schedule no. (e.g. 6th Schedule Table I) — add a reference on the item's sales tax`);
+        // FBR DI API v1.12 errors 0077 / 0078: exempt, reduced-rate and SRO lines need the SRO / Schedule no. and the item serial
+        if (SRO_REQUIRED_SALE_TYPES.has(l.saleType) && (!l.sroScheduleNo || !l.sroItemSerialNo)) {
+            throw new Error(`Item ${l.sNo}: "${l.saleType}" needs the SRO / Schedule no. and the item serial no. (FBR rules 0077 / 0078) — set them on the item's tax rule`);
+        }
+        // Errors 0090 / 0102: 3rd schedule goods are taxed on the printed retail price, which FBR needs
+        if (l.saleType === '3rd Schedule Goods' && !(l.fixedNotifiedValueOrRetailPrice > 0)) {
+            throw new Error(`Item ${l.sNo}: 3rd schedule goods need the retail price (FBR rule 0090) — set the retail price per unit on the item's tax rule`);
         }
     }
     const sum = f => round2(lines.reduce((a, l) => a + l[f], 0));
@@ -206,4 +222,4 @@ function calcInvoice(items, ctx, invoiceDiscount = 0) {
     };
 }
 
-module.exports = { calcInvoice, calcItem, spreadDiscount, cleanExtraTaxes, calcExtraTaxes, ratePercent, round2, SRO_REQUIRED_SALE_TYPES, WHOLE_NUMBER_UOMS, isWholeNumberUom };
+module.exports = { calcInvoice, calcItem, spreadDiscount, cleanExtraTaxes, calcExtraTaxes, ratePercent, rupeesPerUnit, round2, SRO_REQUIRED_SALE_TYPES, WHOLE_NUMBER_UOMS, isWholeNumberUom };

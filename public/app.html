@@ -40,6 +40,20 @@
   /* stays in view under the 4rem page header while scrolling (never slides under it) */
   .stepper { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: .5rem; gap: .25rem; position: sticky; top: 4.75rem; z-index: 15; box-shadow: 0 4px 12px rgba(15, 23, 42, .08); }
   .stepper::before { content: ''; position: absolute; left: -1.5rem; right: -1.5rem; top: -.8rem; height: .8rem; background: #f1f5f9; } /* cover the gap under the header */
+  #itemsFormView .stepper { grid-template-columns: repeat(4, minmax(0, 1fr)) auto; }
+  /* shutter: slides open from left to right, and closes back to the left */
+  /* same colours as the left menu: dark navy, light text, white/10 hover, emerald accent */
+  #guidePanel.guide-box { background: #0f172a; border-color: rgba(255, 255, 255, .1); color: #e2e8f0; }
+  #guidePanel a.guide { display: flex; align-items: center; gap: .6rem; background: transparent; border: 0; color: #e2e8f0; border-radius: .5rem; padding: .5rem .75rem; font-weight: 500; font-size: .875rem; }
+  #guidePanel a.guide::before { content: ''; width: .4rem; height: .4rem; border-radius: 9999px; background: #34d399; flex-shrink: 0; }
+  #guidePanel a.guide:hover { background: rgba(255, 255, 255, .1); color: #fff; }
+  #guidePanel a.guide:focus-visible { outline: 2px solid #10b981; outline-offset: 1px; }
+  #guidePanel { position: fixed; top: 5.5rem; right: 1.25rem; bottom: 1rem; width: min(24rem, calc(100vw - 2.5rem)); z-index: 30; clip-path: inset(0 100% 0 0 round .6rem); visibility: hidden; pointer-events: none;
+    transition: clip-path .45s cubic-bezier(.22, .61, .36, 1), visibility 0s linear .45s; }
+  #guidePanel.open { clip-path: inset(0 0 0 0 round .6rem); visibility: visible; pointer-events: auto; transition: clip-path .45s cubic-bezier(.22, .61, .36, 1), visibility 0s; }
+  @media (prefers-reduced-motion: reduce) { #guidePanel, #guidePanel.open { transition: none; } }
+  .guide-toggle[aria-expanded="true"] { background: #059669 !important; border-color: #059669 !important; color: #fff !important; }
+  .guide-toggle[aria-expanded="true"] .guide-caret { display: inline-block; transform: rotate(180deg); }
   .stepper-item { display: flex; align-items: center; gap: .6rem; text-align: left; padding: .55rem .7rem; border-radius: .6rem; }
   .stepper-item:hover { background: #f8fafc; }
   .stepper-item b { display: block; font-size: .875rem; color: #0f172a; }
@@ -252,7 +266,12 @@
           </label>
           <label class="sm:col-span-2"><span>PRAL security token <span id="tokenMasked" class="text-slate-400"></span></span>
             <input name="fbrToken" type="password" placeholder="Leave empty to keep current token" autocomplete="new-password" data-lpignore="true" data-1p-ignore></label>
+          <div class="sm:col-span-3 flex flex-wrap items-start gap-3 text-xs -mt-1">
+            <button type="button" id="fbrTestBtn" onclick="testFbr()" class="border border-emerald-600 text-emerald-700 rounded px-3 py-1.5 font-medium hover:bg-emerald-50">Test FBR connection</button>
+            <span id="fbrTestOut" class="text-slate-500 pt-1.5">Asks FBR for its province list with the saved token (records nothing at FBR). Save a new token first.</span>
+          </div>
           <label><span>Software registration no. <span class="text-slate-400">(from PRAL, printed)</span></span><input name="softwareRegNo" maxlength="60" autocomplete="off"></label>
+          <label><span>Token issued on <span class="text-slate-400">(valid 5 years — set automatically when a new token is saved)</span></span><input name="tokenIssuedAt" type="date"><span id="tokenExpiry" class="block text-xs mt-1"></span></label>
           <div class="sm:col-span-2 text-xs text-slate-600 self-end pb-2">Auto from FBR — HS codes: <span id="hsStats">…</span>
             <button type="button" id="hsSyncBtn" onclick="syncHs()" class="ml-2 text-emerald-700 underline">Sync HS codes from FBR</button></div>
         </div>
@@ -368,7 +387,7 @@
       </div>
       <p class="text-xs text-slate-500 mb-1">Same columns as the client's Items with Tax Rules page, with the client in front. Scroll right to see all columns →</p>
       <div class="items-scroll overflow-x-auto border rounded-lg"><table class="items-table w-max min-w-full text-sm">
-        <thead class="text-left text-slate-600 bg-slate-50 border-b"><tr class="align-bottom"><th class="items-sticky-l px-3 py-2.5 font-semibold" style="min-width:11rem">User name</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem">User industry</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">NTN</th><th class="px-3 py-2.5 font-semibold" style="min-width:9rem">STRN</th><th class="px-3 py-2.5 font-semibold" style="min-width:9rem">CNIC</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Name</th><th class="px-3 py-2.5 font-semibold" style="min-width:14rem">Description</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Notes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">HS code</th><th class="px-3 py-2.5 font-semibold" style="min-width:8rem">Source</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">UOM</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem">Prices</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Sale type</th><th class="px-3 py-2.5 font-semibold" style="min-width:5rem">Rate</th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">References <span class="font-normal text-slate-400">(★ sent to FBR)</span></th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">Comment</th><th class="px-3 py-2.5 font-semibold" style="min-width:20rem">More taxes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">Since</th></tr></thead>
+        <thead class="text-left text-slate-600 bg-slate-50 border-b"><tr class="align-bottom"><th class="items-sticky-l px-3 py-2.5 font-semibold" style="min-width:11rem">User name</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem">User industry</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">NTN</th><th class="px-3 py-2.5 font-semibold" style="min-width:9rem">STRN</th><th class="px-3 py-2.5 font-semibold" style="min-width:9rem">CNIC</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Name</th><th class="px-3 py-2.5 font-semibold" style="min-width:14rem">Description</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Notes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">HS code</th><th class="px-3 py-2.5 font-semibold" style="min-width:8rem">Source</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">UOM</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem">Prices</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Sale type</th><th class="px-3 py-2.5 font-semibold" style="min-width:5rem">Rate</th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">References</th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">Comment</th><th class="px-3 py-2.5 font-semibold" style="min-width:20rem">More taxes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">Since</th></tr></thead>
         <tbody id="ibRows"></tbody></table></div>
     </div>
   </div>
@@ -581,7 +600,7 @@
         <a href="/guide/step2-item.png" target="_blank" rel="noopener" title="Open full size"><img src="/guide/step2-item.png" alt="Items with Tax Rules form with the sections filled in" loading="lazy" class="w-full aspect-[16/9] object-cover object-top border-b bg-slate-50"></a>
         <div class="p-5 flex-1 flex flex-col">
           <div class="flex items-center gap-3"><span class="step-no" style="background:#059669;color:#fff">2</span><h3 class="font-semibold text-base">Set up your items and tax rules</h3></div>
-          <ul class="mt-3 space-y-1.5 text-sm text-slate-700 list-disc pl-5"><li>Open <b>Items with Tax Rules → ＋ Add / edit item</b>.</li><li><b>1 Item details</b> and <b>2 Prices</b> (one or more, e.g. Retail and Wholesale).</li><li><b>3 Tax rule</b>: sale type, sales tax rate, the law reference (the first ★ goes to FBR) and any more taxes.</li><li><b>4 Review &amp; save</b> — every section shows a green ✓ when it is complete.</li></ul>
+          <ul class="mt-3 space-y-1.5 text-sm text-slate-700 list-disc pl-5"><li>Open <b>Items with Tax Rules → ＋ Add / edit item</b>.</li><li><b>1 Item details</b> and <b>2 Prices</b> (one or more, e.g. Retail and Wholesale).</li><li><b>3 Tax rule</b>: sale type, sales tax rate, references and a comment if you like (optional) and any more taxes.</li><li><b>4 Review &amp; save</b> — every section shows a green ✓ when it is complete.</li></ul>
           <div class="mt-auto pt-4"><a href="#/c-products" class="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 hover:underline">Go to Items with Tax Rules →</a></div>
         </div>
       </article>
@@ -684,7 +703,7 @@
       <div id="itemImportOut" class="hidden"></div>
       <p class="text-xs text-slate-500">Scroll right to see all columns →</p>
       <div class="items-scroll overflow-x-auto border rounded-lg">
-      <table class="items-table w-max min-w-full text-sm"><thead class="text-left text-slate-600 bg-slate-50 border-b"><tr class="align-bottom"><th class="items-sticky-l px-3 py-2.5 font-semibold" style="min-width:12rem">Name</th><th class="px-3 py-2.5 font-semibold" style="min-width:14rem">Description</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Notes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">HS code</th><th class="px-3 py-2.5 font-semibold" style="min-width:8rem">Source</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">UOM</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem">Prices</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem">Sale type</th><th class="px-3 py-2.5 font-semibold" style="min-width:5rem">Rate</th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">References <span class="font-normal text-slate-400">(★ sent to FBR)</span></th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem">Comment</th><th class="px-3 py-2.5 font-semibold" style="min-width:20rem">More taxes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem">Since</th><th class="items-sticky-r px-3 py-2.5"></th></tr></thead>
+      <table class="items-table w-max min-w-full text-sm"><thead data-sort-table="items" class="text-left text-slate-600 bg-slate-50 border-b"><tr class="align-bottom"><th class="items-sticky-l px-3 py-2.5 font-semibold" style="min-width:12rem" data-sort="name">Name</th><th class="px-3 py-2.5 font-semibold" style="min-width:14rem" data-sort="description">Description</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem" data-sort="notes">Notes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem" data-sort="hsCode">HS code</th><th class="px-3 py-2.5 font-semibold" style="min-width:8rem" data-sort="source">Source</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem" data-sort="uoM">UOM</th><th class="px-3 py-2.5 font-semibold" style="min-width:10rem" data-sort="prices">Prices</th><th class="px-3 py-2.5 font-semibold" style="min-width:12rem" data-sort="saleType">Sale type</th><th class="px-3 py-2.5 font-semibold" style="min-width:5rem" data-sort="rate">Rate</th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem" data-sort="refs">References</th><th class="px-3 py-2.5 font-semibold" style="min-width:15rem" data-sort="comment">Comment</th><th class="px-3 py-2.5 font-semibold" style="min-width:20rem" data-sort="extraTaxes">More taxes</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem" data-sort="taxRuleAt">Since</th><th class="px-3 py-2.5 font-semibold" style="min-width:7rem" data-sort="createdAt">Added on</th><th class="items-sticky-r px-3 py-2.5"></th></tr></thead>
         <tbody id="productRows"></tbody></table>
       </div>
     </div>
@@ -699,6 +718,14 @@
           <button type="button" class="stepper-item" data-go="stepPrices"><span class="step-no">2</span><span><b>Prices</b><small data-step-text="2"></small></span></button>
           <button type="button" class="stepper-item" data-go="stepTax"><span class="step-no">3</span><span><b>Tax rule</b><small data-step-text="3"></small></span></button>
           <button type="button" class="stepper-item" data-go="stepSave"><span class="step-no">4</span><span><b>Review &amp; save</b><small data-step-text="4"></small></span></button>
+          <button type="button" id="guideToggle" aria-expanded="false" aria-controls="guidePanel" onclick="toggleGuide()" class="guide-toggle self-center rounded-lg border border-emerald-600 text-emerald-700 px-3 py-2 text-sm font-medium hover:bg-emerald-50 whitespace-nowrap">📘 Tax law guide <span class="guide-caret">▾</span></button>
+          <!-- Tax law guidelines: opened / closed by the button above; stays with the step bar while scrolling -->
+          <div id="guidePanel" class="guide-box shadow-2xl flex flex-col" aria-hidden="true">
+            <div class="flex items-start justify-between gap-3 pb-3 border-b border-white/10"><p class="text-sm"><span class="block font-semibold text-white">📘 Tax <span class="text-emerald-400">law</span> guidelines</span><span class="block text-xs text-slate-400 mt-0.5">Check the law for your item; ETAX does not decide the tax for you</span></p>
+              <button type="button" onclick="toggleGuide(false)" class="text-xl leading-none text-slate-400 hover:text-white" aria-label="Close the guide">×</button></div>
+            <div class="overflow-y-auto -mx-1 px-1 mt-3 flex-1"><div id="guideLinks" class="flex flex-col gap-2"></div>
+            <p id="guideNote" class="text-xs text-slate-400 mt-3 pt-3 border-t border-white/10"></p></div>
+          </div>
         </nav>
 
       <section id="stepItem" class="step-card bg-white rounded-xl shadow">
@@ -708,7 +735,7 @@
           <label class="col-span-2"><span>Item description</span><textarea name="description" rows="2" maxlength="500" required placeholder="e.g. Plain yogurt, 500 g cup"></textarea></label>
           <label class="col-span-2"><span>Item notes <span class="text-slate-400">(for your own use)</span></span><textarea name="notes" rows="2" maxlength="1000" required placeholder="e.g. supplier, storage, remarks"></textarea></label>
           <label class="col-span-2"><span>HS code <span class="text-slate-400">(pick from the official list, or type your own)</span></span><input name="hsCode" class="pf-hs" required autocomplete="off" placeholder="Type code or product, e.g. yogurt"></label>
-          <label class="col-span-2"><span>UOM</span><input name="uoM" list="uomList" required autocomplete="off" placeholder="e.g. KG, Numbers, pieces, units"></label>
+          <label class="col-span-2"><span>UOM</span><input name="uoM" list="uomList" required autocomplete="off" placeholder="e.g. KG, Numbers, pieces, units"><span id="pfUomHint" class="block text-xs mt-1"></span></label>
         </div>
       </section>
 
@@ -720,16 +747,11 @@
 
       <section id="stepTax" class="step-card bg-white rounded-xl shadow">
         <div class="step-head"><span class="step-no">3</span><div class="flex-1"><h3 class="font-semibold text-base">Tax rule</h3><p class="text-xs text-slate-500">Sale type, the sales tax rate and any more taxes — each with the law you read</p></div><span class="step-state" data-step="3"></span></div>
-        <details class="guide-box mb-4" open><summary class="cursor-pointer text-sm font-medium text-slate-700">Tax law guidelines <span class="text-xs font-normal text-slate-500">— check the law for your item; ETAX does not decide the tax for you</span></summary>
-          <div id="guideLinks" class="flex flex-wrap gap-2 mt-2"></div>
-          <p id="guideNote" class="text-xs text-slate-500 mt-2"></p>
-        </details>
         <div class="grid sm:grid-cols-4 gap-3 items-end mb-3">
           <label class="sm:col-span-2"><span>Sale type</span><select name="saleType" id="trSaleType" required></select></label>
           <div class="sm:col-span-2 text-xs text-slate-500 pb-2">Date and time: <b id="trNow">—</b> · Industry (as in IRIS): <b id="trIndustry">—</b> <span class="text-slate-400">(automatic)</span></div>
-          <input type="hidden" name="notifiedRate"><!-- CA: no notified rate box; an existing one is kept when the item is edited -->
         </div>
-        <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1"><span class="text-sm font-medium text-slate-700">Taxes <span class="text-xs font-normal text-slate-500">— the sales tax, plus any more taxes; each with its own references and one comment</span></span>
+        <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1"><span class="text-sm font-medium text-slate-700">Taxes <span class="text-xs font-normal text-slate-500">— the sales tax, plus any more taxes; each with its own references and one comment. More taxes go to FBR's Extra Tax or FED Payable box; FBR does not accept Extra Tax for some sale types (error 0091) — test in sandbox.</span></span>
           <button type="button" onclick="addTaxRow()" class="text-sm text-emerald-700 font-medium">＋ Add tax</button></div>
               <table class="w-full table-fixed text-sm bg-white border rounded">
                 <colgroup><col class="w-[13%]"><col class="w-[9%]"><col class="w-[12%]"><col class="w-[14%]"><col class="w-[12%]"><col class="w-[20%]"><col class="w-[17%]"><col class="w-8"></colgroup>
@@ -738,16 +760,40 @@
                   <tr id="trMainTax" class="align-top border-t">
                     <td class="p-2 font-medium">Sales tax<div id="trMainSale" class="text-xs font-normal text-slate-500"></div></td>
                     <td class="p-2 text-slate-600">%</td>
-                    <td class="p-2"><input name="rate" list="rateList" required autocomplete="off" placeholder="e.g. 18%" title="Sales tax rate, e.g. 18%, 10%, Exempt"></td>
+                    <td class="p-2"><select id="trRateSel" class="hidden" title="FBR's rates for this sale type (SaleTypeToRate)"></select>
+                      <input name="rate" list="rateList" required autocomplete="off" placeholder="e.g. 18%" title="Sales tax rate, e.g. 18%, 10%, Exempt">
+                      <input type="hidden" name="fbrRateId"><input type="hidden" name="fbrSroId"><input type="hidden" name="fbrSroDesc">
+                      <p id="trFbrNote" class="text-[11px] text-slate-500 mt-1"></p>
+                      <!-- FBR rule 0090 / 0102: 3rd schedule goods are taxed on the printed retail price -->
+                      <label id="trRetailWrap" class="hidden mt-2"><span>Retail price per unit <span class="text-slate-400">(3rd schedule)</span></span><input name="notifiedRate" type="number" step="0.01" min="0" autocomplete="off" placeholder="e.g. 160"></label></td>
                     <td class="p-2 text-slate-600">Value before tax</td>
                     <td class="p-2 text-slate-600">Sales Tax</td>
-                    <td class="p-2"><div class="refpick" id="trMainRefs" data-main="1"></div><input type="hidden" name="sroItemSerialNo"><!-- CA: no serial box; an existing serial is kept when the item is edited --></td>
+                    <td class="p-2">
+                      <!-- FBR DI API v1.12 §5.7: the SRO / Schedule comes from FBR's list for the chosen rate — this is what FBR receives -->
+                      <label id="trSroWrap" class="hidden mb-2"><span>SRO / Schedule <span class="text-slate-400">(FBR list — sent to FBR)</span></span><select id="trSroSel"></select></label>
+                      <div class="refpick" id="trMainRefs" data-main="1"></div>
+                      <!-- FBR rule 0077: the SRO / Schedule no. — typed when FBR's SRO list is not available (references are optional) -->
+                      <label id="trSroTextWrap" class="hidden mt-2"><span>SRO / Schedule no. <span class="text-slate-400">(sent to FBR)</span></span><input name="sroScheduleNo" maxlength="100" autocomplete="off" placeholder="e.g. 6th Schd Table I"></label>
+                      <!-- FBR rule 0078 / §5.10: the item serial — from FBR's list for the SRO when available, else typed -->
+                      <label id="trSerialWrap" class="hidden mt-2"><span>Item serial no. <span id="trSerialHint" class="text-slate-400">(in the SRO / Schedule)</span></span>
+                        <select id="trSerialSel" class="hidden"></select><input name="sroItemSerialNo" maxlength="50" autocomplete="off" placeholder="e.g. 19"></label></td>
                     <td class="p-2"><textarea name="taxComment" rows="2" maxlength="2000" placeholder="The law detail you read (section, schedule entry, condition)"></textarea></td>
                     <td></td>
                   </tr>
                 </tbody>
               </table>
-        <p class="text-xs text-slate-500 mt-2">★ The sales tax's first reference is sent to FBR as the SRO / Schedule no. References of more taxes are kept for your record.</p>
+        <p class="text-xs text-slate-500 mt-2">FBR's own lists are used when your FBR token works: the rate for the sale type, then the SRO / Schedule and its item serial (spec §5.8 → §5.7 → §5.10). Without them, type the SRO / Schedule no. and serial. References and comments are optional — kept for your record.</p>
+        <!-- live: what each price comes to with this tax rule (1 unit) -->
+        <div id="trPreview" class="mt-4 border rounded-lg overflow-hidden">
+          <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-50 border-b">
+            <span class="text-sm font-medium text-slate-700">Tax on each price <span class="text-xs font-normal text-slate-500">— worked out as you fill the form, for 1 unit</span></span>
+            <label class="!flex items-center gap-2 text-xs text-slate-600"><span class="!mb-0">Buyer</span><select id="trPrevBuyer" class="!w-auto !py-1 text-xs"><option value="U">Unregistered (further tax)</option><option value="R">Registered</option></select></label>
+          </div>
+          <div class="overflow-x-auto"><table class="w-full text-sm"><thead id="trPrevHead" class="text-left text-slate-600 border-b"></thead><tbody id="trPrevBody"></tbody></table></div>
+          <!-- why further tax applies: opened from "Why?" in the Further tax heading -->
+          <div id="trFtWhy" class="hidden text-xs text-slate-700 bg-amber-50 border-t border-amber-200 px-3 py-2.5 space-y-1"></div>
+          <p id="trPrevNote" class="text-xs text-slate-500 px-3 py-2 border-t"></p>
+        </div>
       </section>
 
       <section id="stepSave" class="step-card bg-white rounded-xl shadow">
@@ -841,13 +887,23 @@
             <span id="bfMode" class="text-xs text-slate-500"></span>
           </div>
         </form>
-        <table class="w-full"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Name</th><th>NTN</th><th>CNIC</th><th>STRN</th><th>Type</th><th>Province</th><th>Mobile</th><th>Email</th><th>Note</th><th></th></tr></thead>
-          <tbody id="buyerRows"></tbody></table>
+        <div class="overflow-x-auto"><table class="w-full min-w-[60rem]"><thead id="buyerHead" data-sort-table="buyers" class="text-left text-slate-500 border-b"><tr><th class="py-1" data-sort="businessName">Name</th><th data-sort="ntn">NTN</th><th data-sort="cnic">CNIC</th><th data-sort="strn">STRN</th><th data-sort="registrationType">Type</th><th data-sort="province">Province</th><th data-sort="mobile">Mobile</th><th data-sort="email">Email</th><th data-sort="note">Note</th><th data-sort="createdAt">Added on</th><th></th></tr></thead>
+          <tbody id="buyerRows"></tbody></table></div>
       </div>
   </div>
 </section>
     </main>
   </div>
+</div>
+
+<!-- Excel import: a saved buyer / item differs from the file — the uploader chooses which value to keep -->
+<div id="mergeModal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4">
+  <div id="mergeBox" class="bg-white rounded-xl shadow-xl p-6 mt-8 w-full max-w-4xl max-h-[88vh] overflow-auto"></div>
+</div>
+
+<!-- Change history of a buyer / item: who changed what, when -->
+<div id="historyModal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4" onclick="if (event.target === this) this.classList.add('hidden')">
+  <div id="historyBox" class="bg-white rounded-xl shadow-xl p-6 mt-8 w-full max-w-4xl max-h-[88vh] overflow-auto"></div>
 </div>
 
 <!-- Add a customer from the invoice form -->
@@ -1244,6 +1300,7 @@ async function loadGuides() {
   try {
     const g = await api('/api/guidelines'); S.guides = g.links;
     if (S.role !== 'SUPER_ADMIN') {
+      S.guideLinks = g.links;
       $('#guideLinks').innerHTML = g.links.map(l => `<a class="guide" target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.label)}</a>`).join('') || '<span class="text-slate-500 text-xs">No guidelines yet.</span>';
       $('#guideNote').textContent = g.note;
       return;
@@ -1385,6 +1442,7 @@ async function loadAdminDash() {
     const items = [
       ...clients.filter(c => c.needsAttention).map(c => `<li>⚠️ <b>${esc(c.companyName)}</b>: ${c.needsAttention} invoice(s) failed or uncertain — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">open</a></li>`),
       ...clients.filter(c => c.onboarding.done < c.onboarding.total).map(c => `<li>🛠️ <b>${esc(c.companyName)}</b>: go-live ${c.onboarding.done}/${c.onboarding.total}, scenarios ${c.onboarding.scenariosPassed}/${c.onboarding.scenariosAssigned || '?'} — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">manage</a></li>`),
+      ...clients.filter(c => c.tokenExpiring).map(c => `<li>🔑 <b>${esc(c.companyName)}</b>: FBR token expires on ${fmtDate(c.tokenExpiresAt)} (valid 5 years) — ask PRAL for a new one, then save it — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">open</a></li>`),
       ...(newLeads ? [`<li>✉️ ${newLeads} new website enquir${newLeads > 1 ? 'ies' : 'y'} — <a class="text-emerald-700 underline" href="#/a-leads">view</a></li>`] : []),
     ];
     $('#adAttention').innerHTML = items.length ? `<ul class="space-y-2">${items.join('')}</ul>` : '<div class="text-slate-500">All good — nothing needs attention.</div>';
@@ -1440,6 +1498,17 @@ async function manageClient(id) {
     loadUsers('a');
     go('a-client');
   } catch (err) { toast(err.message); }
+}
+// Admin: does FBR answer, accept this client's saved token and let our IP in? (works in mock mode too)
+async function testFbr() {
+  const out = $('#fbrTestOut'), btn = $('#fbrTestBtn');
+  btn.disabled = true; out.className = 'text-slate-500 pt-1.5'; out.textContent = 'Asking FBR…';
+  try {
+    const r = await api(`/api/admin/clients/${S.manageId}/fbr-test`, { method: 'POST' });
+    out.className = `pt-1.5 ${r.ok ? 'text-emerald-700' : 'text-red-700'}`;
+    out.innerHTML = `${r.ok ? '✅' : '❌'} ${esc(r.verdict)}${r.ip ? ` <span class="text-slate-500">· our IP: <b class="font-mono">${esc(r.ip)}</b>${r.viaProxy ? ' (static proxy)' : ''}${r.ms ? ` · ${r.ms} ms` : ''}</span>` : ''}`;
+  } catch (err) { out.className = 'text-red-700 pt-1.5'; out.textContent = err.message; }
+  btn.disabled = false;
 }
 function closeManage() { S.manageId = null; go('a-clients'); }
 function renderChecklist(ob) {
@@ -1576,6 +1645,10 @@ function fillSettings(s) {
   const f = $('#settingsForm');
   for (const k of ['sellerNtnCnic', 'sellerStrn', 'sellerBusinessName', 'sellerAddress', 'fbrEnv', 'furtherTaxRate', 'invoiceNumberFormat', 'softwareRegNo', 'authLetterRef']) f[k].value = s[k] ?? '';
   f.authLetterAt.value = s.authLetterAt ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date(s.authLetterAt)) : '';
+  // FBR token: valid 5 years from issue (spec §3.1)
+  f.tokenIssuedAt.value = s.tokenIssuedAt ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date(s.tokenIssuedAt)) : '';
+  $('#tokenExpiry').className = 'block text-xs mt-1 ' + (s.tokenExpiring ? 'text-red-700' : 'text-slate-500');
+  $('#tokenExpiry').textContent = s.tokenExpiresAt ? `${s.tokenExpiring ? 'Expires soon: ' : 'Valid until '}${fmtDate(s.tokenExpiresAt)} — ask PRAL for a new token before then` : '';
   // Keep the saved value selectable even if FBR's list spells it differently
   if (s.sellerProvince && ![...f.sellerProvince.options].some(o => o.value === s.sellerProvince)) {
     f.sellerProvince.insertAdjacentHTML('beforeend', `<option>${esc(s.sellerProvince)}</option>`);
@@ -1849,7 +1922,9 @@ function recalc() {
     const pct = Number((String(it.rate).match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
     const excl = r2(Number(it.quantity || 0) * Number(it.unitPrice || 0) - shares[i]);
     const base = Number(it.fixedNotifiedValueOrRetailPrice) > 0 ? Number(it.fixedNotifiedValueOrRetailPrice) : excl;
-    const st0 = r2(base * pct / 100);
+    // FBR rates like "18% along with rupees 60 per kilogram" add Rs 60 per unit (same as src/tax.js, error 0105)
+    const perUnit = Number((String(it.rate).match(/rupees?\s*([\d,]+(?:\.\d+)?)\s*per\b/i) || [])[1]?.replace(/,/g, '') || 0);
+    const st0 = r2(base * pct / 100 + perUnit * Number(it.quantity || 0));
     const ft0 = unreg && pct > 0 && !NO_FT.has(it.saleType) ? r2(excl * ftRate / 100) : 0;
     // More taxes from the item's tax rule, each into its FBR box (same as src/tax.js calcExtraTaxes)
     const detail = extraTaxLine(it.extraTaxes, excl, st0);
@@ -1859,8 +1934,9 @@ function recalc() {
     const total = r2(excl + st + ft + box.extraTax + box.fedPayable);
     renderTaxChips(row, detail);
     const warn = [];
-    if (SRO_SALE_TYPES.has(it.saleType) && !it.sroScheduleNo) warn.push("needs a reference (SRO / Schedule no.) — set it on the item's tax rule");
+    if (SRO_SALE_TYPES.has(it.saleType) && !it.sroScheduleNo) warn.push("needs the SRO / Schedule no. (FBR rule 0077) — set it on the item's tax rule");
     if (wholeUom(it.uoM) && it.quantity !== '' && !Number.isInteger(Number(it.quantity))) warn.push(`quantity must be a whole number for ${it.uoM}`);
+    if (pct === 5 && excl > 20000) { warn.push('FBR does not allow the 5% rate above Rs 20,000 (rule 0079)'); (t.bad0079 ||= []).push(i + 1); }
     if (it.saleType === '3rd Schedule Goods' && !(Number(it.fixedNotifiedValueOrRetailPrice) > 0)) warn.push("needs a retail (notified) rate on the item's tax rule — tax is charged on it");
     // what FBR receives for this line (field names as in FBR's DI API; the server recalculates the same way)
     row.querySelector('.fbr-line').innerHTML = fbrCells([
@@ -1901,7 +1977,8 @@ function syncInvoiceSteps(t, needNtn) {
     : needNtn && !hasNo ? ['buyer NTN or CNIC — search a saved buyer or "+ Add new customer"'] : [];
   const items = readItems();
   const m3 = items.flatMap((it, i) => !it.productDescription || !it.hsCode ? [`pick an item on line ${i + 1}`]
-    : it.unitPrice === '' ? [`line ${i + 1} has no rate`] : !(Number(it.quantity) > 0) ? [`quantity on line ${i + 1}`] : []);
+    : it.unitPrice === '' ? [`line ${i + 1} has no rate`] : !(Number(it.quantity) > 0) ? [`quantity on line ${i + 1}`]
+    : (t.bad0079 || []).includes(i + 1) ? [`line ${i + 1}: 5% rate not allowed above Rs 20,000 (FBR rule 0079)`] : []);
   const picked = items.filter(it => it.productDescription && it.hsCode).length;
   const ready = !m1.length && !m2.length && !m3.length;
   const summary = [`✓ ${f.invoiceDate.value || ''}`, `✓ ${f.buyerBusinessName.value.trim() || 'Walk-in customer'}`, `✓ ${picked} item${picked === 1 ? '' : 's'}`, `Ready — Rs ${money(t.total)}`];
@@ -2456,13 +2533,14 @@ function fillRowFromProduct(row, p) {
   set('productDescription', p.name); set('hsCode', p.hsCode); set('uoM', p.uoM); set('rate', p.rate); set('saleType', p.saleType);
   // Every rate of the item as a tick box under Rate (CA): the notified rate from its tax rule, then its prices.
   // The notified rate is ticked when there is one, else the first price; the user ticks another to use it.
-  const notified = p.notifiedRate != null, pick = row.querySelector('.price-pick');
+  const third = p.saleType === '3rd Schedule Goods';
+  const notified = !third && p.notifiedRate != null, pick = row.querySelector('.price-pick'); // 3rd schedule: notifiedRate is the retail price, not a sale price
   const opts = [...(notified ? [{ label: 'Notified rate', price: Number(p.notifiedRate) }] : []), ...pricesOf(p)];
   if (opts.length) set('unitPrice', Number(opts[0].price));
   const group = 'pp-' + newRequestId();
   pick.innerHTML = opts.map((x, i) => `<label class="flex items-center gap-1.5 cursor-pointer !text-xs"><input type="radio" name="${group}" value="${Number(x.price)}" ${i ? '' : 'checked'} style="width:auto"> ${esc(x.label)}: ${money(x.price)}</label>`).join('');
   pick.classList.toggle('hidden', opts.length < 2);
-  row.dataset.notified = notified ? Number(p.notifiedRate) : '';
+  row.dataset.notified = p.notifiedRate != null ? Number(p.notifiedRate) : ''; // used for the 3rd schedule retail value
   set('sroScheduleNo', p.sroScheduleNo); set('sroItemSerialNo', p.sroItemSerialNo);
   row.querySelector('[name=extraTaxes]').value = p.extraTaxes?.length ? JSON.stringify(p.extraTaxes) : '';
   row.querySelector('[name=productDescription]').dataset.auto = '';
@@ -2472,12 +2550,82 @@ function fillRowFromProduct(row, p) {
   const hint = row.querySelector('.tax-hint');
   hint.className = 'tax-hint col-span-2 sm:col-span-6 text-xs -mt-1' + (opts.length ? '' : ' text-red-700');
   hint.textContent = !opts.length ? `"${p.name}" has no price — add one under Items with Tax Rules first`
+    : third && p.notifiedRate != null ? `Retail price ${money(p.notifiedRate)} per unit — FBR charges the tax on retail price × quantity${opts.length > 1 ? ' · tick the sale rate below Rate' : ''}`
     : notified ? `Notified rate ${money(p.notifiedRate)} per unit from the item's tax rule${opts.length > 1 ? ' — tick another rate below Rate to use it' : ''}`
     : opts.length > 1 ? 'Tick the rate to use' : '';
   if (!opts.length) row.querySelector('[name=unitPrice]').value = '';
   applyQtyStep(row);
   recalc();
 }
+
+// Mobile number with a searchable country picker (flag + dialling code, every country). Pakistan is the default and
+// keeps the local form (03001234567); another country is saved with its code (+971501234567). The named input
+// stays the saved value (hidden); the picker and the number box are what the user sees.
+const DIAL_CODES = (() => {
+  const raw = 'AF93 AL355 DZ213 AS1684 AD376 AO244 AI1264 AG1268 AR54 AM374 AW297 AU61 AT43 AZ994 BS1242 BH973 BD880 BB1246 BY375 BE32 BZ501 BJ229 BM1441 BT975 BO591 BA387 BW267 BR55 VG1284 BN673 BG359 BF226 BI257 KH855 CM237 CA1 CV238 KY1345 CF236 TD235 CL56 CN86 CO57 KM269 CG242 CD243 CK682 CR506 CI225 HR385 CU53 CW599 CY357 CZ420 DK45 DJ253 DM1767 DO1809 EC593 EG20 SV503 GQ240 ER291 EE372 SZ268 ET251 FK500 FO298 FJ679 FI358 FR33 GF594 PF689 GA241 GM220 GE995 DE49 GH233 GI350 GR30 GL299 GD1473 GP590 GU1671 GT502 GN224 GW245 GY592 HT509 HN504 HK852 HU36 IS354 IN91 ID62 IR98 IQ964 IE353 IL972 IT39 JM1876 JP81 JO962 KZ7 KE254 KI686 XK383 KW965 KG996 LA856 LV371 LB961 LS266 LR231 LY218 LI423 LT370 LU352 MO853 MG261 MW265 MY60 MV960 ML223 MT356 MH692 MQ596 MR222 MU230 YT262 MX52 FM691 MD373 MC377 MN976 ME382 MS1664 MA212 MZ258 MM95 NA264 NR674 NP977 NL31 NC687 NZ64 NI505 NE227 NG234 NU683 KP850 MK389 MP1670 NO47 OM968 PK92 PW680 PS970 PA507 PG675 PY595 PE51 PH63 PL48 PT351 PR1787 QA974 RE262 RO40 RU7 RW250 KN1869 LC1758 VC1784 WS685 SM378 ST239 SA966 SN221 RS381 SC248 SL232 SG65 SX1721 SK421 SI386 SB677 SO252 ZA27 KR82 SS211 ES34 LK94 SD249 SR597 SE46 CH41 SY963 TW886 TJ992 TZ255 TH66 TL670 TG228 TO676 TT1868 TN216 TR90 TM993 TC1649 TV688 UG256 UA380 AE971 GB44 US1 UY598 UZ998 VU678 VE58 VN84 VI1340 YE967 ZM260 ZW263';
+  let names = null;
+  try { names = new Intl.DisplayNames(['en'], { type: 'region' }); } catch {}
+  const all = raw.split(' ').map(x => { const cc = x.slice(0, 2), code = x.slice(2); return { cc, code, name: (names && names.of(cc)) || cc }; })
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const top = ['PK', 'AE', 'SA', 'QA', 'OM', 'KW', 'BH', 'GB', 'US', 'CN']; // Pakistan first, then the usual ones
+  return [...top.map(cc => all.find(x => x.cc === cc)), ...all.filter(x => !top.includes(x.cc))];
+})();
+// A saved "+1…" / "+7…" number shows the main country for that code
+const DIAL_MAIN = { 1: 'US', 7: 'RU', 262: 'RE', 590: 'GP' };
+const flagOf = cc => String.fromCodePoint(...[...cc].map(c => 0x1F1A5 + c.charCodeAt(0)));
+function phoneBox(inp) {
+  const box = document.createElement('div'), btn = document.createElement('button'), num = document.createElement('input'), pop = document.createElement('div');
+  box.className = 'relative flex gap-1';
+  btn.type = 'button'; btn.className = 'cc-btn shrink-0 border rounded px-2 text-sm flex items-center gap-1 bg-white hover:bg-slate-50 whitespace-nowrap'; btn.title = 'Country code';
+  Object.assign(num, { type: 'tel', inputMode: 'tel', maxLength: 16, autocomplete: 'off', className: 'cc-num flex-1 min-w-0' });
+  pop.className = 'cc-pop hidden absolute left-0 top-full mt-1 z-40 w-80 max-w-[90vw] bg-white border rounded-lg shadow-lg p-2';
+  pop.innerHTML = '<input class="cc-q w-full mb-2" type="search" autocomplete="off" placeholder="Search country or code, e.g. Dubai, UAE, 971"><ul class="cc-list max-h-64 overflow-auto text-sm"></ul>';
+  inp.before(box); box.append(btn, num, pop); inp.type = 'hidden';
+  const q = pop.querySelector('.cc-q'), ul = pop.querySelector('.cc-list');
+  let cur = DIAL_CODES[0];
+  const native = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  const show = () => {
+    btn.innerHTML = `<span>${flagOf(cur.cc)}</span><span>+${cur.code}</span><span class="text-slate-400">▾</span>`; btn.title = cur.name;
+    num.placeholder = cur.cc === 'PK' ? '03001234567' : 'number without the country code';
+  };
+  const join = () => {
+    const d = num.value.trim();
+    native.set.call(inp, !d || cur.cc === 'PK' ? d : '+' + cur.code + d.replace(/[^\d]/g, '').replace(/^0+/, ''));
+  };
+  // Search by name ("emirates", "dubai" → UAE), dialling code ("971", "+44") or ISO code ("AE")
+  const ALIAS = { dubai: 'AE', 'abu dhabi': 'AE', sharjah: 'AE', uae: 'AE', emirates: 'AE', ksa: 'SA', riyadh: 'SA', jeddah: 'SA', uk: 'GB', england: 'GB', britain: 'GB', usa: 'US', america: 'US', doha: 'QA', muscat: 'OM' };
+  const render = () => {
+    const t = q.value.trim().toLowerCase(), d = t.replace(/[^\d]/g, '');
+    const alias = Object.entries(ALIAS).filter(([k]) => t.length >= 2 && k.startsWith(t)).map(([, cc]) => cc);
+    const hits = !t ? DIAL_CODES : DIAL_CODES.filter(x => x.name.toLowerCase().includes(t) || x.cc.toLowerCase() === t || alias.includes(x.cc) || (d && x.code.startsWith(d)));
+    ul.innerHTML = hits.map(x => `<li data-cc="${x.cc}" class="px-2 py-1.5 rounded cursor-pointer hover:bg-emerald-50 flex items-center gap-2 ${x === cur ? 'bg-emerald-50 font-medium' : ''}"><span>${flagOf(x.cc)}</span><span class="flex-1">${esc(x.name)}</span><span class="text-slate-500">+${x.code}</span></li>`).join('')
+      || '<li class="px-2 py-1.5 text-slate-500">No country found</li>';
+  };
+  const open = () => { pop.classList.remove('hidden'); q.value = ''; render(); q.focus(); ul.querySelector('.font-medium')?.scrollIntoView({ block: 'nearest' }); };
+  const close = () => pop.classList.add('hidden');
+  const choose = cc => { cur = DIAL_CODES.find(x => x.cc === cc) || cur; show(); join(); close(); num.focus(); };
+  btn.addEventListener('click', e => { e.preventDefault(); pop.classList.contains('hidden') ? open() : close(); });
+  // clicks inside the picker must not reach the surrounding <label> (it would re-click the button)
+  pop.addEventListener('click', e => { e.preventDefault(); const li = e.target.closest('li[data-cc]'); if (li) choose(li.dataset.cc); });
+  q.addEventListener('input', render);
+  q.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); const li = ul.querySelector('li[data-cc]'); if (li) choose(li.dataset.cc); }
+    if (e.key === 'Escape') { e.preventDefault(); close(); btn.focus(); }
+  });
+  document.addEventListener('click', e => { if (!box.contains(e.target)) close(); });
+  num.addEventListener('input', join);
+  // a saved value (edit / filled by code) is split back into country + number
+  Object.defineProperty(inp, 'value', { get() { return native.get.call(inp); }, set(v) {
+    native.set.call(inp, v ?? ''); const t = String(v ?? '').trim();
+    const code = t.startsWith('+') && [...new Set(DIAL_CODES.map(x => x.code))].filter(c => c !== '92' && t.slice(1).startsWith(c)).sort((a, b) => b.length - a.length)[0];
+    cur = code ? DIAL_CODES.find(x => x.cc === DIAL_MAIN[code]) || DIAL_CODES.find(x => x.code === code) : DIAL_CODES[0];
+    num.value = code ? t.slice(1 + code.length) : t; show();
+  } });
+  inp.form?.addEventListener('reset', () => setTimeout(() => { cur = DIAL_CODES[0]; show(); close(); }));
+  box.phone = { get country() { return cur.cc; }, choose };
+  show();
+}
+document.querySelectorAll('#buyerForm input[name=mobile], #customerForm input[name=mobile]').forEach(phoneBox);
 
 // The invoice's buyer boxes (besides type, province and the ticks)
 const BUYER_INPUTS = ['buyerNtn', 'buyerCnic', 'buyerStrn', 'buyerBusinessName', 'buyerAddress', 'buyerMobile', 'buyerEmail', 'buyerNote'];
@@ -2556,13 +2704,49 @@ async function loadSaved() {
     S.saved = { products, buyers };
     if (S.role !== 'SUPER_ADMIN') fillCustomerList();
     renderItems();
-    $('#buyerRows').innerHTML = buyers.map(b => `<tr class="border-b last:border-0">
-      <td class="py-1">${esc(b.businessName)}</td><td class="font-mono text-xs">${esc(b.ntn)}</td><td class="font-mono text-xs">${esc(b.cnic)}</td><td class="font-mono text-xs">${esc(b.strn)}</td>
-      <td>${esc(b.registrationType)}</td><td class="text-xs">${esc(provinceLabel(b.province))}</td>
-      <td class="font-mono text-xs">${esc(b.mobile)}</td><td class="text-xs">${esc(b.email)}</td><td class="text-xs max-w-[14rem] truncate" title="${esc(b.note)}">${esc(b.note)}</td>
-      <td class="text-right whitespace-nowrap"><button class="text-emerald-700 text-xs mr-2" onclick="editBuyer('${b.id}')">Edit</button><button class="text-red-600 text-xs" onclick="deleteSaved('buyers','${b.id}')">Delete</button></td></tr>`).join('')
-      || '<tr><td colspan="10" class="py-2 text-slate-500">No saved buyers yet.</td></tr>';
+    renderBuyers();
   } catch (err) { toast(err.message); }
+}
+// Sortable lists (thead[data-sort-table] th[data-sort]): newest first by default; click a heading to sort by it,
+// click it again to reverse. Text sorts A→Z with numbers in order ("Traders 2" before "Traders 10"); empty cells go last.
+const SORT_DEFAULT = { buyers: { key: 'createdAt', dir: -1 }, items: { key: 'createdAt', dir: -1 } };
+const SORT_DATES = new Set(['createdAt', 'taxRuleAt']);
+const sortOf = table => (S.sorts ||= {})[table] ||= { ...SORT_DEFAULT[table] };
+function sortList(list, { key, dir }, val) {
+  const empty = v => v === '' || v == null || Number.isNaN(v);
+  return [...list].sort((a, b) => {
+    const x = val(a, key), y = val(b, key);
+    if (empty(x) !== empty(y)) return empty(x) ? 1 : -1;
+    if (empty(x)) return 0;
+    return dir * (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'en', { numeric: true, sensitivity: 'base' }));
+  });
+}
+function paintSortHead(head, { key, dir }) {
+  for (const th of head.querySelectorAll('th[data-sort]')) {
+    const on = th.dataset.sort === key;
+    th.classList.add('cursor-pointer', 'select-none', 'hover:text-slate-800'); th.classList.toggle('text-emerald-700', on); th.title = 'Click to sort';
+    const mark = th.querySelector('.sort-mark') || th.appendChild(Object.assign(document.createElement('span'), { className: 'sort-mark text-xs ml-1' }));
+    mark.innerHTML = on ? (dir > 0 ? '▲' : '▼') : '<span class="text-slate-300">▴▾</span>';
+  }
+}
+document.addEventListener('click', e => {
+  const th = e.target.closest('thead[data-sort-table] th[data-sort]'); if (!th) return;
+  const table = th.closest('thead').dataset.sortTable, k = th.dataset.sort, cur = sortOf(table);
+  // a new column starts A→Z (dates: newest first); the same column flips
+  S.sorts[table] = { key: k, dir: cur.key === k ? -cur.dir : SORT_DATES.has(k) ? -1 : 1 };
+  ({ buyers: renderBuyers, items: renderItems })[table]();
+});
+function renderBuyers() {
+  const sort = sortOf('buyers');
+  const buyers = sortList(S.saved?.buyers || [], sort, (b, k) => k === 'province' ? provinceLabel(b.province) : SORT_DATES.has(k) ? (b[k] ? new Date(b[k]).getTime() : '') : String(b[k] ?? '').trim());
+  paintSortHead($('#buyerHead'), sort);
+  $('#buyerRows').innerHTML = buyers.map(b => `<tr class="border-b last:border-0">
+      <td class="py-1">${esc(b.businessName)}</td><td class="font-mono text-xs">${esc(b.ntn)}</td><td class="font-mono text-xs">${esc(b.cnic)}</td><td class="font-mono text-xs">${esc(b.strn)}</td>
+      <td class="text-xs">${esc(b.registrationType)}</td><td class="text-xs">${esc(provinceLabel(b.province))}</td>
+      <td class="font-mono text-xs">${esc(b.mobile)}</td><td class="text-xs break-all">${esc(b.email)}</td><td class="text-xs max-w-[7rem] truncate" title="${esc(b.note)}">${esc(b.note)}</td>
+      <td class="text-xs whitespace-nowrap" title="${b.createdAt ? esc(new Date(b.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Karachi' })) : ''}">${b.createdAt ? fmtDate(b.createdAt) : ''}</td>
+      <td class="text-right whitespace-nowrap"><button class="text-slate-600 text-xs mr-1.5 underline" onclick="showHistory('buyers','${b.id}')">History</button><button class="text-emerald-700 text-xs mr-1.5" onclick="editBuyer('${b.id}')">Edit</button><button class="text-red-600 text-xs" onclick="deleteSaved('buyers','${b.id}')">Delete</button></td></tr>`).join('')
+      || '<tr><td colspan="11" class="py-2 text-slate-500">No saved buyers yet.</td></tr>';
 }
 function setSelect(sel, v) {
   if (v && ![...sel.options].some(o => o.value === v)) sel.insertAdjacentHTML('beforeend', `<option>${esc(v)}</option>`);
@@ -2587,41 +2771,50 @@ function readPrices() {
   return [...document.querySelectorAll('#pfPrices .price-row')].map(r => ({ label: r.querySelector('.pr-label').value.trim(), price: r.querySelector('.pr-price').value }))
     .filter(x => x.label || x.price !== ''); // half-filled rows go to the server, which asks for the missing part
 }
-// Every reference of the item: the first (★, sent to FBR) in bold, each with its PDF link and comment
+// Every reference of the item, each with its PDF link and comment
 // A tax's references (links to the PDFs) and its comment; star = the sales tax's first reference, sent to FBR
 const refLinks = (refs, star) => (refs || []).map((r, i) => `${star && i === 0 ? '★ ' : ''}${r.url ? `<a class="underline${star && i === 0 ? ' font-semibold' : ''}" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.reference)}</a>` : `<span class="${star && i === 0 ? 'font-semibold' : ''}">${esc(r.reference)}</span>`}`).join(' · ');
 const commentLine = c => c ? `<div class="text-slate-500 whitespace-pre-line">${esc(c)}</div>` : '';
 const refsCell = p => {
   const refs = p.lawRefs?.length ? p.lawRefs : p.sroScheduleNo ? [{ reference: p.sroScheduleNo }] : [];
   const comment = p.taxComment || refs.filter(r => r.comment).map(r => `${r.reference}: ${r.comment}`).join('\n');
-  return refLinks(refs, true) + commentLine(comment);
+  return refLinks(refs) + commentLine(comment);
 };
 // More taxes column: each tax, then its own references and comment
-const fbrBoxName = f => (TAX_FIELDS.find(([v]) => v === f) || [, f])[1];
+const fbrBoxName = f => TAX_FIELD_NAMES[f] || f;
 const extraTaxesCell = p => (p.extraTaxes || []).map(t => `<div class="mb-1.5"><b class="font-medium">${taxRuleText(t, p.extraTaxes)}</b> <span class="text-slate-500">→ FBR ${esc(fbrBoxName(t.fbrField))}</span>${t.refs?.length ? `<div>${refLinks(t.refs)}</div>` : ''}${commentLine(t.comment)}</div>`).join('');
 // Sales tax references alone (comment has its own column)
-const salesTaxRefs = p => refLinks(p.lawRefs?.length ? p.lawRefs : p.sroScheduleNo ? [{ reference: p.sroScheduleNo }] : [], true);
+// the item's references (optional record), plus what FBR gets for exempt / reduced rate / SRO items
+const salesTaxRefs = p => refLinks(p.lawRefs || []).replace(/ · /g, '<br>') + (SRO_SALE_TYPES.has(p.saleType) && p.sroScheduleNo ? `<div class="text-xs text-slate-500 mt-0.5">To FBR: ${esc(p.sroScheduleNo)}${p.sroItemSerialNo ? ` · serial ${esc(p.sroItemSerialNo)}` : ''}</div>` : '');
 const salesTaxComment = p => p.taxComment || (p.lawRefs || []).filter(r => r.comment).map(r => `${r.reference}: ${r.comment}`).join('\n');
 function renderItems() {
   $('#itemsCount').textContent = (S.saved?.products || []).length;
   $('#itemSourceOwn').textContent = `Codes created by ${clientName()}`;
   const src = $('#itemSource').value, q = $('#itemQ').value.trim().toLowerCase();
-  const rows = (S.saved?.products || []).filter(p => (!src || p.source === src) && (!q || p.name.toLowerCase().includes(q) || p.hsCode.startsWith(q)));
+  const sort = sortOf('items');
+  const itemVal = (p, k) => SORT_DATES.has(k) ? (p[k] ? new Date(p[k]).getTime() : '')
+    : k === 'prices' ? (pricesOf(p)[0]?.price ?? '') : k === 'rate' ? (p.rate ? (parseFloat(p.rate) || p.rate) : '')
+    : k === 'refs' ? (p.lawRefs || []).map(r => r.reference).join('; ') || p.sroScheduleNo || '' : k === 'comment' ? salesTaxComment(p)
+    : k === 'extraTaxes' ? (p.extraTaxes || []).map(t => t.name).join(', ') : String(p[k] ?? '').trim();
+  const rows = sortList((S.saved?.products || []).filter(p => (!src || p.source === src) && (!q || p.name.toLowerCase().includes(q) || p.hsCode.startsWith(q))), sort, itemVal);
+  paintSortHead(document.querySelector('thead[data-sort-table=items]'), sort);
   const cell = (v, cls = '') => `<td class="px-3 py-3 ${cls}">${v || '<span class="text-slate-300">—</span>'}</td>`;
   $('#productRows').innerHTML = rows.map(p => `<tr class="item-row align-top">
     <td class="items-sticky-l px-3 py-3 font-medium">${esc(p.name)}</td>${cell(esc(p.description), 'whitespace-pre-line')}${cell(esc(p.notes), 'whitespace-pre-line text-slate-600')}
     ${cell(esc(p.hsCode), 'font-mono')}<td class="px-3 py-3">${SOURCE_BADGE[p.source] || ''}</td>${cell(esc(p.uoM))}
     ${cell(pricesOf(p).map(x => `${esc(x.label)} ${money(x.price)}`).join('<br>'), 'whitespace-nowrap')}
     ${p.saleType ? `${cell(esc(p.saleType))}${cell(esc(p.rate))}${cell(salesTaxRefs(p).replace(/ · /g, '<br>'))}${cell(esc(salesTaxComment(p)), 'whitespace-pre-line text-slate-600')}
-      ${cell(extraTaxesCell(p))}${cell(p.taxRuleAt ? `${fmtDate(p.taxRuleAt)}<div><button type="button" class="text-emerald-700 underline text-xs" onclick="ruleHistory('${p.id}')">History</button></div>` : '', 'whitespace-nowrap')}`
+      ${cell(extraTaxesCell(p))}${cell(p.taxRuleAt ? `${fmtDate(p.taxRuleAt)}<div><button type="button" class="text-emerald-700 underline text-xs" onclick="ruleHistory('${p.id}')">Rule history</button></div>` : '', 'whitespace-nowrap')}`
       : '<td colspan="6" class="px-3 py-3 text-amber-700">No tax rule — not on invoices yet. Use Edit to set one.</td>'}
-    <td class="items-sticky-r text-right whitespace-nowrap px-3 py-3"><button class="text-emerald-700 mr-2" onclick="editProduct('${p.id}')">Edit</button><button class="text-red-600" onclick="deleteSaved('products','${p.id}')">Delete</button></td></tr>
-    <tr id="hist-${p.id}" class="hidden"><td colspan="14" class="pb-2"></td></tr>`).join('')
-    || `<tr><td colspan="14" class="py-2 text-slate-500">${(S.saved?.products || []).length ? 'No items match.' : 'No items yet — add your first item with its tax rule above.'}</td></tr>`;
+    ${cell(p.createdAt ? `<span title="${esc(new Date(p.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Karachi' }))}">${fmtDate(p.createdAt)}</span>` : '', 'whitespace-nowrap')}
+    <td class="items-sticky-r text-right whitespace-nowrap px-3 py-3"><button class="text-slate-600 mr-2 underline" onclick="showHistory('products','${p.id}')">History</button><button class="text-emerald-700 mr-2" onclick="editProduct('${p.id}')">Edit</button><button class="text-red-600" onclick="deleteSaved('products','${p.id}')">Delete</button></td></tr>
+    <tr id="hist-${p.id}" class="hidden"><td colspan="15" class="pb-2"></td></tr>`).join('')
+    || `<tr><td colspan="15" class="py-2 text-slate-500">${(S.saved?.products || []).length ? 'No items match.' : 'No items yet — add your first item with its tax rule above.'}</td></tr>`;
 }
 // ---- Items page: list tab / form tab; 4 sections with live status and a review
 function itemsTab(t) {
   S.itemsTab = t;
+  if ($('#guidePanel')) toggleGuide(false);
   $('#itemsListView').classList.toggle('hidden', t !== 'list');
   $('#itemsFormView').classList.toggle('hidden', t !== 'form');
   $('#tabItemsList').classList.toggle('on', t === 'list');
@@ -2633,17 +2826,82 @@ function stepStatus() {
   const f = $('#productForm'), v = n => String(f[n]?.value || '').trim();
   const m1 = [['name', 'name'], ['description', 'description'], ['notes', 'notes'], ['hsCode', 'HS code'], ['uoM', 'UOM']].filter(([n]) => !v(n)).map(([, l]) => l);
   if (v('hsCode') && !/^\d{4}\.?\d{4}$/.test(v('hsCode'))) m1.push('HS code like 0101.2100');
+  if (S.hsUoms?.length && v('uoM') && !S.hsUoms.some(u => u.toLowerCase() === v('uoM').toLowerCase())) m1.push(`UOM allowed by FBR for this HS code (${S.hsUoms.join(' / ')})`);
   const rows = [...document.querySelectorAll('#pfPrices .price-row')].map(r => [r.querySelector('.pr-label').value.trim(), r.querySelector('.pr-price').value]);
   const full = rows.filter(([l, p]) => l && p !== ''), half = rows.filter(([l, p]) => (l || p !== '') && !(l && p !== ''));
   const m2 = [...(!full.length ? ['at least one price'] : []), ...(half.length ? ['each price needs a name and an amount'] : [])];
   const refs = $('#trMainRefs')._refs || [];
   const m3 = [...(!v('saleType') ? ['sale type'] : []), ...(!v('rate') ? ['sales tax rate'] : []),
-    ...(SRO_SALE_TYPES.has(v('saleType')) && !refs.length ? ['a reference (this sale type needs one)'] : []),
+    ...(SRO_SALE_TYPES.has(v('saleType')) && $('#trSroWrap').classList.contains('hidden') && !v('sroScheduleNo') ? ['SRO / Schedule no. (FBR rule 0077)'] : []),
+    ...(SRO_SALE_TYPES.has(v('saleType')) && !$('#trSroWrap').classList.contains('hidden') && !v('fbrSroDesc') ? ['SRO / Schedule from FBR\'s list (FBR rule 0077)'] : []),
+    ...(SRO_SALE_TYPES.has(v('saleType')) && !v('sroItemSerialNo') ? ['item serial no. (FBR rule 0078)'] : []),
+    ...(v('saleType') === '3rd Schedule Goods' && !(Number(v('notifiedRate')) > 0) ? ['retail price per unit (FBR rule 0090)'] : []),
     ...readTaxes().flatMap((t, i) => [!t.name && `name of more tax ${i + 1}`, t.value === '' && `amount of "${t.name || 'more tax ' + (i + 1)}"`, t.kind === 'PCT' && !t.base && `"Apply on" of "${t.name || 'more tax ' + (i + 1)}"`].filter(Boolean))];
   return { m1, m2, m3, prices: full, refs };
 }
+// Section 3: what each of the item's prices comes to with the tax rule being filled in (1 unit), like
+// Item | Price exclusive of tax | Sales tax (18%) | Further tax (4%) | more taxes | Price after tax.
+// Same sums as the invoice (recalc / src/tax.js calcItem).
+function renderTaxPreview() {
+  const f = $('#productForm'), head = $('#trPrevHead'), body = $('#trPrevBody'), note = $('#trPrevNote');
+  if (!head) return;
+  const prices = [...document.querySelectorAll('#pfPrices .price-row')].map(r => ({ label: r.querySelector('.pr-label').value.trim(), price: r.querySelector('.pr-price').value }))
+    .filter(x => x.price !== '' && Number(x.price) >= 0);
+  const rate = f.rate.value.trim(), sale = f.saleType.value, name = f.name.value.trim() || 'This item';
+  const pct = Number((rate.match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
+  const perUnit = Number((rate.match(/rupees?\s*([\d,]+(?:\.\d+)?)\s*per\b/i) || [])[1]?.replace(/,/g, '') || 0);
+  const retail = sale === '3rd Schedule Goods' ? Number(f.notifiedRate.value || 0) : 0;
+  const unreg = $('#trPrevBuyer').value === 'U', ftRate = Number(S.settings?.furtherTaxRate ?? 4);
+  const ftOn = unreg && pct > 0 && !NO_FT.has(sale);
+  const extras = readTaxes().filter(t => t.name && t.value !== '');
+  const num = v => `<td class="px-3 py-2 text-right tabular-nums whitespace-nowrap">${money(v)}</td>`;
+  head.innerHTML = `<tr><th class="px-3 py-2">Item</th><th class="px-3 py-2 text-right">Price exclusive of tax</th><th class="px-3 py-2 text-right">Sales tax (${esc(rate || '—')})</th>
+    <th class="px-3 py-2 text-right whitespace-nowrap">Further tax (${ftOn ? ftRate + '%' : 'none'}) <button type="button" class="ft-why text-emerald-700 underline font-normal text-xs" aria-controls="trFtWhy" title="Why further tax?">Why?</button></th>${extras.map(t => `<th class="px-3 py-2 text-right">${esc(t.name)} (${t.kind === 'FIXED' ? 'Rs ' + esc(t.value) : esc(t.value) + '%'})</th>`).join('')}
+    <th class="px-3 py-2 text-right">Price after tax</th></tr>`;
+  if (!prices.length || !rate) {
+    body.innerHTML = `<tr><td colspan="${5 + extras.length}" class="px-3 py-3 text-slate-500">${!prices.length ? 'Add a price in section 2' : 'Enter the sales tax rate'} to see the tax on each price.</td></tr>`;
+  } else {
+    body.innerHTML = prices.map(x => {
+      const value = r2(Number(x.price));
+      const st = r2((retail > 0 ? retail : value) * pct / 100 + perUnit);
+      const ft = ftOn ? r2(value * ftRate / 100) : 0;
+      const ex = extraTaxLine(extras, value, st);
+      const total = r2(value + st + ft + ex.reduce((a, t) => a + t.amount, 0));
+      return `<tr class="border-t"><td class="px-3 py-2">${esc(name)}${prices.length > 1 || x.label ? ` <span class="text-slate-500">— ${esc(x.label || 'price')}</span>` : ''}</td>${num(value)}${num(st)}${num(ft)}${ex.map(t => num(t.amount)).join('')}<td class="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">${money(total)}</td></tr>`;
+    }).join('');
+  }
+  note.textContent = [
+    retail > 0 ? `3rd schedule: sales tax is on the retail price ${money(retail)}.` : '',
+    perUnit ? `Includes Rs ${money(perUnit)} per unit from the rate.` : '',
+    !unreg ? 'Registered buyer: no further tax.' : pct === 0 ? 'No further tax at a 0% / exempt rate.' : NO_FT.has(sale) ? `No further tax on "${sale}".` : `Further tax ${ftRate}% is added for unregistered buyers (set by your administrator).`,
+    'On an invoice it is multiplied by the quantity; a fixed Rs tax is charged once per line.',
+  ].filter(Boolean).join(' ');
+}
+// "Why?" next to Further tax: the law behind it and why it is (or is not) charged for this item
+function renderFtWhy() {
+  const f = $('#productForm'), box = $('#trFtWhy'); if (!box) return;
+  const rate = f.rate.value.trim(), sale = f.saleType.value, pct = Number((rate.match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
+  const unreg = $('#trPrevBuyer').value === 'U', ftRate = Number(S.settings?.furtherTaxRate ?? 4);
+  const act = (S.guideLinks || []).find(l => /sales tax act/i.test(l.label));
+  const reason = !unreg ? 'Not charged here: the buyer is registered (and active with FBR).'
+    : !sale || !rate ? 'Choose the sale type and rate to see whether it applies to this item.'
+    : pct === 0 ? `Not charged here: the rate is ${esc(rate)} (no sales tax, so no further tax).`
+    : NO_FT.has(sale) ? `Not charged here: further tax is not charged on "${esc(sale)}".`
+    : `Charged here: a taxable item (${esc(rate)}) sold to an unregistered buyer, so ${ftRate}% of the price before tax is added.`;
+  box.innerHTML = `<p><b>Why further tax?</b> Sales Tax Act 1990, section 3(1A): when a registered business sells taxable goods to a buyer who is <b>not registered</b> (or is registered but <b>not on FBR's Active Taxpayers List</b>), further tax is charged on the value before tax, on top of the sales tax.</p>
+    <p>It is <b>not</b> charged to registered active buyers, to end consumers (a person buying for their own use), at a 0% / exempt rate, or on exempt, zero-rated and 3rd schedule goods. ETAX uses ${ftRate}%, the rate set by your administrator.</p>
+    <p class="font-medium">${reason}</p>
+    ${act ? `<p><a class="underline text-emerald-700" href="${esc(act.url)}" target="_blank" rel="noopener">Read the Sales Tax Act (section 3)</a> · ETAX does not decide the tax for you — check with your tax adviser.</p>` : ''}`;
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('.ft-why')) return;
+  e.preventDefault();
+  const box = $('#trFtWhy'); renderFtWhy(); box.classList.toggle('hidden');
+});
 function syncSteps() {
   if (!$('#itemsFormView') || $('#itemsFormView').classList.contains('hidden')) return;
+  renderTaxPreview();
+  if (!$('#trFtWhy').classList.contains('hidden')) renderFtWhy();
   const st = stepStatus(), all = [st.m1, st.m2, st.m3];
   const ready = all.every(m => !m.length);
   all.concat([ready ? [] : ['finish the sections above']]).forEach((m, i) => {
@@ -2668,7 +2926,11 @@ function syncSteps() {
     box('HS code · UOM', `${v('hsCode') ? esc(v('hsCode')) : miss('no HS code')} · ${v('uoM') ? esc(v('uoM')) : miss('no UOM')}`),
     box('Prices', st.prices.length ? st.prices.map(([l, p]) => `${esc(l)} ${money(p)}`).join('<br>') : miss('no price yet')),
     box('Sale type · sales tax', `${v('saleType') ? esc(v('saleType')) : miss('no sale type')} · ${v('rate') ? `<b>${esc(v('rate'))}</b>` : miss('no rate')}`),
-    box('Sent to FBR as SRO / Schedule', st.refs.length ? `★ ${esc(st.refs[0].reference)}${st.refs.length > 1 ? `<div class="text-slate-500">+ ${st.refs.length - 1} more reference(s)</div>` : ''}` : '<span class="text-slate-400">none</span>'),
+    // FBR gets the SRO / Schedule only for exempt / reduced rate / SRO sale types: FBR's list, else the one typed
+    box('Sent to FBR as SRO / Schedule', !SRO_SALE_TYPES.has(v('saleType')) ? '<span class="text-slate-400">not needed for this sale type</span>'
+      : (v('fbrSroDesc') || v('sroScheduleNo')) ? `<b>${esc(v('fbrSroDesc') || v('sroScheduleNo'))}</b>${v('fbrSroDesc') ? ' <span class="text-slate-500">(FBR list)</span>' : ''}${v('sroItemSerialNo') ? ` · serial ${esc(v('sroItemSerialNo'))}` : ''}`
+      : miss('not filled in yet')),
+    box('References', st.refs.length ? st.refs.map(r => esc(r.reference)).join('<br>') : '<span class="text-slate-400">none (optional)</span>'),
     box('More taxes', taxes.length ? taxes.map(t => esc(`${t.name || '(no name)'} ${t.kind === 'FIXED' ? 'Rs ' + (t.value || '?') + ' fixed' : (t.value || '?') + '%'} → ${fbrBoxName(t.fbrField)}`)).join('<br>') : '<span class="text-slate-400">none</span>'),
   ].join('');
 }
@@ -2685,6 +2947,7 @@ function setupItemSteps() {
 function clearProductForm() {
   const f = $('#productForm');
   f.reset(); f.id.value = '';
+  S.hsUoms = null; $('#pfUomHint').textContent = '';
   $('#pfPrices').innerHTML = ''; addPriceRow();
   $('#pfSubmit').textContent = 'Save item with tax rule'; $('#pfMode').textContent = '';
   $('#pfBanner').classList.add('hidden');
@@ -2698,6 +2961,7 @@ function editProduct(id) {
   for (const x of pricesOf(p)) addPriceRow(x.label, Number(x.price));
   if (!pricesOf(p).length) addPriceRow();
   fillRuleForm(p);
+  checkHsUom();
   $('#pfSubmit').textContent = 'Update item and tax rule'; $('#pfMode').textContent = '';
   $('#pfBanner').innerHTML = `<span>Editing <b>${esc(p.name)}</b>${p.saleType ? '' : ' — set its tax rule in section 3'}</span><button type="button" class="underline" onclick="clearProductForm(); itemsTab('list')">Cancel</button>`;
   $('#pfBanner').classList.remove('hidden');
@@ -2720,6 +2984,7 @@ function fillRuleForm(p) {
   const f = $('#productForm');
   setSelect(f.saleType, p?.saleType || ''); // a new item starts with no sale type chosen
   for (const k of ['rate', 'sroItemSerialNo']) f[k].value = p?.[k] || '';
+  f.sroScheduleNo.value = p?.fbrSroId ? '' : (p?.sroScheduleNo || '');
   f.notifiedRate.value = p?.notifiedRate != null ? Number(p.notifiedRate) : '';
   const refs = p?.lawRefs?.length ? p.lawRefs : p?.sroScheduleNo ? [{ reference: p.sroScheduleNo }] : [];
   setRefs($('#trMainRefs'), refs);
@@ -2727,6 +2992,8 @@ function fillRuleForm(p) {
   f.taxComment.value = p?.taxComment || refs.filter(r => r.comment).map(r => `${r.reference}: ${r.comment}`).join('\n');
   for (const r of document.querySelectorAll('#trTaxes .tax-row')) r.remove();
   for (const t of p?.extraTaxes || []) addTaxRow(t);
+  f.fbrRateId.value = p?.fbrRateId ?? ''; f.fbrSroId.value = p?.fbrSroId ?? ''; f.fbrSroDesc.value = p?.fbrSroId ? (p.sroScheduleNo || '') : '';
+  loadFbrRates(true);
 }
 // Search FBR's SROs / circulars / general orders / notices (copied daily) plus the schedule names FBR uses
 const SCHEDULE_REFS = ['6th Schd Table I', '6th Schd Table II', '8th Schd Table 1', '5th Schd', '3rd Schd'];
@@ -2736,7 +3003,9 @@ const REF_BADGE = { ACT: 'Sales Tax Act', RULES: 'Sales Tax Rules', SRO: 'SRO', 
 const TAX_BASES = [['VALUE', 'Value before tax'], ['SALES_TAX', 'Sales tax amount']];
 // "VALUE+SALES_TAX+TAX:0" → parts; older rules saved "Value after tax" = value + sales tax
 const taxBaseParts = base => [...new Set(String(base || 'VALUE').split('+').flatMap(x => x === 'VALUE_AFTER_TAX' ? ['VALUE', 'SALES_TAX'] : [x]).filter(Boolean))];
-const TAX_FIELDS = [['extraTax', 'Extra Tax'], ['fedPayable', 'FED Payable'], ['furtherTax', 'Further Tax'], ['salesTaxApplicable', 'Sales Tax']];
+// FBR DI API v1.12: more taxes can go only to Extra Tax or FED Payable (sales tax must equal rate × value — 0104)
+const TAX_FIELDS = [['extraTax', 'Extra Tax'], ['fedPayable', 'FED Payable']];
+const TAX_FIELD_NAMES = { ...Object.fromEntries(TAX_FIELDS), furtherTax: 'Further Tax', salesTaxApplicable: 'Sales Tax' }; // older rules in history
 function addTaxRow(t = {}) {
   const row = document.createElement('tr');
   row.className = 'tax-row align-top border-t';
@@ -2799,7 +3068,7 @@ const taxRuleText = (t, all = []) => `${esc(t.name)} ${t.kind === 'FIXED' ? `Rs 
 const extraTaxesText = p => (p.extraTaxes || []).map(t => taxRuleText(t, p.extraTaxes)).join(' · ');
 
 // References picker, one per tax: chips of the documents picked + a search box (Act, Rules, SROs, circulars …;
-// Enter adds what was typed, e.g. a schedule). On the sales tax row the first chip (★) is sent to FBR.
+// Enter adds what was typed, e.g. a schedule).
 function setRefs(box, refs) {
   box._refs = refs.map(r => ({ reference: r.reference, url: r.url || '', source: r.source || '' }));
   if (!box.querySelector('.rp-input')) box.innerHTML = `<div class="rp-chips flex flex-wrap gap-1 mb-1"></div>
@@ -2808,8 +3077,8 @@ function setRefs(box, refs) {
 }
 function renderRefs(box) {
   const main = box.dataset.main === '1';
-  box.querySelector('.rp-chips').innerHTML = box._refs.map((r, i) => `<span class="inline-flex items-center gap-1 max-w-full px-2 py-0.5 rounded-full text-xs border ${main && i === 0 ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-slate-50 border-slate-200'}">
-      ${main && i === 0 ? '<b title="Sent to FBR">★</b>' : main ? `<button type="button" class="rp-top text-slate-400 hover:text-emerald-700" data-i="${i}" title="Send this one to FBR">☆</button>` : ''}
+  // references are a record of the law read (optional); FBR gets the SRO / Schedule no. box, not a reference
+  box.querySelector('.rp-chips').innerHTML = box._refs.map((r, i) => `<span class="inline-flex items-center gap-1 max-w-full px-2 py-0.5 rounded-full text-xs border bg-slate-50 border-slate-200">
       ${r.url ? `<a class="underline truncate" href="${esc(r.url)}" target="_blank" rel="noopener" title="${esc(REF_BADGE[r.source] || '')} — open the PDF">${esc(r.reference)}</a>` : `<span class="truncate">${esc(r.reference)}</span>`}
       <button type="button" class="rp-del text-slate-400 hover:text-red-600" data-i="${i}" title="Remove">✕</button></span>`).join('');
   if (main) syncMainTax();
@@ -2821,9 +3090,77 @@ function addRef(box, r) {
   renderRefs(box);
 }
 // Sales tax row: shows the rule's sale type and rate; the FBR serial box only for exempt / reduced rate / SRO sale types
+// Sales tax row: the serial box only for exempt / reduced rate / SRO sale types (FBR 0078), the retail price only for
+// 3rd schedule goods (FBR 0090 / 0102) — both required when shown
 function syncMainTax() {
-  const f = $('#productForm');
+  const f = $('#productForm'), sro = SRO_SALE_TYPES.has(f.saleType.value), third = f.saleType.value === '3rd Schedule Goods';
   $('#trMainSale').textContent = f.saleType.value;
+  $('#trSerialWrap').classList.toggle('hidden', !sro);
+  const typedSro = sro && $('#trSroWrap').classList.contains('hidden');
+  $('#trSroTextWrap').classList.toggle('hidden', !typedSro); f.sroScheduleNo.required = typedSro;
+  // only the visible box is required (FBR list, or typed when FBR can't be asked) — a hidden required box blocks saving silently
+  const serialList = !$('#trSerialSel').classList.contains('hidden');
+  f.sroItemSerialNo.required = sro && !serialList; $('#trSerialSel').required = sro && serialList;
+  $('#trRetailWrap').classList.toggle('hidden', !third); f.notifiedRate.required = third;
+}
+// ---- FBR list chain on the item form (DI API v1.12): sale type → rates (§5.8) → SRO schedule (§5.7) → SRO serial (§5.10).
+// Each list comes from FBR through the server; when FBR can't be asked (mock mode / no token) the boxes are typed instead.
+const chainSel = (el, list, current, placeholder) => {
+  el.innerHTML = `<option value="">${placeholder}</option>` + list.map(x => `<option value="${x.id}" ${String(x.id) === String(current) ? 'selected' : ''}>${esc(x.desc)}</option>`).join('');
+};
+async function loadFbrRates(keep) {
+  const f = $('#productForm'), sel = $('#trRateSel'), note = $('#trFbrNote');
+  if (!keep) { f.fbrRateId.value = ''; f.fbrSroId.value = ''; f.fbrSroDesc.value = ''; }
+  const sale = f.saleType.value;
+  const r = sale ? await api('/api/fbr/rates?saleType=' + encodeURIComponent(sale)).catch(() => ({ live: false, list: [] })) : { live: false, list: [] };
+  S.fbrRates = r.list;
+  if (r.live) {
+    const cur = f.fbrRateId.value || (r.list.find(x => x.desc === f.rate.value) || {}).id || '';
+    chainSel(sel, r.list, cur, '— choose FBR rate —');
+    if (cur) { f.fbrRateId.value = cur; f.rate.value = (r.list.find(x => String(x.id) === String(cur)) || {}).desc || f.rate.value; }
+    else f.rate.value = '';
+    sel.classList.remove('hidden'); f.rate.classList.add('hidden'); sel.required = true; f.rate.required = false;
+    note.textContent = `${r.list.length} rate(s) allowed by FBR for this sale type`;
+  } else {
+    sel.classList.add('hidden'); f.rate.classList.remove('hidden'); sel.required = false; f.rate.required = true;
+    note.textContent = sale ? 'FBR lists appear once your FBR token works — type the rate' : '';
+  }
+  await loadFbrSros(keep);
+}
+async function loadFbrSros(keep) {
+  const f = $('#productForm'), wrap = $('#trSroWrap'), sro = SRO_SALE_TYPES.has(f.saleType.value);
+  if (!keep) { f.fbrSroId.value = ''; f.fbrSroDesc.value = ''; }
+  const r = sro && f.fbrRateId.value ? await api('/api/fbr/sro?rateId=' + f.fbrRateId.value).catch(() => ({ live: false, list: [] })) : { live: false, list: [] };
+  wrap.classList.toggle('hidden', !r.live); $('#trSroSel').required = r.live;
+  if (r.live) chainSel($('#trSroSel'), r.list, f.fbrSroId.value, '— choose SRO / Schedule —');
+  else { f.fbrSroId.value = ''; f.fbrSroDesc.value = ''; }
+  await loadFbrSerials(keep);
+}
+async function loadFbrSerials(keep) {
+  const f = $('#productForm'), sel = $('#trSerialSel');
+  const r = f.fbrSroId.value ? await api('/api/fbr/sro-items?sroId=' + f.fbrSroId.value).catch(() => ({ live: false, list: [] })) : { live: false, list: [] };
+  if (r.live) {
+    const cur = (r.list.find(x => x.desc === f.sroItemSerialNo.value) || {}).id || '';
+    if (!cur && !keep) f.sroItemSerialNo.value = '';
+    chainSel(sel, r.list, cur, '— choose item serial —');
+    sel.classList.remove('hidden'); f.sroItemSerialNo.classList.add('hidden'); $('#trSerialHint').textContent = '(FBR list)';
+  } else {
+    sel.classList.add('hidden'); f.sroItemSerialNo.classList.remove('hidden'); $('#trSerialHint').textContent = '(in the SRO / Schedule)';
+  }
+  syncMainTax(); syncSteps();
+}
+function setupFbrChain() {
+  const f = $('#productForm');
+  f.saleType.addEventListener('change', () => loadFbrRates(false));
+  $('#trRateSel').addEventListener('change', e => {
+    const x = (S.fbrRates || []).find(r => String(r.id) === e.target.value);
+    f.fbrRateId.value = x ? x.id : ''; f.rate.value = x ? x.desc : ''; loadFbrSros(false);
+  });
+  $('#trSroSel').addEventListener('change', e => {
+    const o = e.target.selectedOptions[0];
+    f.fbrSroId.value = e.target.value; f.fbrSroDesc.value = e.target.value ? o.textContent : ''; f.sroItemSerialNo.value = ''; loadFbrSerials(false);
+  });
+  $('#trSerialSel').addEventListener('change', e => { f.sroItemSerialNo.value = e.target.value ? e.target.selectedOptions[0].textContent : ''; syncSteps(); });
 }
 function setupRefPickers() {
   const host = $('#trTaxes');
@@ -2883,6 +3220,7 @@ function setupItemRuleForm() {
   $('#trTaxes').addEventListener('click', e => { const b = e.target.closest('.tx-del'); if (b) removeTaxRow(b.closest('.tax-row')); });
   $('#trSaleType').innerHTML = '<option value="">— select sale type —</option>' + SALE_TYPES().map(t => `<option>${esc(t)}</option>`).join('');
   setupRefPickers();
+  setupFbrChain();
 }
 function clearBuyerForm() {
   const f = $('#buyerForm');
@@ -2900,6 +3238,19 @@ function editBuyer(id) {
   $('#bfSubmit').textContent = 'Update buyer'; $('#bfMode').textContent = `Editing "${b.businessName}"`;
   f.businessName.focus();
 }
+// FBR DI API v1.12 §5.9 / error 0099: the unit must be one FBR allows for the HS code
+async function checkHsUom() {
+  const f = $('#productForm'), code = f.hsCode.value.trim(), hint = $('#pfUomHint');
+  S.hsUoms = null; hint.textContent = '';
+  if (!/^\d{4}\.?\d{4}$/.test(code)) return syncSteps();
+  const r = await api('/api/hs/' + encodeURIComponent(code) + '/uom').catch(() => ({ live: false }));
+  if (r.live && r.data?.length) {
+    S.hsUoms = r.data;
+    if (!f.uoM.value.trim()) f.uoM.value = r.data[0];
+    hint.className = 'block text-xs mt-1 text-slate-500'; hint.textContent = `FBR allows: ${r.data.join(' / ')}`;
+  }
+  syncSteps();
+}
 function setupSavedForms() {
   const pf = $('#productForm'), bf = $('#buyerForm');
   $('#itemSource').addEventListener('change', renderItems);
@@ -2912,10 +3263,12 @@ function setupSavedForms() {
       const rows = await api('/api/hs?q=' + encodeURIComponent(q)).catch(() => []);
       suggest(pf.hsCode, rows,
         r => `<span class="font-mono font-semibold">${esc(r.code)}</span> <div class="text-slate-600">${esc(r.description)}</div>`,
-        r => { pf.hsCode.value = r.code; if (!pf.name.value.trim()) pf.name.value = shortHsDesc(r.description); if (!pf.description.value.trim()) pf.description.value = r.description.slice(0, 500); });
+        r => { pf.hsCode.value = r.code; checkHsUom(); if (!pf.name.value.trim()) pf.name.value = shortHsDesc(r.description); if (!pf.description.value.trim()) pf.description.value = r.description.slice(0, 500); });
     });
   });
   if (!$('#pfPrices').children.length) addPriceRow();
+  pf.hsCode.addEventListener('change', checkHsUom);
+  $('#trPrevBuyer').addEventListener('change', () => { renderTaxPreview(); if (!$('#trFtWhy').classList.contains('hidden')) renderFtWhy(); });
   pf.addEventListener('submit', async e => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(pf));
@@ -2925,7 +3278,7 @@ function setupSavedForms() {
     body.extraTaxes = readTaxes();
     const noBase = body.extraTaxes.find(t => t.kind === 'PCT' && !t.base);
     if (noBase) return toast(`"${noBase.name || 'More tax'}": tick at least one "Apply on"`);
-    if (!SRO_SALE_TYPES.has(body.saleType)) body.sroItemSerialNo = '';
+    if (!SRO_SALE_TYPES.has(body.saleType)) { body.sroItemSerialNo = ''; body.sroScheduleNo = ''; }
     try {
       const p = await api('/api/products', { method: 'POST', body }); // saves the item and, if changed, its tax rule
       toast(`${body.id ? 'Updated' : 'Saved'} "${p.name}" with its tax rule — it appears on invoices`, true);
@@ -2962,7 +3315,9 @@ const itemXCols = nPrices => [
   ['name', 'Item name *', 26, true], ['description', 'Item description *', 34, true], ['notes', 'Item notes *', 28, true],
   ['hsCode', 'HS code *', 13, true], ['hsDesc', 'HS description (auto)', 46], ['uoM', 'UOM *', 20, true],
   ...Array.from({ length: nPrices }, (_, i) => [[`p${i + 1}Name`, `Price ${i + 1} name${i ? '' : ' *'}`, 14, true], [`p${i + 1}Amount`, `Price ${i + 1} amount${i ? '' : ' *'}`, 14]]).flat(),
-  ['saleType', 'Sale type *', 34, true], ['rate', 'Sales tax rate *', 14, true], ['refs', 'Sales tax references', 40, true], ['comment', 'Sales tax comment', 40, true],
+  ['saleType', 'Sale type *', 34, true], ['rate', 'Sales tax rate *', 14, true],
+  ['retail', 'Retail price per unit (3rd schedule)', 16], ['sro', 'SRO / Schedule no. (exempt / reduced / SRO)', 22, true], ['serial', 'Item serial no. (exempt / reduced / SRO)', 16, true],
+  ['refs', 'Sales tax references', 40, true], ['comment', 'Sales tax comment', 40, true],
 ];
 const TAX_X_COLS = [['itemName', 'Item name *', 26], ['name', 'Tax name *', 20], ['kind', 'Type *', 11], ['value', 'Rate or Rs *', 12],
   ['applyOn', 'Apply on * (for %)', 34], ['fbrBox', 'FBR box *', 16], ['refs', 'References', 40], ['comment', 'Comment', 40]];
@@ -2996,7 +3351,8 @@ async function buildItemsWorkbook(products) {
   cols.forEach(([, , , txt], i) => { if (txt) items.getColumn(i + 1).numFmt = '@'; });
   for (const p of products) {
     const row = { name: p.name, description: p.description, notes: p.notes, hsCode: p.hsCode, uoM: p.uoM, saleType: p.saleType, rate: p.rate,
-      refs: (p.lawRefs?.length ? p.lawRefs : p.sroScheduleNo ? [{ reference: p.sroScheduleNo }] : []).map(r => r.reference).join('; '), comment: salesTaxComment(p) };
+      refs: (p.lawRefs?.length ? p.lawRefs : p.sroScheduleNo ? [{ reference: p.sroScheduleNo }] : []).map(r => r.reference).join('; '), comment: salesTaxComment(p),
+      retail: p.saleType === '3rd Schedule Goods' && p.notifiedRate != null ? Number(p.notifiedRate) : '', sro: p.sroScheduleNo || '', serial: p.sroItemSerialNo || '' };
     pricesOf(p).forEach((x, i) => { row[`p${i + 1}Name`] = x.label; row[`p${i + 1}Amount`] = Number(x.price); });
     items.addRow(row);
   }
@@ -3028,7 +3384,7 @@ async function buildItemsWorkbook(products) {
   // How to fill
   help.columns = [{ header: 'Column', key: 'c', width: 28 }, { header: 'How to fill it', key: 'h', width: 110 }];
   help.addRows([
-    ['Items sheet', 'One row per item. Columns with * are required. An import only adds new items; nothing is saved while the file has problems.'],
+    ['Items sheet', 'One row per item. Columns with * are required. A row with the name of a saved item (or its HS code + sale type) is that item: its missing details are filled in from the file, and where both have a value that differs you choose which to keep. Nothing is saved while the file has problems.'],
     ['Item name *', 'Unique name, e.g. "Sugar 50kg bag" (max 200 characters). A name that already exists is refused.'],
     ['Item description *', 'What the item is, e.g. "White refined sugar, 50 kg bag" (max 500).'],
     ['Item notes *', 'Your own notes, e.g. supplier or storage (max 1000).'],
@@ -3037,13 +3393,16 @@ async function buildItemsWorkbook(products) {
     ['UOM *', 'Pick from the list, e.g. KG.'],
     ['Price N name / amount', 'At least Price 1 (name and amount), e.g. Retail / 150. Fill name and amount together. Add more pairs as needed.'],
     ['Sale type *', 'Pick from the list (Lists sheet).'],
-    ['Sales tax rate *', 'e.g. 18%, 10%, Exempt.'],
-    ['Sales tax references', 'Separate with ";", e.g. "SRO 1751(I)/2026; 6th Schd Table I". The first one is sent to FBR. Needed for exempt / reduced rate / SRO sale types. References from FBR\'s list get their PDF link.'],
+    ['Sales tax rate *', 'e.g. 18%, 10%, Exempt. FBR does not allow 5% when a line is above Rs 20,000.'],
+    ['Retail price per unit', 'Only for 3rd Schedule Goods (required there): the printed retail price; FBR charges the tax on it.'],
+    ['SRO / Schedule no.', 'Only for Exempt / Reduced rate / SRO sale types (required there, FBR rule 0077): what FBR receives, e.g. "6th Schd Table I". Empty = the first reference is used.'],
+    ['Item serial no.', 'Only for Exempt / Reduced rate / SRO sale types (required there, FBR rule 0078): the item serial in that SRO / Schedule, e.g. 19.'],
+    ['Sales tax references', 'Optional. Separate with ";", e.g. "SRO 1751(I)/2026; 6th Schd Table I". Kept for your record; references from FBR\'s list get their PDF link.'],
     ['Sales tax comment', 'The law detail you read (optional).'],
     ['More taxes sheet', 'One row per extra tax. Item name must match a row on the Items sheet. Taxes of one item are read top to bottom.'],
     ['Type * / Rate or Rs *', '% (e.g. 2) or Fixed Rs (e.g. 5500 — once per invoice line, not × quantity).'],
     ['Apply on *', 'For %: Value before tax, Sales tax amount, or the name of a tax above it for the same item. Several joined with " + ", e.g. "Sales tax amount + Withholding".'],
-    ['FBR box *', 'Extra Tax, FED Payable, Further Tax or Sales Tax — where FBR receives this tax.'],
+    ['FBR box *', 'Extra Tax or FED Payable — where FBR receives this tax. FBR does not accept Extra Tax for some sale types (error 0091).'],
   ].map(([c, h]) => ({ c, h })));
   xHead(help); help.getColumn(2).alignment = { wrapText: true, vertical: 'top' };
   return wb;
@@ -3069,7 +3428,8 @@ async function exportItems() {
 const xKey = h => String(h || '').replace(/\(.*?\)/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''); // "Apply on * (for %)" → "applyon"
 const ITEM_HEAD = { itemname: 'name', name: 'name', itemdescription: 'description', description: 'description', itemnotes: 'notes', notes: 'notes',
   hscode: 'hsCode', uom: 'uoM', saletype: 'saleType', salestaxrate: 'rate', taxrate: 'rate', rate: 'rate',
-  salestaxreferences: 'refs', references: 'refs', reference: 'refs', salestaxcomment: 'comment', comment: 'comment' };
+  salestaxreferences: 'refs', references: 'refs', reference: 'refs', salestaxcomment: 'comment', comment: 'comment',
+  retailpriceperunit: 'retail', retailprice: 'retail', sroscheduleno: 'sro', sroschedule: 'sro', srono: 'sro', itemserialno: 'serial', serialno: 'serial', itemserial: 'serial' };
 const TAX_HEAD = { itemname: 'itemName', item: 'itemName', taxname: 'name', name: 'name', type: 'kind', rateorrs: 'value', rate: 'value', amount: 'value', value: 'value',
   applyon: 'applyOn', fbrbox: 'fbrBox', references: 'refs', reference: 'refs', comment: 'comment' };
 const itemHeadKey = h => { const k = xKey(h); const m = /^price(\d+)(name|amount)?$/.exec(k); return m ? `p${m[1]}${m[2] === 'name' ? 'Name' : 'Amount'}` : ITEM_HEAD[k]; };
@@ -3091,7 +3451,7 @@ async function importItems(file) {
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
     const it = readXSheet(wb.Sheets.Items || wb.Sheets[wb.SheetNames[0]], itemHeadKey, ['hsDesc']);
     const tx = readXSheet(wb.Sheets['More taxes'], h => TAX_HEAD[xKey(h)]);
-    S.itemImport = { name: file.name, body: { itemHeaders: it.headers, items: it.rows, taxHeaders: tx.headers, taxes: tx.rows } };
+    S.itemImport = { name: file.name, body: { fileName: file.name, itemHeaders: it.headers, items: it.rows, taxHeaders: tx.headers, taxes: tx.rows } };
     renderItemImport(await api('/api/products/import/check', { method: 'POST', body: S.itemImport.body }));
   } catch (err) { out.className = 'mb-3 text-sm text-red-700'; out.textContent = err.message; }
 }
@@ -3104,18 +3464,31 @@ function renderItemImport(r) {
     out.className = 'mb-3 text-sm border rounded-lg p-3 bg-red-50 border-red-200';
     out.innerHTML = `<b class="text-red-800">${n} problem${n > 1 ? 's' : ''} found in ${name} — nothing was saved.</b> Fix them in Excel and upload the file again.${list(r.errors, 'text-red-800')}${warn}`;
   } else {
+    // Items already saved: missing details are filled in; differences are chosen in the pop-up when importing
+    const ups = r.updates || [], nCon = ups.filter(u => u.conflicts.length).length;
+    if (S.itemImport) S.itemImport.updates = ups;
+    const upList = ups.length ? `<ul class="mt-2 space-y-1 text-slate-700">${ups.map(u => `<li><b>Row ${u.row} (${esc(u.name)}):</b> item already exists${u.existing.name !== u.name ? ` as "${esc(u.existing.name)}"` : ''} — ${[
+      u.fills.length ? `will update the missing: ${u.fills.map(f => esc(f.label)).join(', ')}` : '',
+      u.conflicts.length ? `<span class="text-amber-800">${u.conflicts.length} difference${u.conflicts.length > 1 ? 's' : ''} to choose: ${u.conflicts.map(c => esc(c.label)).join(', ')}</span>` : ''].filter(Boolean).join('; ') || 'nothing new in the file'}</li>`).join('')}</ul>` : '';
     out.className = 'mb-3 text-sm border rounded-lg p-3 bg-emerald-50 border-emerald-200';
-    out.innerHTML = `<b class="text-emerald-800">${r.ready} item${r.ready > 1 ? 's' : ''} in ${name} ready to import.</b>
-      <button type="button" onclick="commitItemImport()" class="ml-2 bg-emerald-700 text-white rounded px-3 py-1">Import ${r.ready} item${r.ready > 1 ? 's' : ''}</button>
-      <button type="button" onclick="$('#itemImportOut').classList.add('hidden')" class="ml-2 text-xs underline">Cancel</button>${warn}`;
+    out.innerHTML = `<b class="text-emerald-800">${r.ready} new item${r.ready === 1 ? '' : 's'}${ups.length ? ` and ${ups.length} already saved` : ''} in ${name}.</b>
+      <button type="button" onclick="commitItemImport()" class="ml-2 bg-emerald-700 text-white rounded px-3 py-1">${nCon ? 'Choose differences and import' : 'Import'}</button>
+      <button type="button" onclick="$('#itemImportOut').classList.add('hidden')" class="ml-2 text-xs underline">Cancel</button>${upList}${warn}`;
   }
 }
 async function commitItemImport() {
   try {
-    const d = await api('/api/products/import/commit', { method: 'POST', body: S.itemImport.body });
+    let choices = {};
+    const ups = S.itemImport.updates || [];
+    if (ups.some(u => u.conflicts.length)) {
+      choices = await chooseConflicts(ups, 'item');
+      if (!choices) return toast('Import cancelled — nothing was saved');
+    }
+    const d = await api('/api/products/import/commit', { method: 'POST', body: { ...S.itemImport.body, choices } });
     const out = $('#itemImportOut');
     out.className = 'mb-3 text-sm border rounded-lg p-3 bg-emerald-50 border-emerald-200';
-    out.innerHTML = `<b class="text-emerald-800">Imported ${d.imported} item${d.imported > 1 ? 's' : ''} with their tax rules from ${esc(S.itemImport.name)}.</b>`;
+    out.innerHTML = `<b class="text-emerald-800">Imported ${d.imported} new item${d.imported === 1 ? '' : 's'}${d.details?.length ? `, ${d.updated} updated` : ''} from ${esc(S.itemImport.name)}.</b>`
+      + (d.details?.length ? `<ul class="mt-2 space-y-1 text-slate-700">${d.details.map(x => `<li><b>Row ${x.row} (${esc(x.name)}):</b> item ${esc(x.message)}</li>`).join('')}</ul>` : '');
     S.itemImport = null; loadSaved();
   } catch (err) {
     if (err.data?.errors) renderItemImport({ errors: err.data.errors, warnings: err.data.warnings || [] });
@@ -3126,6 +3499,91 @@ document.addEventListener('change', e => {
   if (e.target.id !== 'itemImportFile' || !e.target.files[0]) return;
   importItems(e.target.files[0]); e.target.value = '';
 });
+
+// Items form: the "Tax law guide" button in the step bar opens and closes the guidelines
+function toggleGuide(open) {
+  const panel = $('#guidePanel'), btn = $('#guideToggle');
+  const show = open ?? !panel.classList.contains('open');
+  if (show) placeGuide();
+  panel.classList.toggle('open', show); panel.setAttribute('aria-hidden', String(!show)); btn.setAttribute('aria-expanded', String(show));
+}
+// the panel sits in the right-hand area, from just under the step bar (so its button stays clickable) to the bottom
+function placeGuide() {
+  const bar = document.querySelector('#itemsFormView .stepper'); if (!bar) return;
+  const r = bar.getBoundingClientRect(), panel = $('#guidePanel');
+  panel.style.top = Math.round(r.bottom + 10) + 'px';
+  panel.style.right = Math.max(8, Math.round(document.documentElement.clientWidth - r.right)) + 'px';
+}
+window.addEventListener('scroll', () => { if ($('#guidePanel')?.classList.contains('open')) placeGuide(); }, { passive: true, capture: true });
+window.addEventListener('resize', () => { if ($('#guidePanel')?.classList.contains('open')) placeGuide(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#guidePanel')?.classList.contains('open')) toggleGuide(false); });
+
+/* ---------- Change history of a buyer / item ---------- */
+async function showHistory(type, id) {
+  const rec = (type === 'buyers' ? S.saved?.buyers : S.saved?.products)?.find(x => x.id === id) || {};
+  const title = esc(rec.businessName || rec.name || '');
+  const box = $('#historyBox'), modal = $('#historyModal');
+  box.innerHTML = `<p class="text-sm text-slate-500">Loading history…</p>`; modal.classList.remove('hidden');
+  try {
+    const rows = await api(`/api/history/${type}/${id}`);
+    const when = d => new Date(d).toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const val = v => v ? esc(v) : '<i class="text-slate-400">empty</i>';
+    const what = r => (r.created ? 'Added' : r.action.endsWith('tax_rule') ? (r.changes.length && r.changes.every(c => !c.from) ? 'Tax rule set' : 'Tax rule changed') : 'Changed')
+      + (r.action.endsWith('import') ? ` by Excel import${r.file ? ` <span class="font-normal text-slate-500">(${esc(r.file)})</span>` : ''}` : '');
+    box.innerHTML = `<div class="flex items-start justify-between gap-3 mb-4"><div><h2 class="font-semibold text-lg">History — ${title}</h2>
+        <p class="text-sm text-slate-600">Who changed what, and when (Pakistan time). Newest first.</p></div>
+        <button type="button" class="text-2xl leading-none text-slate-400 hover:text-slate-700" onclick="$('#historyModal').classList.add('hidden')" aria-label="Close">×</button></div>`
+      + (rows.length ? `<ol class="space-y-3">${rows.map(r => `<li class="border rounded-lg p-3">
+          <div class="flex flex-wrap items-baseline gap-x-3 text-sm"><b>${what(r)}</b><span class="text-slate-600">${when(r.at)}</span><span class="text-slate-600">by <b class="font-medium">${esc(r.by)}</b></span></div>
+          ${r.changes.length ? `<table class="w-full text-sm mt-2 table-fixed"><thead><tr class="text-left text-xs text-slate-500"><th class="py-1 w-44">Detail</th><th class="py-1">Before</th><th class="py-1">After</th></tr></thead><tbody>
+            ${r.changes.map(c => `<tr class="border-t align-top"><td class="py-1.5 font-medium">${esc(c.label)}</td><td class="py-1.5 pr-3 text-red-700 break-words">${val(c.from)}</td><td class="py-1.5 text-emerald-800 break-words">${val(c.to)}</td></tr>`).join('')}</tbody></table>`
+            : `<div class="text-sm text-slate-600 mt-1">${esc(r.summary)}</div>`}</li>`).join('')}</ol>`
+        : '<p class="text-sm text-slate-500">No history recorded yet.</p>');
+  } catch (err) { box.innerHTML = `<p class="text-red-700 text-sm">${esc(err.message)}</p>`; }
+}
+
+/* ---------- Excel import onto saved records ---------- */
+// Lists every field where a saved buyer / item and the file differ; the uploader picks which value to keep.
+// Missing details were already filled in from the file. Resolves to { [row]: { [field]: 'saved'|'file' } }, or null (Cancel).
+function chooseConflicts(list, what) {
+  const recs = list.filter(x => x.conflicts?.length), modal = $('#mergeModal'), box = $('#mergeBox');
+  const sq = v => String(v || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const pick = (r, c, side) => `<label class="flex gap-2 items-start cursor-pointer"><input type="radio" class="mt-1 shrink-0" name="m-${r.row}-${c.field}" value="${side}" data-row="${r.row}" data-field="${c.field}"><span class="break-words">${esc(c[side]) || '<i class="text-slate-400">empty</i>'}</span></label>`;
+  box.innerHTML = `<div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+      <div><h2 class="font-semibold text-lg">${recs.length} ${what}${recs.length > 1 ? 's' : ''} already saved with different details</h2>
+      <p class="text-sm text-slate-600">For each difference, choose the value to keep. Details missing from a saved ${what} are filled in from the file automatically.</p></div>
+      <div class="flex gap-2 text-sm"><button type="button" data-all="saved" class="border rounded px-3 py-1.5 hover:bg-slate-50">Keep all saved</button><button type="button" data-all="file" class="border rounded px-3 py-1.5 hover:bg-slate-50">Use all from the file</button></div></div>`
+    + recs.map(r => `<div class="border rounded-lg mb-3 overflow-hidden">
+      <div class="bg-slate-50 px-3 py-2 text-sm"><b>Row ${r.row}</b> · ${esc(r.name)}${r.existing && sq(r.existing.name) !== sq(r.name) ? ` <span class="text-slate-500">(saved as "${esc(r.existing.name)}")</span>` : ''}
+        ${r.fills?.length ? `<div class="text-xs text-emerald-700 mt-0.5">Filled in from the file: ${r.fills.map(f => esc(f.label)).join(', ')}</div>` : ''}</div>
+      <table class="w-full text-sm table-fixed"><thead><tr class="text-left text-xs text-slate-500"><th class="px-3 py-1 w-44">Detail</th><th class="px-3 py-1">Saved</th><th class="px-3 py-1">In the file</th></tr></thead><tbody>
+      ${r.conflicts.map(c => `<tr class="border-t align-top"><td class="px-3 py-2 font-medium">${esc(c.label)}</td><td class="px-3 py-2">${pick(r, c, 'saved')}</td><td class="px-3 py-2">${pick(r, c, 'file')}</td></tr>`).join('')}
+      </tbody></table></div>`).join('')
+    + `<div class="flex flex-wrap items-center justify-end gap-3 sticky -bottom-6 bg-white py-3 border-t"><span id="mergeLeft" class="text-sm text-slate-500"></span>
+      <button type="button" data-cancel class="underline text-sm">Cancel import</button>
+      <button type="button" data-ok class="bg-emerald-700 text-white rounded px-4 py-2 disabled:opacity-50">Import with these choices</button></div>`;
+  const radios = () => [...box.querySelectorAll('input[type=radio]')];
+  const left = () => {
+    const n = [...new Set(radios().map(x => x.name))].filter(nm => !box.querySelector(`input[name="${nm}"]:checked`)).length;
+    $('#mergeLeft').textContent = n ? `${n} choice${n > 1 ? 's' : ''} left` : 'All chosen';
+    box.querySelector('[data-ok]').disabled = n > 0;
+  };
+  return new Promise(done => {
+    const finish = v => { modal.classList.add('hidden'); box.onclick = box.onchange = null; done(v); };
+    box.onchange = left;
+    box.onclick = e => {
+      const all = e.target.closest('[data-all]');
+      if (all) { radios().filter(x => x.value === all.dataset.all).forEach(x => { x.checked = true; }); left(); }
+      if (e.target.closest('[data-cancel]')) finish(null);
+      if (e.target.closest('[data-ok]')) {
+        const ch = {};
+        for (const x of radios().filter(x => x.checked)) (ch[x.dataset.row] ||= {})[x.dataset.field] = x.value;
+        finish(ch);
+      }
+    };
+    left(); modal.classList.remove('hidden'); box.scrollTop = 0;
+  });
+}
 
 /* ---------- Buyers: Excel template, import and export ---------- */
 // One column list for all three, so an exported file can be edited and imported back
@@ -3159,7 +3617,7 @@ async function buyerTemplate() {
       ['Email', 'Optional.'],
       ['Additional note', 'Optional (max 500 characters).'],
       [],
-      ['A row with the same NTN, CNIC or STRN as a saved buyer updates that buyer; other rows add new buyers.'],
+      ['A row with the same NTN, CNIC or STRN as a saved buyer (or the same name, when there are no numbers) is that buyer: its missing details are filled in from the file, and where both have a value that differs you choose which to keep. Other rows add new buyers.'],
     ]);
     help['!cols'] = [{ wch: 26 }, { wch: 90 }];
     saveWorkbook([['Buyers', buyerSheet([])], ['How to fill', help]], 'buyers-template.xlsx');
@@ -3197,10 +3655,19 @@ async function importBuyers(file) {
       return o;
     }).filter(o => BUYER_COLS.some(([k]) => o[k]));
     if (!rows.length) throw new Error('No buyer rows found — use the Excel template (headings in row 1).');
-    const d = await api('/api/buyers/import', { method: 'POST', body: { rows } });
-    const bad = d.results.filter(x => x.status === 'error');
+    // Rows for buyers already saved: missing details are filled in; differences go to the pop-up to choose
+    const chk = await api('/api/buyers/import/check', { method: 'POST', body: { rows } });
+    let choices = {};
+    if (chk.results.some(x => x.conflicts?.length)) {
+      out.textContent = 'Some buyers are already saved with different details — choose which to keep…';
+      choices = await chooseConflicts(chk.results, 'buyer');
+      if (!choices) { out.className = 'mb-3 text-xs text-slate-600'; out.textContent = `Import of ${file.name} cancelled — nothing was saved.`; return; }
+    }
+    const d = await api('/api/buyers/import', { method: 'POST', body: { rows, choices, fileName: file.name } });
+    const bad = d.results.filter(x => x.status === 'error'), saved = d.results.filter(x => x.status === 'updated' || x.status === 'unchanged');
     out.className = 'mb-3 text-xs border rounded p-3 ' + (bad.length ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200');
-    out.innerHTML = `<b>${d.added} added, ${d.updated} updated${bad.length ? `, ${bad.length} not saved` : ''}</b> from ${esc(file.name)}`
+    out.innerHTML = `<b>${d.added} added, ${d.updated} updated${d.unchanged ? `, ${d.unchanged} already saved with nothing new` : ''}${bad.length ? `, ${bad.length} not saved` : ''}</b> from ${esc(file.name)}`
+      + (saved.length ? `<ul class="mt-1 list-disc pl-5 text-slate-700">${saved.map(x => `<li>Row ${x.row} (${esc(x.name)}): buyer ${esc(x.message)}</li>`).join('')}</ul>` : '')
       + (bad.length ? `<ul class="mt-1 list-disc pl-5 text-red-700">${bad.map(x => `<li>Row ${x.row}${x.name ? ` (${esc(x.name)})` : ''}: ${esc(x.message)}</li>`).join('')}</ul>` : '');
     loadSaved();
   } catch (err) { out.className = 'mb-3 text-xs text-red-700'; out.textContent = err.message; }

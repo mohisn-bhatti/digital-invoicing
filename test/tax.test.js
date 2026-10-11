@@ -289,10 +289,9 @@ test('more taxes: % on value, value after tax, sales tax; fixed; tax on tax; eac
         { name: 'Cess', kind: 'PCT', value: 5, base: 'TAX:0', fbrField: 'extraTax' }]);
     assert.strictEqual(l.extraTax, 63); assert.strictEqual(l.totalValues, 3603);
     assert.deepStrictEqual(l.extraTaxDetail.map(t => t.amount), [60, 3]);
-    l = one([{ name: 'Additional ST', kind: 'PCT', value: 3, base: 'VALUE', fbrField: 'salesTaxApplicable' }]);
-    assert.strictEqual(l.salesTaxApplicable, 630); assert.strictEqual(l.totalValues, 3630);
-    l = one([{ name: 'Extra further', kind: 'PCT', value: 4, base: 'VALUE', fbrField: 'furtherTax' }]);
-    assert.strictEqual(l.furtherTax, 120); assert.strictEqual(l.totalValues, 3660);
+    // FBR DI API v1.12: sales tax must equal rate × value (0104) and further tax has its own rule — not allowed as boxes
+    assert.throws(() => one([{ name: 'Additional ST', kind: 'PCT', value: 3, base: 'VALUE', fbrField: 'salesTaxApplicable' }]), /Extra Tax or FED Payable/);
+    assert.throws(() => one([{ name: 'Extra further', kind: 'PCT', value: 4, base: 'VALUE', fbrField: 'furtherTax' }]), /Extra Tax or FED Payable/);
     // sent as JSON text from the invoice form
     assert.strictEqual(calcInvoice([{ ...sugar, extraTaxes: JSON.stringify([{ name: 'W', kind: 'PCT', value: 2, base: 'VALUE' }]) }], reg).lines[0].extraTax, 60);
 });
@@ -318,7 +317,7 @@ test('more taxes: bad definitions are refused', () => {
     assert.throws(() => one([{ name: 'A', kind: 'PCT', value: 1, base: 'TAX:0' }]), /listed above it/);
     assert.throws(() => one([{ name: '', kind: 'PCT', value: 1, base: 'VALUE' }]), /needs a name/);
     assert.throws(() => one([{ name: 'A', kind: 'FIXED', value: -5 }]), /0 or more/);
-    assert.throws(() => one([{ name: 'A', kind: 'PCT', value: 1, base: 'VALUE', fbrField: 'discount' }]), /FBR box/);
+    assert.throws(() => one([{ name: 'A', kind: 'PCT', value: 1, base: 'VALUE', fbrField: 'discount' }]), /Extra Tax or FED Payable/);
 });
 
 test('more taxes: several bases ticked — the tax is on their sum', () => {
@@ -331,12 +330,76 @@ test('more taxes: several bases ticked — the tax is on their sum', () => {
     assert.throws(() => one([{ name: 'A', kind: 'PCT', value: 1, base: 'VALUE+TAX:0' }]), /listed above it/);
 });
 
-test('exempt line needs only the SRO / Schedule no. (no serial box — CA)', () => {
+const REG = { buyerRegistrationType: 'Registered', furtherTaxRate: 4 };
+test('FBR 0077 / 0078: exempt line needs the SRO / Schedule no. and the item serial', () => {
     const ex = { ...base, hsCode: '1006.3010', saleType: 'Exempt Goods', rate: 'Exempt', quantity: 1, unitPrice: 100 };
-    assert.throws(() => calcInvoice([ex], { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }), /SRO \/ Schedule no/);
-    assert.doesNotThrow(() => calcInvoice([{ ...ex, sroScheduleNo: '6th Schd Table I' }], { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }));
+    assert.throws(() => calcInvoice([ex], REG), /item serial no\. \(FBR rules 0077 \/ 0078\)/);
+    assert.throws(() => calcInvoice([{ ...ex, sroScheduleNo: '6th Schd Table I' }], REG), /0078/);
+    assert.doesNotThrow(() => calcInvoice([{ ...ex, sroScheduleNo: '6th Schd Table I', sroItemSerialNo: '19' }], REG));
+    assert.doesNotThrow(() => calcInvoice([{ ...base, quantity: 1, unitPrice: 100, rate: '18%' }], REG)); // standard rate: none needed
+});
+
+test('FBR 0090 / 0102: 3rd schedule needs the retail price, and sales tax is on the retail value', () => {
+    const third = { ...base, hsCode: '3402.9000', saleType: '3rd Schedule Goods', rate: '18%', quantity: 10, unitPrice: 140 };
+    assert.throws(() => calcInvoice([third], REG), /retail price \(FBR rule 0090\)/);
+    const l = calcInvoice([{ ...third, fixedNotifiedValueOrRetailPrice: 1600 }], REG).lines[0]; // retail 160 × 10
+    assert.strictEqual(l.valueSalesExcludingST, 1400);
+    assert.strictEqual(l.salesTaxApplicable, 288); // 18% of 1,600
+});
+
+test('FBR 0079: the 5% rate is refused above Rs 20,000, allowed up to it', () => {
+    assert.throws(() => calcInvoice([{ ...base, quantity: 1, unitPrice: 20000.01, rate: '5%', saleType: 'Goods at Reduced Rate', sroScheduleNo: '8th Schd Table 1', sroItemSerialNo: '1' }], REG), /5% rate .* Rs 20,000 \(FBR rule 0079\)/);
+    assert.doesNotThrow(() => calcInvoice([{ ...base, quantity: 1, unitPrice: 20000, rate: '5%', saleType: 'Goods at Reduced Rate', sroScheduleNo: '8th Schd Table 1', sroItemSerialNo: '1' }], REG));
 });
 
 test('a line without a rate is refused (not filed at Rs 0)', () => {
     assert.throws(() => calcInvoice([{ ...base, quantity: 1, unitPrice: '', rate: '18%' }], { buyerRegistrationType: 'Registered', furtherTaxRate: 4 }), /rate \(per unit\) is missing/);
+});
+
+test('FBR 0105: "18% along with rupees 60 per kilogram" adds Rs 60 × quantity to the sales tax', () => {
+    const { rupeesPerUnit } = require('../src/tax');
+    assert.strictEqual(rupeesPerUnit('18% along with rupees 60 per kilogram'), 60);
+    assert.strictEqual(rupeesPerUnit('Rs.1,250.50 per unit'), 0); // only the spec's "rupees X per" wording
+    assert.strictEqual(rupeesPerUnit('18%'), 0);
+    const l = calcInvoice([{ ...base, quantity: 10, unitPrice: 100, rate: '18% along with rupees 60 per kilogram' }], REG).lines[0];
+    assert.strictEqual(l.salesTaxApplicable, 780); // 18% of 1,000 + 60 × 10
+});
+
+test('§7 error codes: FBR replies get the spec\'s plain description', () => {
+    const { errorHint } = require('../src/fbrErrors');
+    assert.match(errorHint('0052'), /HS code does not match the sale type/);
+    assert.match(errorHint(99), /UOM/);
+    assert.strictEqual(errorHint('9999'), '');
+    const msg = describeErrors({ statusCode: '01', status: 'Invalid', errorCode: '0052', error: 'Provide proper HS Code with invoice no. 1' });
+    assert.match(msg, /0052.*Provide proper HS Code.*HS code does not match the sale type/);
+});
+
+test('FBR lists §5.7 / §5.8 / §5.10: null without a token or in mock mode; mapped from FBR\'s reply otherwise', async () => {
+    const axios = require('axios');
+    const fbr = require('../src/fbr');
+    const mock = process.env.FBR_MOCK;
+    const create = axios.create;
+    try {
+        process.env.FBR_MOCK = 'true';
+        assert.strictEqual(await fbr.saleTypeRates('t', { transTypeId: 18, provinceCode: 7 }), null);
+        process.env.FBR_MOCK = 'false';
+        assert.strictEqual(await fbr.sroItems('', { sroId: 389 }), null);
+        const seen = [];
+        axios.create = () => ({ get: async (url, { params }) => {
+            seen.push([url, params]);
+            if (url.endsWith('SaleTypeToRate')) return { status: 200, data: [{ ratE_ID: 734, ratE_DESC: '5% ', ratE_VALUE: 5 }, { ratE_ID: null, ratE_DESC: 'x' }] };
+            if (url.endsWith('SroSchedule')) return { status: 200, data: [{ srO_ID: 389, srO_DESC: '8th Schd Table 1' }] };
+            return { status: 200, data: [{ srO_ITEM_ID: 17853, srO_ITEM_DESC: '70' }] };
+        } });
+        const date = new Date(2026, 1, 24);
+        assert.deepStrictEqual(await fbr.saleTypeRates('t', { transTypeId: 75, provinceCode: 7, date }), [{ id: 734, desc: '5%', value: 5 }]);
+        assert.deepStrictEqual(await fbr.sroSchedules('t', { rateId: 734, provinceCode: 7, date }), [{ id: 389, desc: '8th Schd Table 1' }]);
+        assert.deepStrictEqual(await fbr.sroItems('t', { sroId: 389, date }), [{ id: 17853, desc: '70' }]);
+        assert.deepStrictEqual(seen[0][1], { date: '24-Feb-2026', transTypeId: 75, originationSupplier: 7 });
+        assert.deepStrictEqual(seen[1][1], { rate_id: 734, date: '24-Feb-2026', origination_supplier_csv: 7 });
+        assert.strictEqual(seen[2][1].sro_id, 389);
+    } finally {
+        axios.create = create;
+        if (mock === undefined) delete process.env.FBR_MOCK; else process.env.FBR_MOCK = mock;
+    }
 });
