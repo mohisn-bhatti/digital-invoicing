@@ -208,7 +208,7 @@
     <form id="clientForm" class="grid sm:grid-cols-4 gap-3 items-end">
       <label><span>Company name</span><input name="companyName" required></label>
       <label><span>Login email</span><input name="clientEmail" type="email" required></label>
-      <label><span>Password (min 8)</span><input name="clientPassword" type="password" minlength="8" required></label>
+      <label><span>Password</span><input name="clientPassword" type="password" minlength="8" required data-pwrules="quiet" autocomplete="new-password"></label>
       <button class="bg-emerald-700 text-white rounded py-2">Create</button>
     </form>
   </div>
@@ -295,7 +295,7 @@
     <form id="aUserForm" class="grid sm:grid-cols-5 gap-2 items-end bg-slate-50 border rounded p-3">
       <label><span>Name</span><input name="name" maxlength="100"></label>
       <label><span>Email</span><input name="email" type="email" required autocomplete="off"></label>
-      <label><span>Temporary password</span><input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+      <label><span>Temporary password</span><input name="password" type="password" required minlength="8" autocomplete="new-password" data-pwrules="quiet"></label>
       <label><span>Role</span><select name="tenantRole"><option value="CASHIER">Cashier</option><option value="ACCOUNTANT">Accountant</option><option value="OWNER">Owner</option></select></label>
       <button class="bg-emerald-700 text-white rounded px-3 py-2">Add user</button>
     </form>
@@ -847,7 +847,7 @@
     <form id="cUserForm" class="grid sm:grid-cols-5 gap-2 items-end bg-slate-50 border rounded p-3">
       <label><span>Name</span><input name="name" maxlength="100"></label>
       <label><span>Email</span><input name="email" type="email" required autocomplete="off"></label>
-      <label><span>Temporary password</span><input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+      <label><span>Temporary password</span><input name="password" type="password" required minlength="8" autocomplete="new-password" data-pwrules="quiet"></label>
       <label><span>Role</span><select name="tenantRole"><option value="CASHIER">Cashier</option><option value="ACCOUNTANT">Accountant</option><option value="OWNER">Owner</option></select></label>
       <button class="bg-emerald-700 text-white rounded px-3 py-2">Add user</button>
     </form>
@@ -936,7 +936,7 @@
     <h2 class="font-semibold text-lg">Change password</h2>
     <p id="pwNote" class="hidden text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">Please set your own password before continuing.</p>
     <label><span>Current password</span><input name="currentPassword" type="password" required autocomplete="current-password"></label>
-    <label><span>New password <span class="text-slate-400">(8+ characters, letters and a number)</span></span><input name="newPassword" type="password" required minlength="8" autocomplete="new-password"></label>
+    <label><span>New password</span><input name="newPassword" type="password" required minlength="8" data-pwrules autocomplete="new-password"></label>
     <label><span>Repeat new password</span><input name="repeat" type="password" required minlength="8" autocomplete="new-password"></label>
     <div class="flex gap-2 pt-1">
       <button class="flex-1 bg-emerald-700 text-white rounded py-2 font-medium">Save password</button>
@@ -1280,7 +1280,7 @@ async function updateUser(prefix, id, body) {
   loadUsers(prefix);
 }
 async function resetUserPw(prefix, id, email) {
-  const pw = prompt(`New temporary password for ${email} (8+ characters, letters and a number). They must change it at next login:`);
+  const pw = prompt(`New temporary password for ${email} — at least 8 characters with an uppercase letter, a lowercase letter, a number and a special character. They must change it at next login:`);
   if (!pw) return;
   try { await api(`${usersBase(prefix)}/${id}/reset-password`, { method: 'POST', body: { password: pw } }); toast('Password reset — tell the user the temporary password', true); loadUsers(prefix); }
   catch (err) { toast(err.message); }
@@ -2626,6 +2626,53 @@ function phoneBox(inp) {
   show();
 }
 document.querySelectorAll('#buyerForm input[name=mobile], #customerForm input[name=mobile]').forEach(phoneBox);
+
+// Passwords: an eye button on every password box to show / hide what was typed, and on new-password boxes
+// (data-pwrules) a checklist that ticks each rule as it is met; the form can't be sent until all are ticked.
+// Same rules as the server (checkNewPassword).
+const PW_RULES = [[/[A-Z]/, 'At least one uppercase letter (A–Z)'], [/[a-z]/, 'At least one lowercase letter (a–z)'],
+  [/\d/, 'At least one number (0–9)'], [/[^A-Za-z0-9]/, 'At least one special character (e.g. ! @ # $ %)'], [/^[\s\S]{8,}$/, 'Minimum 8 characters']];
+const EYE = '<svg viewBox="0 0 24 24" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.3 4.2M6.6 6.6C3.9 8.3 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+function passwordBox(inp) {
+  const wrap = document.createElement('div'); wrap.className = 'relative';
+  inp.before(wrap); wrap.append(inp); inp.classList.add('pr-10');
+  const eye = document.createElement('button');
+  Object.assign(eye, { type: 'button', className: 'pw-eye absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-700', title: 'Show password', innerHTML: EYE });
+  eye.setAttribute('aria-label', 'Show password'); wrap.append(eye);
+  eye.addEventListener('click', e => {
+    e.preventDefault();
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password'; eye.innerHTML = show ? EYE_OFF : EYE;
+    eye.title = show ? 'Hide password' : 'Show password'; eye.setAttribute('aria-label', eye.title);
+    inp.focus();
+  });
+  if (!inp.hasAttribute('data-pwrules')) return;
+  // quiet (admin forms): nothing until something is typed, then only what is missing, in red, under the box
+  // without moving the layout; full checklist only on the user's own "Change password"
+  const quiet = inp.dataset.pwrules === 'quiet';
+  const list = document.createElement(quiet ? 'p' : 'ul');
+  list.className = quiet ? 'pw-rules absolute left-0 top-full mt-0.5 text-xs text-red-600 leading-tight whitespace-nowrap' : 'pw-rules mt-1.5 space-y-0.5 text-xs';
+  if (quiet) wrap.append(list); else wrap.after(list);
+  const render = () => {
+    const v = inp.value, missing = PW_RULES.filter(([re]) => !re.test(v));
+    inp.setCustomValidity(missing.length && v ? `Password must contain: ${missing.map(([, l]) => l.toLowerCase()).join(', ')}` : '');
+    if (quiet) {
+      const short = { 0: 'uppercase', 1: 'lowercase', 2: 'number', 3: 'special character', 4: '8+ characters' };
+      list.textContent = v && missing.length ? `Missing: ${missing.map(r => short[PW_RULES.indexOf(r)]).join(', ')}` : '';
+      inp.classList.toggle('!border-red-400', Boolean(v && missing.length));
+      return;
+    }
+    list.innerHTML = `<li class="font-medium text-slate-600">Password must contain:</li>` + PW_RULES.map(([re, label]) => {
+      const ok = re.test(v);
+      return `<li class="flex items-center gap-1.5 ${ok ? 'text-emerald-700' : 'text-slate-500'}"><span class="w-4 text-center font-bold">${ok ? '✓' : '○'}</span>${label}</li>`;
+    }).join('');
+  };
+  inp.addEventListener('input', render);
+  inp.form?.addEventListener('reset', () => setTimeout(() => { inp.type = 'password'; eye.innerHTML = EYE; render(); }));
+  render();
+}
+document.querySelectorAll('input[type=password]').forEach(passwordBox);
 
 // The invoice's buyer boxes (besides type, province and the ticks)
 const BUYER_INPUTS = ['buyerNtn', 'buyerCnic', 'buyerStrn', 'buyerBusinessName', 'buyerAddress', 'buyerMobile', 'buyerEmail', 'buyerNote'];

@@ -232,11 +232,14 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Change own password (logs out every other session; returns a fresh token for this one)
+// Password rules (same list as the screen's checklist): upper- and lowercase letter, number, special character, 8+
+const PASSWORD_RULES = [[/[A-Z]/, 'one uppercase letter (A–Z)'], [/[a-z]/, 'one lowercase letter (a–z)'], [/\d/, 'one number (0–9)'],
+    [/[^A-Za-z0-9]/, 'one special character'], [/^[\s\S]{8,}$/, 'minimum 8 characters']];
 function checkNewPassword(pw, email) {
     const p = String(pw || '');
-    if (p.length < 8) throw new HttpError(400, 'Password must be at least 8 characters.');
     if (p.length > 100) throw new HttpError(400, 'Password is too long.');
-    if (!/[A-Za-z]/.test(p) || !/\d/.test(p)) throw new HttpError(400, 'Use letters and at least one number.');
+    const missing = PASSWORD_RULES.filter(([re]) => !re.test(p)).map(([, l]) => l);
+    if (missing.length) throw new HttpError(400, `Password must contain at least: ${missing.join(', ')}.`);
     if (email && p.toLowerCase().includes(String(email).split('@')[0].toLowerCase())) throw new HttpError(400, "Password can't contain your email name.");
     return p;
 }
@@ -318,8 +321,8 @@ app.get('/api/admin/clients/:id/annex-c', authenticateToken, requireRole('SUPER_
 app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
     const { companyName, clientEmail, clientPassword } = req.body || {};
     if (!companyName || !clientEmail || !clientPassword) throw new HttpError(400, 'Company name, email and password are required.');
-    if (String(clientPassword).length < 8) throw new HttpError(400, 'Password must be at least 8 characters.');
     const email = String(clientEmail).toLowerCase().trim();
+    checkNewPassword(clientPassword, email);
     if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
 
     const tenant = await prisma.tenant.create({
