@@ -71,6 +71,12 @@ function todayPKT() {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
 }
 
+// PRAL's security token is a UUID; text copied from IRIS ("Token: 3c43…-…") is reduced to the token itself
+function cleanToken(v) {
+    const t = String(v || '').trim();
+    const m = t.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    return m ? m[0] : t;
+}
 function tenantToken(tenant) {
     return tenant.fbrTokenEnc ? decrypt(tenant.fbrTokenEnc) : null;
 }
@@ -437,7 +443,7 @@ app.post('/api/admin/clients/:id/fbr-test', authenticateToken, requireRole('SUPE
     if (!t) throw new HttpError(404, 'Client not found.');
     if (process.env.FBR_MOCK === 'true') res.set('X-Note', 'mock'); // the test always calls the real FBR
     // the token typed on the screen (not saved yet) if sent, else the saved one
-    const typed = String(req.body?.token || '').trim();
+    const typed = cleanToken(req.body?.token);
     const r = await fbr.testConnection(typed || tenantToken(t));
     if (typed) r.verdict += r.ok ? ' (Typed token — click Save to keep it.)' : ' (This was the typed token, not saved yet.)';
     await audit(req, { tenantId: t.id, action: 'fbr.test', entityType: 'Tenant', entityId: t.id, summary: `FBR connection test: ${r.ok ? 'OK' : 'failed'} — ${r.verdict}`.slice(0, 480) });
@@ -517,7 +523,7 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
     if (b.fbrToken) {
         // PRAL's security token is a long code from IRIS (Digital Invoicing → API Integration); a short value is a
         // placeholder or something else (e.g. the DI-CRM password) and FBR answers "Invalid Credentials"
-        const tok = String(b.fbrToken).trim();
+        const tok = cleanToken(b.fbrToken);
         if (tok.length < 20 || /\s/.test(tok)) throw new HttpError(400, 'This does not look like an FBR security token — copy the "Sandbox Security Token" (or production token) from IRIS → Digital Invoicing → API Integration.');
         data.fbrTokenEnc = encrypt(tok);
     }

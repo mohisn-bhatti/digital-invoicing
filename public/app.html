@@ -52,6 +52,7 @@
     transition: clip-path .45s cubic-bezier(.22, .61, .36, 1), visibility 0s linear .45s; }
   #guidePanel.open { clip-path: inset(0 0 0 0 round .6rem); visibility: visible; pointer-events: auto; transition: clip-path .45s cubic-bezier(.22, .61, .36, 1), visibility 0s; }
   @media (prefers-reduced-motion: reduce) { #guidePanel, #guidePanel.open { transition: none; } }
+  .token-mask { -webkit-text-security: disc; }
   .guide-toggle[aria-expanded="true"] { background: #059669 !important; border-color: #059669 !important; color: #fff !important; }
   .guide-toggle[aria-expanded="true"] .guide-caret { display: inline-block; transform: rotate(180deg); }
   .stepper-item { display: flex; align-items: center; gap: .6rem; text-align: left; padding: .55rem .7rem; border-radius: .6rem; }
@@ -265,7 +266,7 @@
             <select name="fbrEnv"><option value="SANDBOX">Sandbox (testing)</option><option value="PRODUCTION">Production (live)</option></select>
           </label>
           <label class="sm:col-span-2"><span>PRAL security token <span id="tokenMasked" class="text-slate-400"></span></span>
-            <input name="fbrToken" type="password" placeholder="Leave empty to keep current token" autocomplete="new-password" data-lpignore="true" data-1p-ignore></label>
+            <input name="fbrToken" type="text" class="token-mask pr-10" spellcheck="false" placeholder="Leave empty to keep current token" autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other"></label>
           <div class="sm:col-span-3 flex flex-wrap items-start gap-3 text-xs -mt-1">
             <button type="button" id="fbrTestBtn" onclick="testFbr()" class="border border-emerald-600 text-emerald-700 rounded px-3 py-1.5 font-medium hover:bg-emerald-50">Test FBR connection</button>
             <span id="fbrTestOut" class="text-slate-500 pt-1.5">Asks FBR for its province list with the token (records nothing at FBR) — the one typed above, else the saved one.</span>
@@ -2676,6 +2677,15 @@ function passwordBox(inp) {
   render();
 }
 document.querySelectorAll('input[type=password]').forEach(passwordBox);
+// FBR token box: shown as dots via CSS (a real password box gets the browser's saved passwords filled in)
+document.querySelectorAll('input.token-mask').forEach(inp => {
+  const wrap = document.createElement('div'); wrap.className = 'relative'; inp.before(wrap); wrap.append(inp);
+  const eye = document.createElement('button');
+  Object.assign(eye, { type: 'button', className: 'absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-700', title: 'Show token', innerHTML: EYE });
+  wrap.append(eye);
+  eye.addEventListener('click', e => { e.preventDefault(); const show = inp.classList.toggle('token-mask') === false; eye.innerHTML = show ? EYE_OFF : EYE; eye.title = show ? 'Hide token' : 'Show token'; });
+  inp.form?.addEventListener('reset', () => { inp.classList.add('token-mask'); eye.innerHTML = EYE; });
+});
 
 // The invoice's buyer boxes (besides type, province and the ticks)
 const BUYER_INPUTS = ['buyerNtn', 'buyerCnic', 'buyerStrn', 'buyerBusinessName', 'buyerAddress', 'buyerMobile', 'buyerEmail', 'buyerNote'];
