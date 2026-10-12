@@ -34,10 +34,13 @@ function createAuth(prisma) {
         try {
             const user = await prisma.user.findUnique({
                 where: { id: payload.id },
-                select: { active: true, tokenVersion: true, role: true, tenantRole: true, tenantId: true },
+                select: { active: true, tokenVersion: true, role: true, tenantRole: true, tenantId: true, tenant: { select: { active: true } } },
             });
             if (!user || !user.active || user.tokenVersion !== (payload.tv || 0)) {
                 return res.status(401).json({ error: 'Session ended, please log in again.' });
+            }
+            if (user.tenant && user.tenant.active === false && !payload.impersonatedBy) {
+                return res.status(401).json({ error: 'This business account is inactive. Contact ETAX to reactivate it.' });
             }
             req.user = payload.impersonatedBy
                 ? { ...payload, tenantRole: 'OWNER' }                     // admin in a workspace = owner rights there

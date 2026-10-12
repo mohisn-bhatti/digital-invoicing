@@ -57,7 +57,11 @@ model Tenant {
   id                 String    @id @default(uuid())
   companyName        String
   // Seller block of every DI invoice
-  sellerNtnCnic      String    @default("")
+  sellerNtnCnic      String    @default("")  // the one number sent to FBR: the NTN, else the CNIC
+  sellerNtn          String    @default("")
+  sellerCnic         String    @default("")
+  mobile             String    @default("")   // contact mobile: added by the admin or the client's owner
+  active             Boolean   @default(true) // inactive: the client's users can't log in (admin can still manage it)
   sellerBusinessName String    @default("")
   sellerProvince     String    @default("")
   sellerAddress      String    @default("")
@@ -89,6 +93,7 @@ model Tenant {
   drafts             InvoiceDraft[]
   createdAt          DateTime  @default(now())
   sandboxTests     SandboxTest[]
+  supportTickets   SupportTicket[]
 }
 
 model Invoice {
@@ -177,6 +182,7 @@ model Product {
   description     String   @default("")
   notes           String   @default("")
   hsCode          String
+  hsDescription   String   @default("") // FBR's text for an official code; the client's for their own code
   source          String   @default("OFFICIAL") // OFFICIAL = picked from the FBR/PCT HS list; CUSTOMER = code typed by the client
   uoM             String
   unitPrice       Decimal? @db.Decimal(14, 2) // first of `prices`, kept for older screens and imports
@@ -439,5 +445,34 @@ model SandboxTest {
   createdAt        DateTime @default(now())
 
   @@index([tenantId, scenarioId])
+}
+
+// Help & feedback: a client's query and the replies between the client and the admin
+model SupportTicket {
+  id        String           @id @default(uuid())
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userEmail String
+  category  String           // Question | Problem | Suggestion | FBR / invoice | Other
+  subject   String
+  status    String           @default("OPEN") // OPEN (waiting for ETAX) | ANSWERED (waiting for the client) | RESOLVED
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @default(now()) @updatedAt
+  messages  SupportMessage[]
+
+  @@index([tenantId, updatedAt])
+  @@index([status])
+}
+
+model SupportMessage {
+  id        String        @id @default(uuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fromAdmin Boolean
+  author    String
+  body      String
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
 }
 

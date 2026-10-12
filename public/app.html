@@ -41,6 +41,7 @@
   .stepper { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: .5rem; gap: .25rem; position: sticky; top: 4.75rem; z-index: 15; box-shadow: 0 4px 12px rgba(15, 23, 42, .08); }
   .stepper::before { content: ''; position: absolute; left: -1.5rem; right: -1.5rem; top: -.8rem; height: .8rem; background: #f1f5f9; } /* cover the gap under the header */
   #itemsFormView .stepper { grid-template-columns: repeat(4, minmax(0, 1fr)) auto; }
+  #mpStepper { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   /* shutter: slides open from left to right, and closes back to the left */
   /* same colours as the left menu: dark navy, light text, white/10 hover, emerald accent */
   #guidePanel.guide-box { background: #0f172a; border-color: rgba(255, 255, 255, .1); color: #e2e8f0; }
@@ -206,9 +207,10 @@
   <div data-page="a-clients" class="page hidden space-y-6">
   <div class="bg-white rounded-xl shadow p-5">
     <h2 class="font-semibold mb-3">Register client</h2>
-    <form id="clientForm" class="grid sm:grid-cols-4 gap-3 items-end">
+    <form id="clientForm" class="grid sm:grid-cols-5 gap-3 items-end">
       <label><span>Company name</span><input name="companyName" required></label>
       <label><span>Login email</span><input name="clientEmail" type="email" required></label>
+      <label><span>Mobile number <span class="text-slate-400">(optional)</span></span><input name="mobile" type="tel" inputmode="tel" maxlength="16" autocomplete="off"></label>
       <label><span>Password</span><input name="clientPassword" type="password" minlength="8" required data-pwrules="quiet" autocomplete="new-password"></label>
       <button class="bg-emerald-700 text-white rounded py-2">Create</button>
     </form>
@@ -219,32 +221,49 @@
       <button type="button" onclick="loadClients()" class="text-sm text-emerald-700 underline">Refresh</button>
     </div>
     <table class="w-full text-sm">
-      <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Company</th><th>Login</th><th>Env</th><th>Go-live</th><th class="text-right">This month</th><th>Last invoice</th><th></th></tr></thead>
+      <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Company</th><th>Login</th><th>Mobile</th><th>Status</th><th>Env</th><th>Go-live</th><th class="text-right">This month</th><th>Last invoice</th><th></th></tr></thead>
       <tbody id="clientRows"></tbody>
     </table>
   </div>
   </div>
-  <div data-page="a-client" class="page hidden space-y-6">
-  <div id="managePanel" class="bg-white rounded-xl shadow p-5 space-y-6">
-    <div class="flex flex-wrap items-center justify-between gap-3">
-      <h2 class="text-lg font-semibold">Manage: <span id="mpName"></span></h2>
-      <div class="flex flex-wrap gap-2 text-sm">
-        <button type="button" onclick="openWorkspace()" class="bg-indigo-700 text-white rounded px-3 py-1.5" title="Work inside this client's screen, e.g. to send the sandbox test invoices">Open workspace (test invoices)</button>
-        <button type="button" onclick="showClientActivity()" class="border rounded px-3 py-1.5">Activity log</button>
-        <button type="button" onclick="showClientReport()" class="border rounded px-3 py-1.5">Annex-C report</button>
-        <button type="button" onclick="closeManage()" class="text-slate-600 underline">← All clients</button>
+  <!-- Client queries: every client's Help & feedback, to answer and resolve -->
+  <div data-page="a-help" class="page hidden space-y-6">
+    <div class="bg-white rounded-xl shadow p-5">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div id="tkTabs" class="flex flex-wrap gap-2 text-sm"></div>
+        <label class="!flex items-center gap-2 text-sm"><span class="!mb-0">Client</span><select id="tkClient" class="!w-auto"><option value="">All clients</option></select></label>
       </div>
+      <div id="tkList" class="space-y-3 text-sm"></div>
     </div>
-    <section>
-      <h3 class="font-semibold mb-2">FBR settings <span id="settingsHint" class="ml-2 text-xs font-normal text-amber-700"></span></h3>
-      <form id="settingsForm" class="space-y-4">
-      <fieldset class="border rounded-lg p-4">
-        <legend class="px-1 text-sm font-semibold">1. Must match the FBR DI panel (IRIS) exactly</legend>
-        <p class="text-xs text-slate-500 mb-3">Copy these from the client's IRIS profile. Fields marked <span class="fbr-sent">(Sent to FBR)</span> go on every invoice; FBR rejects the invoice if they differ from IRIS.</p>
-        <div class="grid sm:grid-cols-3 gap-3">
+  </div>
+  <div data-page="a-client" class="page hidden space-y-5">
+  <!-- Setting up a client, in the order FBR takes them live: profile → token → sandbox scenarios → production → settings & users -->
+  <div class="bg-white rounded-xl shadow p-5 flex flex-wrap items-center justify-between gap-3">
+    <h2 class="text-lg font-semibold">Set up: <span id="mpName"></span> <span id="mpStatus" class="ml-2 text-xs font-normal"></span> <span id="mpObSummary" class="ml-2 text-xs font-normal"></span> <span id="settingsHint" class="ml-2 text-xs font-normal text-amber-700"></span></h2>
+    <div class="flex flex-wrap gap-2 text-sm">
+      <button type="button" onclick="openWorkspace()" class="bg-indigo-700 text-white rounded px-3 py-1.5" title="Work inside this client's screen">Open workspace</button>
+      <button type="button" onclick="showClientHistory(S.manageId)" class="border rounded px-3 py-1.5">History</button>
+      <button type="button" onclick="showClientActivity()" class="border rounded px-3 py-1.5">Activity log</button>
+      <button type="button" onclick="showClientReport()" class="border rounded px-3 py-1.5">Annex-C report</button>
+      <button type="button" onclick="closeManage()" class="text-slate-600 underline">← All clients</button>
+    </div>
+  </div>
+  <nav id="mpStepper" class="stepper bg-white rounded-xl shadow">
+    <button type="button" class="stepper-item" data-go="mpS1"><span class="step-no">1</span><span><b>Client profile</b><small data-mp-text="1"></small></span></button>
+    <button type="button" class="stepper-item" data-go="mpS2"><span class="step-no">2</span><span><b>FBR token</b><small data-mp-text="2"></small></span></button>
+    <button type="button" class="stepper-item" data-go="mpS3"><span class="step-no">3</span><span><b>Sandbox scenarios</b><small data-mp-text="3"></small></span></button>
+    <button type="button" class="stepper-item" data-go="mpS4"><span class="step-no">4</span><span><b>Go live</b><small data-mp-text="4"></small></span></button>
+    <button type="button" class="stepper-item" data-go="mpS5"><span class="step-no">5</span><span><b>Settings &amp; users</b><small data-mp-text="5"></small></span></button>
+  </nav>
+  <form id="settingsForm" class="space-y-5">
+    <section id="mpS1" class="step-card bg-white rounded-xl shadow">
+      <div class="step-head"><span class="step-no">1</span><div class="flex-1"><h3 class="font-semibold text-base">Client profile (as in IRIS)</h3><p class="text-xs text-slate-500">Copy from the client's IRIS profile. Fields marked <span class="fbr-sent">(Sent to FBR)</span> go on every invoice — FBR rejects the invoice if they differ from IRIS.</p></div><span class="step-state" data-mp="1"></span></div>
+      <div class="grid sm:grid-cols-3 gap-3">
+          <label><span>Seller NTN <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerNtn" inputmode="numeric" data-digits="7" placeholder="7 digits" autocomplete="off"></label>
+          <label><span>Seller CNIC <span class="text-slate-400">(sent to FBR when there is no NTN)</span></span><input name="sellerCnic" inputmode="numeric" data-digits="13" placeholder="13 digits" autocomplete="off"></label>
           <label><span>Seller STRN <span class="text-slate-400">(printed on invoice)</span></span><input name="sellerStrn" inputmode="numeric" data-digits="13" placeholder="13 digits" autocomplete="off"></label>
-          <label><span>Taxpayer (Seller) NTN / CNIC <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerNtnCnic" inputmode="numeric" data-digits="13" placeholder="7 or 13 digits" autocomplete="off"></label>
-          <label><span>Seller business name <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerBusinessName" autocomplete="off"></label>
+          <label class="sm:col-span-2"><span>Seller business name <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerBusinessName" autocomplete="off"></label>
+          <label><span>Contact mobile <span class="text-slate-400">(not sent to FBR)</span></span><input name="mobile" type="tel" inputmode="tel" maxlength="16" autocomplete="off"></label>
           <label><span>Seller province <span class="fbr-sent">(Sent to FBR)</span></span><select name="sellerProvince" data-list="provinces"></select></label>
           <label class="sm:col-span-2"><span>Seller address <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerAddress" autocomplete="off"></label>
           <div class="sm:col-span-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -256,12 +275,12 @@
           <div class="sm:col-span-2"><span class="block text-xs text-slate-600 mb-1">Business nature — same as chosen in IRIS (tick all that apply)</span>
             <div id="bizActs" class="flex flex-wrap gap-x-4 gap-y-1 text-sm"></div></div>
           <label><span>Sector (as in IRIS)</span><select name="sector"></select></label>
-        </div>
-      </fieldset>
-      <fieldset class="border rounded-lg p-4">
-        <legend class="px-1 text-sm font-semibold">2. Received from FBR / PRAL</legend>
-        <p class="text-xs text-slate-500 mb-3">Issued by FBR in IRIS (Digital Invoicing → API Integration). HS codes and UOMs are picked up from FBR automatically once the token works.</p>
-        <div class="grid sm:grid-cols-3 gap-3">
+      </div>
+      <div class="mt-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button></div>
+    </section>
+    <section id="mpS2" class="step-card bg-white rounded-xl shadow">
+      <div class="step-head"><span class="step-no">2</span><div class="flex-1"><h3 class="font-semibold text-base">FBR token</h3><p class="text-xs text-slate-500">From IRIS → Digital Invoicing → API Integration. Sandbox token while testing; the production token replaces it in step 4.</p></div><span class="step-state" data-mp="2"></span></div>
+      <div class="grid sm:grid-cols-3 gap-3">
           <label><span>Environment</span>
             <select name="fbrEnv"><option value="SANDBOX">Sandbox (testing)</option><option value="PRODUCTION">Production (live)</option></select>
           </label>
@@ -271,26 +290,43 @@
             <button type="button" id="fbrTestBtn" onclick="testFbr()" class="border border-emerald-600 text-emerald-700 rounded px-3 py-1.5 font-medium hover:bg-emerald-50">Test FBR connection</button>
             <span id="fbrTestOut" class="text-slate-500 pt-1.5">Asks FBR for its province list with the token (records nothing at FBR) — the one typed above, else the saved one.</span>
           </div>
-          <label><span>Software registration no. <span class="text-slate-400">(from PRAL, printed)</span></span><input name="softwareRegNo" maxlength="60" autocomplete="off"></label>
           <label><span>Token issued on <span class="text-slate-400">(valid 5 years — set automatically when a new token is saved)</span></span><input name="tokenIssuedAt" type="date" autocomplete="off"><span id="tokenExpiry" class="block text-xs mt-1"></span></label>
           <div class="sm:col-span-2 text-xs text-slate-600 self-end pb-2">Auto from FBR — HS codes: <span id="hsStats">…</span>
             <button type="button" id="hsSyncBtn" onclick="syncHs()" class="ml-2 text-emerald-700 underline">Sync HS codes from FBR</button></div>
-        </div>
-      </fieldset>
-      <fieldset class="border rounded-lg p-4">
-        <legend class="px-1 text-sm font-semibold">3. Entered by you (used inside ETAX)</legend>
-        <div class="grid sm:grid-cols-3 gap-3">
+      </div>
+      <div class="mt-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button></div>
+    </section>
+    <section id="mpS3" class="step-card bg-white rounded-xl shadow">
+      <div class="step-head"><span class="step-no">3</span><div class="flex-1"><h3 class="font-semibold text-base">Sandbox scenarios</h3><p class="text-xs text-slate-500">One test invoice per scenario to FBR's sandbox — then IRIS shows them Successful and issues the production token.</p></div><span class="step-state" data-mp="3"></span></div>
+      <div id="mpScen" class="text-sm"></div>
+      <!-- IRIS → Digital Invoicing → Scenario Details is the official record: the admin ticks what it shows -->
+      <div class="mt-3 flex flex-wrap items-center gap-3"><button type="button" id="sbxBtn" onclick="openSandboxRun()" class="bg-emerald-700 text-white rounded px-3 py-1.5 text-sm font-medium">Run sandbox scenarios</button>
+        <button type="button" onclick="openIrisScenarios()" class="text-sm text-emerald-700 underline">Record IRIS result</button>
+        <span id="irisNote" class="text-xs text-slate-500 ml-2"></span></div>
+      <div id="irisPanel" class="hidden mt-3 border rounded-lg p-3 bg-slate-50"></div>
+      <div id="sbxPanel" class="hidden mt-3 border rounded-lg p-3 bg-slate-50 text-sm"></div>
+    </section>
+    <section id="mpS4" class="step-card bg-white rounded-xl shadow">
+      <div class="step-head"><span class="step-no">4</span><div class="flex-1"><h3 class="font-semibold text-base">Go live</h3><p class="text-xs text-slate-500">When IRIS shows every scenario Successful: production token, Production environment, then the first real invoice.</p></div><span class="step-state" data-mp="4"></span></div>
+      <div id="mpGoLive" class="text-sm"></div>
+      <ol class="mt-3 text-xs text-slate-600 list-decimal pl-5 space-y-0.5">
+        <li>Copy the production token from IRIS → Digital Invoicing → API Integration → Production Environment.</li>
+        <li>In <a href="#mpS2" onclick="event.preventDefault(); $('#mpS2').scrollIntoView({ behavior: 'smooth' })" class="text-emerald-700 underline">step 2</a>: paste it, set Environment to <b>Production</b>, Save, then <b>Test FBR connection</b>.</li>
+        <li>The client files their first real invoice; check it in IRIS (production).</li>
+      </ol>
+    </section>
+    <section id="mpS5" class="step-card bg-white rounded-xl shadow">
+      <div class="step-head"><span class="step-no">5</span><div class="flex-1"><h3 class="font-semibold text-base">Invoice settings &amp; users</h3><p class="text-xs text-slate-500">Used inside ETAX — not sent to FBR.</p></div><span class="step-state" data-mp="5"></span></div>
+      <div class="grid sm:grid-cols-3 gap-3">
           <label><span>Further tax % (unregistered buyers)</span><input name="furtherTaxRate" type="number" step="0.01" min="0" max="100"></label>
           <div><label><span>Invoice number format</span><input name="invoiceNumberFormat" maxlength="40" placeholder="INV-{YYYY}-{NNNN}" autocomplete="off"></label>
             <p class="text-xs text-slate-500 mt-1">Note: {YYYY} = year, {YY} = short year, {MM} = month, {NNNN} = running number. <span id="fmtExample"></span></p></div>
-          <label><span>Authorization letter (STR-13) received on</span><input name="authLetterAt" type="date"></label>
-          <label><span>Authorization letter reference</span><input name="authLetterRef" maxlength="100" autocomplete="off" placeholder="e.g. file no. / scan name"></label>
-        </div>
-      </fieldset>
-      <button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button>
-    </form>
+          <label><span>Software registration no. <span class="text-slate-400">(from PRAL, printed)</span></span><input name="softwareRegNo" maxlength="60" autocomplete="off"></label>
+      </div>
+      <div class="mt-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button></div>
     </section>
-    <section id="mpUsers">
+  </form>
+  <section id="mpUsers">
   <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
     <h2 class="font-semibold">Users <span class="text-xs font-normal text-slate-500">— Owner: everything + users · Accountant: invoicing, debit notes, import, products, buyers · Cashier: create &amp; print invoices only</span></h2>
     <form id="aUserForm" class="grid sm:grid-cols-5 gap-2 items-end bg-slate-50 border rounded p-3">
@@ -305,18 +341,7 @@
       <tbody id="aUserRows"></tbody></table></div>
     <p class="text-xs text-slate-500">New users and reset passwords must be changed by the user at their next login.</p>
   </div>
-    </section>
-    <section>
-      <h3 class="font-semibold mb-2">Go-live checklist <span id="mpObSummary" class="ml-2 text-xs font-normal"></span></h3>
-      <div id="mpChecklist" class="text-sm"></div>
-      <!-- IRIS → Digital Invoicing → Scenario Details is the official record: the admin ticks what it shows -->
-      <div class="mt-3 flex flex-wrap items-center gap-3"><button type="button" id="sbxBtn" onclick="openSandboxRun()" class="bg-emerald-700 text-white rounded px-3 py-1.5 text-sm font-medium">Run sandbox scenarios</button>
-        <button type="button" onclick="openIrisScenarios()" class="text-sm text-emerald-700 underline">Record IRIS result</button>
-        <span id="irisNote" class="text-xs text-slate-500 ml-2"></span></div>
-      <div id="irisPanel" class="hidden mt-3 border rounded-lg p-3 bg-slate-50"></div>
-      <div id="sbxPanel" class="hidden mt-3 border rounded-lg p-3 bg-slate-50 text-sm"></div>
-    </section>
-  </div>
+  </section>
   </div>
   <div data-page="a-reports" class="page hidden space-y-6">
     <div class="bg-white rounded-xl shadow p-5 space-y-3">
@@ -477,6 +502,10 @@
     <a href="#/c-drafts" class="bg-white border rounded-lg px-4 py-2 font-medium">Draft invoices</a>
     <a href="#/c-invoices" class="bg-white border rounded-lg px-4 py-2 font-medium">Issued invoices</a>
   </div>
+  <form id="contactForm" class="hidden bg-white rounded-xl shadow p-4 flex flex-wrap items-end gap-3">
+    <label class="min-w-[16rem]"><span>Business contact mobile <span class="text-slate-400">— so ETAX can reach you</span></span><input name="mobile" type="tel" inputmode="tel" maxlength="16" autocomplete="off"></label>
+    <button class="bg-emerald-700 text-white rounded px-3 py-2 text-sm">Save mobile</button><span id="contactOut" class="text-xs text-slate-500 pb-2"></span>
+  </form>
   <div class="bg-white rounded-xl shadow p-5">
     <h2 class="font-semibold mb-3">Latest invoices</h2>
     <div id="cdRecent" class="text-sm"></div>
@@ -580,6 +609,20 @@
       </section>
     </form>
   </div>
+  <!-- Help & feedback: the client's queries to ETAX and the replies -->
+  <div data-page="c-help" class="page hidden space-y-6">
+    <form id="ticketForm" class="bg-white rounded-xl shadow p-5 grid sm:grid-cols-4 gap-3">
+      <h2 class="sm:col-span-4 font-semibold">Ask a question or send feedback <span class="text-xs font-normal text-slate-500">— ETAX replies here; you'll see the answer under "Your queries"</span></h2>
+      <label><span>Type</span><select name="category"><option>Question</option><option>Problem</option><option>FBR / invoice</option><option>Suggestion</option><option>Other</option></select></label>
+      <label class="sm:col-span-3"><span>Subject</span><input name="subject" required maxlength="150" autocomplete="off" placeholder="e.g. Invoice not reaching FBR"></label>
+      <label class="sm:col-span-4"><span>Message</span><textarea name="message" required rows="4" maxlength="5000" placeholder="What happened, which invoice or item, what you expected…"></textarea></label>
+      <div class="sm:col-span-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Send</button></div>
+    </form>
+    <div class="bg-white rounded-xl shadow p-5">
+      <h2 class="font-semibold mb-3">Your queries</h2>
+      <div id="ticketList" class="space-y-3 text-sm"></div>
+    </div>
+  </div>
   <div data-page="c-guide" class="page hidden space-y-6">
     <div class="bg-white rounded-xl shadow p-6">
       <div class="flex flex-wrap items-start justify-between gap-3">
@@ -647,7 +690,8 @@
       <label><span>Status</span><select id="ivStatus"><option value="SUBMITTED">Issued</option><option value="ATTENTION">Needs attention (failed / check IRIS)</option>
         <option value="QUEUED">Pending Submission</option><option value="FAILED">Submission Failed</option><option value="UNCERTAIN">Check IRIS</option><option value="CANCELLED">Cancelled</option><option value="">All</option></select></label>
       <label><span>Type</span><select id="ivType"><option value="">All</option><option>Sale Invoice</option><option>Debit Note</option></select></label>
-      <a href="#/c-new" class="ml-auto bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg px-4 py-2 font-medium">+ New invoice</a>
+      <button type="button" id="annexBtn" onclick="downloadAnnexC()" class="ml-auto border border-emerald-700 text-emerald-800 rounded-lg px-4 py-2 font-medium hover:bg-emerald-50" title="Every issued invoice in the dates above, in FBR's Annex-C layout">⬇ Download Annexure-C (Excel)</button>
+      <a href="#/c-new" class="bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg px-4 py-2 font-medium">+ New invoice</a>
     </div>
     <div class="flex flex-wrap items-center gap-2 text-xs" id="ivQuick">
       <span class="text-slate-500">Quick:</span>
@@ -655,7 +699,12 @@
       <button type="button" data-range="yesterday" class="border rounded-full px-3 py-1 hover:border-emerald-600">Yesterday</button>
       <button type="button" data-range="week" class="border rounded-full px-3 py-1 hover:border-emerald-600">This week</button>
       <button type="button" data-range="month" class="border rounded-full px-3 py-1 hover:border-emerald-600">This month</button>
-      <button type="button" data-range="lastmonth" class="border rounded-full px-3 py-1 hover:border-emerald-600">Last month</button>
+      <button type="button" data-range="lastmonth" class="border rounded-full px-3 py-1 hover:border-emerald-600">Previous month</button>
+      <button type="button" data-range="prev2" class="border rounded-full px-3 py-1 hover:border-emerald-600">Previous 2 months</button>
+      <button type="button" data-range="prev3" class="border rounded-full px-3 py-1 hover:border-emerald-600">Previous 3 months</button>
+      <button type="button" data-range="prev6" class="border rounded-full px-3 py-1 hover:border-emerald-600">Previous 6 months</button>
+      <button type="button" data-range="taxyear" class="border rounded-full px-3 py-1 hover:border-emerald-600" title="1 July to today">This tax year</button>
+      <button type="button" data-range="lasttaxyear" class="border rounded-full px-3 py-1 hover:border-emerald-600" title="1 July to 30 June">Last tax year</button>
       <button type="button" data-range="all" class="border rounded-full px-3 py-1 hover:border-emerald-600">All dates</button>
     </div>
   </div>
@@ -743,6 +792,8 @@
           <label class="col-span-2"><span>Item notes <span class="text-slate-400">(for your own use)</span></span><textarea name="notes" rows="2" maxlength="1000" required placeholder="e.g. supplier, storage, remarks"></textarea></label>
           <label class="col-span-2"><span>HS code <span class="text-slate-400">(pick from the official list, or type your own)</span></span><input name="hsCode" class="pf-hs" required autocomplete="off" placeholder="Type code or product, e.g. yogurt"></label>
           <label class="col-span-2"><span>UOM</span><input name="uoM" list="uomList" required autocomplete="off" placeholder="e.g. KG, Numbers, pieces, units"><span id="pfUomHint" class="block text-xs mt-1"></span></label>
+          <label class="col-span-2 sm:col-span-4"><span>HS code description <span id="pfHsDescHint" class="text-slate-400">(filled from FBR's HS list when you pick a code)</span></span>
+            <textarea name="hsDescription" rows="2" maxlength="500" readonly class="bg-slate-50 text-slate-700" placeholder="Pick or type an HS code above"></textarea></label>
         </div>
       </section>
 
@@ -797,8 +848,6 @@
             <label class="!flex items-center gap-2 text-xs text-slate-600"><span class="!mb-0">Buyer</span><select id="trPrevBuyer" class="!w-auto !py-1 text-xs"><option value="U">Unregistered (further tax)</option><option value="R">Registered</option></select></label>
           </div>
           <div class="overflow-x-auto"><table class="w-full text-sm"><thead id="trPrevHead" class="text-left text-slate-600 border-b"></thead><tbody id="trPrevBody"></tbody></table></div>
-          <!-- why further tax applies: opened from "Why?" in the Further tax heading -->
-          <div id="trFtWhy" class="hidden text-xs text-slate-700 bg-amber-50 border-t border-amber-200 px-3 py-2.5 space-y-1"></div>
           <p id="trPrevNote" class="text-xs text-slate-500 px-3 py-2 border-t"></p>
         </div>
       </section>
@@ -1011,6 +1060,8 @@ function logout() {
 
 /* ---------- Left menu + pages ---------- */
 const ICON = {
+  sales: 'M3 3v18h18M7 15l4-4 3 3 6-6M16 8h4v4',
+  chat: 'M21 12a8 8 0 01-11.6 7.1L4 20l1-4.6A8 8 0 1121 12zM8 10h8M8 14h5',
   book: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z',
   home: 'M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10',
   plus: 'M12 5v14M5 12h14',
@@ -1030,18 +1081,21 @@ const NAV = {
   client: [
     { id: 'c-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
     // Order as in the CA's "Final Outlook" sheet
-    { id: 'c-new', label: '+ New Invoice', icon: 'plus', crumb: 'Sales' },
-    { id: 'c-drafts', label: 'Draft Invoices', icon: 'draft', crumb: 'Sales' },
-    { id: 'c-invoices', label: 'Issued Invoices', icon: 'list', crumb: 'Sales' },
-    { id: 'c-buyers', label: 'Buyers / Customers', icon: 'users', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
-    { id: 'c-products', label: 'Items with Tax Rules', icon: 'box', crumb: 'Masters', roles: ['OWNER', 'ACCOUNTANT'] },
+    // grouped in the menu under "Sales / Revenue" (opens and closes)
+    { id: 'c-new', label: '+ New Invoice', icon: 'plus', crumb: 'Sales / Revenue', group: 'sales' },
+    { id: 'c-drafts', label: 'Draft Invoices', icon: 'draft', crumb: 'Sales / Revenue', group: 'sales' },
+    { id: 'c-invoices', label: 'Issued Invoices', icon: 'list', crumb: 'Sales / Revenue', group: 'sales' },
+    { id: 'c-buyers', label: 'Buyers / Customers', icon: 'users', crumb: 'Sales / Revenue', group: 'sales', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'c-products', label: 'Items with Tax Rules', icon: 'box', crumb: 'Sales / Revenue', group: 'sales', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'c-guide', label: 'Guide', icon: 'book', crumb: 'Help' },
+    { id: 'c-help', label: 'Help & feedback', icon: 'chat', crumb: 'Help' },
     // CA: Bulk Import, Stock and Users are not shown to clients (users are managed by the admin under Clients)
   ],
   admin: [
     { id: 'a-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
     { id: 'a-clients', label: 'Clients', icon: 'building', crumb: 'Clients' },
     { id: 'a-client', label: 'Manage client', crumb: 'Clients', parent: 'a-clients' },
+    { id: 'a-help', label: 'Client queries', icon: 'chat', crumb: 'Clients' },
     { id: 'a-reports', label: 'Reports (Annex-C)', icon: 'chart', crumb: 'Reports' },
     { id: 'a-itemrules', label: 'Tax Rules Data Bank', icon: 'layers', crumb: 'Reports' },
     { id: 'a-activity', label: 'Activity Log', icon: 'clock', crumb: 'Compliance' },
@@ -1053,15 +1107,43 @@ const PAGE_ENTER = {
   'c-dashboard': () => loadDashboard(), 'c-invoices': () => loadInvoices(), 'c-import': () => loadBatches(),
   'c-drafts': () => loadDrafts(),
   'c-products': () => loadItemsPage(), 'c-buyers': () => loadSaved(), 'c-users': () => loadUsers('c'), 'c-stock': () => loadStock(),
+  'c-help': () => loadTickets(), 'a-help': () => loadAdminTickets(),
   'a-dashboard': () => loadAdminDash(), 'a-clients': () => loadClients(), 'a-reports': () => fillReportClients(),
   'a-itemrules': () => loadItemBank(), 'a-activity': () => loadAudit('a'), 'a-leads': () => loadLeads(), 'a-system': () => loadSystem(),
 };
 const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : NAV.client.filter(n => !n.roles || n.roles.includes(S.tenantRole || 'OWNER'));
 const canManage = () => ['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER'); // cashier can't
+// Menu groups that open and close (remembered per browser); a group opens by itself when one of its pages is shown
+const NAV_GROUPS = { sales: { label: 'Sales / Revenue', icon: 'sales' } };
+const navOpen = id => { try { return localStorage.getItem('navGroup:' + id) !== 'closed'; } catch { return true; } };
 function renderNav() {
-  $('#nav').innerHTML = navList().filter(n => !n.parent).map(n => `<a href="#/${n.id}" data-nav="${n.id}" class="flex items-center gap-3 mx-3 my-0.5 px-3 py-2 rounded-lg hover:bg-white/10">
-    <svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[n.icon]}"/></svg>${esc(n.label)}</a>`).join('');
+  const svg = icon => `<svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[icon]}"/></svg>`;
+  const link = (n, sub) => `<a href="#/${n.id}" data-nav="${n.id}" class="flex items-center gap-3 mx-3 my-0.5 ${sub ? 'pl-3 pr-2 py-1.5 text-[13px] whitespace-nowrap' : 'px-3 py-2'} rounded-lg hover:bg-white/10">${svg(n.icon)}${esc(n.label)}</a>`;
+  const items = navList().filter(n => !n.parent), html = [], done = new Set();
+  for (const n of items) {
+    if (!n.group) { html.push(link(n)); continue; }
+    if (done.has(n.group)) continue;
+    done.add(n.group);
+    const g = NAV_GROUPS[n.group], open = navOpen(n.group);
+    html.push(`<div class="nav-group" data-group="${n.group}">
+      <button type="button" class="nav-group-btn w-[calc(100%-1.5rem)] flex items-center gap-3 mx-3 my-0.5 px-3 py-2 rounded-lg hover:bg-white/10 text-left" aria-expanded="${open}">
+        ${svg(g.icon)}<span class="flex-1">${esc(g.label)}</span><span class="nav-caret text-xs transition-transform ${open ? 'rotate-90' : ''}">▶</span></button>
+      <div class="nav-group-items ${open ? '' : 'hidden'} border-l border-white/10 ml-5">${items.filter(x => x.group === n.group).map(x => link(x, true)).join('')}</div></div>`);
+  }
+  $('#nav').innerHTML = html.join('');
 }
+function setNavGroup(id, open) {
+  const g = document.querySelector(`#nav .nav-group[data-group="${id}"]`); if (!g) return;
+  g.querySelector('.nav-group-items').classList.toggle('hidden', !open);
+  g.querySelector('.nav-caret').classList.toggle('rotate-90', open);
+  g.querySelector('.nav-group-btn').setAttribute('aria-expanded', String(open));
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('#nav .nav-group-btn'); if (!b) return;
+  const id = b.closest('.nav-group').dataset.group, open = b.getAttribute('aria-expanded') !== 'true';
+  setNavGroup(id, open);
+  try { localStorage.setItem('navGroup:' + id, open ? 'open' : 'closed'); } catch { /* per-browser convenience only */ }
+});
 function toggleNav(open) {
   $('#sidebar').classList.toggle('-translate-x-full', !open);
   $('#navBackdrop').classList.toggle('hidden', !open);
@@ -1084,6 +1166,9 @@ function route() {
     const on = a.dataset.nav === active;
     a.classList.toggle('bg-emerald-600', on); a.classList.toggle('text-white', on); a.classList.toggle('hover:bg-white/10', !on);
   });
+  const grp = list.find(n => n.id === active)?.group;
+  document.querySelectorAll('#nav .nav-group').forEach(g => g.querySelector('.nav-group-btn').classList.toggle('text-white', g.dataset.group === grp));
+  if (grp) setNavGroup(grp, true);
   // Tabs of the current module (e.g. Sales: Invoices · New invoice · Drafts · Bulk import)
   const tabs = list.filter(n => n.tab && (n.id === active || n.parent === active));
   const bar = $('#moduleTabs');
@@ -1133,14 +1218,17 @@ async function loadClients() {
       return `<tr class="border-b align-top">
       <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc(c.sector || 'sector not set')}</div></td>
       <td class="text-xs">${esc(c.emails.join(', '))}</td>
+      <td class="text-xs font-mono whitespace-nowrap">${c.mobile ? esc(c.mobile) : '<span class="text-slate-300">—</span>'}</td>
+      <td class="text-xs whitespace-nowrap"><span class="px-2 py-0.5 rounded ${c.active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}">${c.active ? 'Active' : 'Inactive'}</span>
+        <div><button type="button" class="mt-1 underline text-slate-600" onclick="setClientActive('${c.id}', ${!c.active})">${c.active ? 'Make inactive' : 'Make active'}</button></div></td>
       <td class="text-xs">${esc(c.fbrEnv)}<div>${c.fbrTokenMasked ? 'token ✔' : '<span class="text-amber-700">no token</span>'}</div></td>
       <td class="text-xs"><span class="px-2 py-0.5 rounded ${live ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}">${live ? 'Live' : `${ob.done}/${ob.total} steps`}</span>
         <div class="mt-1 text-slate-600">Scenarios ${ob.scenariosPassed}/${ob.scenariosAssigned || '?'}</div></td>
       <td class="text-right text-xs">${c.thisMonth.invoices} invoices<div class="font-semibold">Rs ${money(c.thisMonth.total)}</div>
         ${c.needsAttention ? `<div class="text-red-700">${c.needsAttention} need attention</div>` : ''}</td>
       <td class="text-xs">${fmtDate(c.lastInvoiceAt)}</td>
-      <td class="text-right whitespace-nowrap"><button class="bg-emerald-700 text-white rounded px-3 py-1 text-xs" onclick="manageClient('${c.id}')">Manage</button></td></tr>`;
-    }).join('') || '<tr><td colspan="7" class="py-3 text-slate-500">No clients yet.</td></tr>';
+      <td class="text-right whitespace-nowrap"><button class="text-slate-600 underline text-xs mr-2" onclick="showClientHistory('${c.id}')">History</button><button class="bg-emerald-700 text-white rounded px-3 py-1 text-xs" onclick="manageClient('${c.id}')">Manage</button></td></tr>`;
+    }).join('') || '<tr><td colspan="9" class="py-3 text-slate-500">No clients yet.</td></tr>';
     const sel = $('#aAuTenant'), cur = sel.value;
     sel.innerHTML = '<option value="">All clients</option><option value="platform">Platform / admin</option>' + rows.map(c => `<option value="${c.id}">${esc(c.companyName)}</option>`).join('');
     sel.value = cur;
@@ -1437,7 +1525,8 @@ async function initAdmin() {
 // Admin dashboard: counts across all clients + what needs attention
 async function loadAdminDash() {
   try {
-    const [clients, leads] = await Promise.all([api('/api/admin/clients'), api('/api/admin/leads')]);
+    const [clients, leads, tk] = await Promise.all([api('/api/admin/clients'), api('/api/admin/leads'), api('/api/admin/tickets?status=OPEN').catch(() => ({ open: 0 }))]);
+    setNavBadge('a-help', tk.open);
     S.clients = clients;
     const live = clients.filter(c => c.onboarding.done === c.onboarding.total).length;
     const card = (label, value, href, cls = '') => `<a href="${href}" class="bg-white rounded-xl shadow p-4 hover:ring-2 hover:ring-emerald-600"><div class="text-xs text-slate-500">${label}</div><div class="text-2xl font-bold mt-1 ${cls}">${value}</div></a>`;
@@ -1450,6 +1539,7 @@ async function loadAdminDash() {
       ...clients.filter(c => c.needsAttention).map(c => `<li>⚠️ <b>${esc(c.companyName)}</b>: ${c.needsAttention} invoice(s) failed or uncertain — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">open</a></li>`),
       ...clients.filter(c => c.onboarding.done < c.onboarding.total).map(c => `<li>🛠️ <b>${esc(c.companyName)}</b>: go-live ${c.onboarding.done}/${c.onboarding.total}, scenarios ${c.onboarding.scenariosPassed}/${c.onboarding.scenariosAssigned || '?'} — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">manage</a></li>`),
       ...clients.filter(c => c.tokenExpiring).map(c => `<li>🔑 <b>${esc(c.companyName)}</b>: FBR token expires on ${fmtDate(c.tokenExpiresAt)} (valid 5 years) — ask PRAL for a new one, then save it — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">open</a></li>`),
+      ...(tk.open ? [`<li>💬 ${tk.open} client quer${tk.open > 1 ? 'ies' : 'y'} waiting for a reply — <a class="text-emerald-700 underline" href="#/a-help">answer</a></li>`] : []),
       ...(newLeads ? [`<li>✉️ ${newLeads} new website enquir${newLeads > 1 ? 'ies' : 'y'} — <a class="text-emerald-700 underline" href="#/a-leads">view</a></li>`] : []),
     ];
     $('#adAttention').innerHTML = items.length ? `<ul class="space-y-2">${items.join('')}</ul>` : '<div class="text-slate-500">All good — nothing needs attention.</div>';
@@ -1621,6 +1711,36 @@ async function saveIrisScenarios() {
     $('#irisPanel').classList.add('hidden'); renderChecklist(ob); loadClients(); toast('IRIS result saved', true);
   } catch (err) { toast(err.message); }
 }
+// Active / inactive client: inactive = its users can't log in (data kept; the admin can still manage it)
+async function setClientActive(id, active) {
+  const c = (S.clients || []).find(x => x.id === id) || S.managed || {};
+  if (!confirm(active ? `Make ${c.companyName} active again? Its users can log in.` : `Make ${c.companyName} inactive? Its users can't log in until you make it active again. Nothing is deleted.`)) return;
+  try {
+    const t = await api(`/api/admin/clients/${id}/settings`, { method: 'PUT', body: { active } });
+    if (S.manageId === id) { S.managed = t; fillSettings(t); }
+    toast(active ? 'Client is active' : 'Client is inactive', true); loadClients();
+  } catch (err) { toast(err.message); }
+}
+// History of a client's record (status, mobile, settings, set-up steps): who changed what, when
+async function showClientHistory(id) {
+  const c = (S.clients || []).find(x => x.id === id) || S.managed || {};
+  const box = $('#historyBox'), modal = $('#historyModal');
+  box.innerHTML = '<p class="text-sm text-slate-500">Loading history…</p>'; modal.classList.remove('hidden');
+  try {
+    const rows = await api(`/api/admin/clients/${id}/history`);
+    const when = d => new Date(d).toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const val = v => v ? esc(v) : '<i class="text-slate-400">empty</i>';
+    box.innerHTML = `<div class="flex items-start justify-between gap-3 mb-4"><div><h2 class="font-semibold text-lg">History — ${esc(c.companyName || '')}</h2>
+        <p class="text-sm text-slate-600">Who changed what on this client, and when (Pakistan time). Newest first.</p></div>
+        <button type="button" class="text-2xl leading-none text-slate-400 hover:text-slate-700" onclick="$('#historyModal').classList.add('hidden')" aria-label="Close">×</button></div>`
+      + (rows.length ? `<ol class="space-y-3">${rows.map(r => `<li class="border rounded-lg p-3">
+          <div class="flex flex-wrap items-baseline gap-x-3 text-sm"><b>${r.created ? 'Client added' : r.changes.length ? 'Changed' : esc(r.summary.split(':')[0])}</b><span class="text-slate-600">${when(r.at)}</span><span class="text-slate-600">by <b class="font-medium">${esc(r.by)}</b></span></div>
+          ${r.changes.length ? `<table class="w-full text-sm mt-2 table-fixed"><thead><tr class="text-left text-xs text-slate-500"><th class="py-1 w-48">Detail</th><th class="py-1">Before</th><th class="py-1">After</th></tr></thead><tbody>
+            ${r.changes.map(x => `<tr class="border-t align-top"><td class="py-1.5 font-medium">${esc(x.label)}</td><td class="py-1.5 pr-3 text-red-700 break-words">${val(x.from)}</td><td class="py-1.5 text-emerald-800 break-words">${val(x.to)}</td></tr>`).join('')}</tbody></table>`
+            : `<div class="text-sm text-slate-600 mt-1">${esc(r.summary)}</div>`}</li>`).join('')}</ol>`
+        : '<p class="text-sm text-slate-500">No history recorded yet.</p>');
+  } catch (err) { box.innerHTML = `<p class="text-red-700 text-sm">${esc(err.message)}</p>`; }
+}
 async function removeToken() {
   if (!confirm(`Remove the saved FBR token of ${S.managed.companyName}? Only this client changes; their invoices can't reach FBR until a new token is saved.`)) return;
   try {
@@ -1630,15 +1750,42 @@ async function removeToken() {
   } catch (err) { toast(err.message); }
 }
 function closeManage() { S.manageId = null; go('a-clients'); }
+// The client set-up page: the go-live checklist shown as 5 steps (step bar + a status chip on each card)
 function renderChecklist(ob) {
-  const live = ob.done === ob.total;
-  $('#mpObSummary').innerHTML = live ? '<span class="text-emerald-700">✔ Live with FBR</span>'
-    : `<span class="text-amber-700">${ob.done} of ${ob.total} done · scenarios ${ob.scenariosPassed}/${ob.scenariosAssigned || '?'}</span>`;
   S.manageOb = ob;
+  const st = k => ob.steps.find(x => x.key === k) || {};
+  const label = { seller: 'seller details', profile: 'business nature & sector', token: 'FBR token',
+    scenarios: ob.scenariosAssigned ? `scenarios ${ob.scenariosPassed} of ${ob.scenariosAssigned}` : 'scenarios (set business nature & sector in step 1 first)', production: 'production token & environment', live: 'first live invoice' };
+  const groups = [['seller', 'profile'], ['token'], ['scenarios'], ['production', 'live']];
+  const status = groups.map(keys => keys.filter(k => !st(k).done).map(k => label[k]));
+  const t = S.managed || {};
+  status.push([]); // step 5: settings & users — nothing required
+  status.forEach((missing, i) => {
+    const n = i + 1, ok = !missing.length;
+    const item = document.querySelector(`#mpStepper .stepper-item:nth-child(${n})`);
+    item.classList.toggle('done', ok); item.classList.toggle('todo', !ok);
+    item.querySelector('.step-no').textContent = ok ? '✓' : n;
+    item.querySelector('small').textContent = n === 5 ? `Further tax ${t.furtherTaxRate ?? 4}%` : ok ? 'Done' : `${missing.length} to do`;
+    const card = $(`#mpS${n}`); card.classList.toggle('done', ok); card.classList.toggle('todo', !ok);
+    card.querySelector('.step-head .step-no').textContent = ok ? '✓' : n;
+    const chip = card.querySelector('.step-state');
+    chip.className = `step-state ${ok ? 'ok' : 'miss'}`;
+    chip.textContent = n === 5 ? 'Optional' : ok ? (n === 2 && t.fbrEnv === 'PRODUCTION' ? '✓ Production token' : '✓ Done') : `Missing: ${missing.join(', ')}`;
+  });
+  $('#mpObSummary').innerHTML = ob.done === ob.total ? '<span class="text-emerald-700">✔ Live with FBR</span>'
+    : `<span class="text-amber-700">${ob.done} of ${ob.total} done</span>`;
+  // step 3: scenario chips
+  $('#mpScen').innerHTML = ob.scenarios.length
+    ? `<div class="text-xs text-slate-500 mb-1">${ob.iris ? 'As IRIS shows' : 'FBR\'s list for this business nature and sector'} — ${ob.scenariosPassed} of ${ob.scenariosAssigned} passed:</div>`
+      + ob.scenarios.map(sc => `<span class="inline-block border rounded px-2 py-0.5 text-xs mr-1 mb-1 ${sc.passed ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : sc.mockOnly ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-white text-slate-700 border-slate-300'}" title="${esc(sc.desc)} — ${sc.iris ? 'Successful in IRIS' : sc.passed ? 'Passed with FBR sandbox' : sc.mockOnly ? 'Only tried in mock mode' : 'Not passed yet'}">${sc.passed ? '✔ ' : ''}${sc.id}</span>`).join('')
+    : '<span class="text-xs text-amber-700">Set the business nature and sector in step 1 (as in IRIS) to see which scenarios FBR asks for.</span>';
   $('#irisNote').textContent = ob.iris ? `Recorded from IRIS on ${fmtDate(ob.iris.at)} by ${ob.iris.by}` : 'Tick what IRIS → Scenario Details shows (assigned and Successful)';
-  $('#mpChecklist').innerHTML = checklistHtml(ob, false)
-    + (ob.scenariosAssigned && ob.scenariosPassed < ob.scenariosAssigned ? '<div class="text-xs text-slate-500 mt-2">Run the remaining scenarios with <b>Open workspace</b>, using the real sandbox token (FBR_MOCK off).</div>' : '');
+  // step 4: production + first live invoice
+  $('#mpGoLive').innerHTML = ['production', 'live'].map(k => `<div class="flex items-start gap-2"><span class="${st(k).done ? 'text-emerald-600' : 'text-slate-400'}">${st(k).done ? '✔' : '○'}</span><span class="${st(k).done ? 'text-slate-500' : 'text-slate-800'}">${esc(st(k).label || '')}</span></div>`).join('');
 }
+document.addEventListener('click', e => {
+  const b = e.target.closest('#mpStepper [data-go]'); if (b) $('#' + b.dataset.go).scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 function showClientActivity() {
   const id = S.manageId;
   go('a-activity');
@@ -1667,6 +1814,14 @@ async function loadEgressIp() {
     $('#egressIp').textContent = `${d.ip} ${d.viaProxy ? '(via static proxy)' : '(no proxy — this IP may change on Render/Vercel)'}`;
   } catch (err) { $('#egressIp').textContent = '—'; toast(err.message); }
 }
+$('#contactForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    const r = await api('/api/client/contact', { method: 'PUT', body: { mobile: e.target.mobile.value } });
+    if (S.settings) S.settings.mobile = r.mobile;
+    $('#contactOut').textContent = 'Saved'; toast('Mobile number saved', true);
+  } catch (err) { toast(err.message); }
+});
 $('#clientForm').addEventListener('submit', async e => {
   e.preventDefault();
   try {
@@ -1737,8 +1892,8 @@ async function initClient() {
     $('#originProvince').innerHTML = S.settings.sellerProvince ? esc(provinceLabel(S.settings.sellerProvince))
       : '<span class="text-amber-700 font-normal">Not set yet — your administrator adds it in your DI settings</span>';
     showNextInvoiceNo();
-    route();
   } catch (err) { toast(err.message); }
+  route(); // always: a failed request must not leave a blank page (or a page of the other role) showing
 }
 
 // FBR's province names are sent; the screen shows the names from the CA's list
@@ -1764,8 +1919,10 @@ async function loadLists() {
 
 function fillSettings(s) {
   const f = $('#settingsForm');
-  for (const k of ['sellerNtnCnic', 'sellerStrn', 'sellerBusinessName', 'sellerAddress', 'fbrEnv', 'furtherTaxRate', 'invoiceNumberFormat', 'softwareRegNo', 'authLetterRef']) f[k].value = s[k] ?? '';
-  f.authLetterAt.value = s.authLetterAt ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date(s.authLetterAt)) : '';
+  f.mobile.value = s.mobile || '';
+  $('#mpStatus').innerHTML = s.active === false ? '<span class="px-2 py-0.5 rounded bg-red-100 text-red-800">Inactive</span> <button type="button" class="underline text-slate-600" onclick="setClientActive(S.manageId, true)">Make active</button>'
+    : '<span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Active</span> <button type="button" class="underline text-slate-600" onclick="setClientActive(S.manageId, false)">Make inactive</button>';
+  for (const k of ['sellerNtn', 'sellerCnic', 'sellerStrn', 'sellerBusinessName', 'sellerAddress', 'fbrEnv', 'furtherTaxRate', 'invoiceNumberFormat', 'softwareRegNo']) f[k].value = s[k] ?? '';
   // FBR token: valid 5 years from issue (spec §3.1)
   f.tokenIssuedAt.value = s.tokenIssuedAt ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date(s.tokenIssuedAt)) : '';
   $('#tokenExpiry').className = 'block text-xs mt-1 ' + (s.tokenExpiring ? 'text-red-700' : 'text-slate-500');
@@ -1803,9 +1960,11 @@ function showFmtExample() {
 $('#settingsForm').invoiceNumberFormat.addEventListener('input', showFmtExample);
 
 // FBR's STATL / Get_Reg_Type with this client's token: registered? active (ATL)?
+// "NTN: 3617803 · CNIC: 36402…" on receipts (older clients: the one saved number)
+const sellerIds = t => [t.sellerNtn && `NTN: ${t.sellerNtn}`, t.sellerCnic && `CNIC: ${t.sellerCnic}`].filter(Boolean).join(' · ') || `NTN/CNIC: ${t.sellerNtnCnic || ''}`;
 async function checkSellerFbr() {
   const f = $('#settingsForm'), out = $('#sellerCheck');
-  const reg = (f.sellerNtnCnic.value || f.sellerStrn.value).replace(/\D/g, '');
+  const reg = (f.sellerNtn.value || f.sellerCnic.value || f.sellerStrn.value).replace(/\D/g, '');
   out.className = 'text-slate-500'; out.textContent = 'Checking…';
   try {
     const r = await api(`/api/admin/clients/${S.manageId}/check-registration?reg=${reg}`);
@@ -2703,6 +2862,47 @@ const DIAL_CODES = (() => {
 // A saved "+1…" / "+7…" number shows the main country for that code
 const DIAL_MAIN = { 1: 'US', 7: 'RU', 262: 'RE', 590: 'GP' };
 const flagOf = cc => String.fromCodePoint(...[...cc].map(c => 0x1F1A5 + c.charCodeAt(0)));
+// Mobile numbers by country (same table as src/phone.js): digits after the country code, and how a mobile starts
+const MOBILE_RULES = {
+  92: { name: 'Pakistan', len: [10, 10], start: /^3/, startText: '3', example: '0300 1234567', local: true },
+  971: { name: 'UAE', len: [9, 9], start: /^5/, startText: '5', example: '50 123 4567' },
+  966: { name: 'Saudi Arabia', len: [9, 9], start: /^5/, startText: '5', example: '50 123 4567' },
+  974: { name: 'Qatar', len: [8, 8], start: /^[3567]/, startText: '3, 5, 6 or 7', example: '3312 3456' },
+  968: { name: 'Oman', len: [8, 8], start: /^[79]/, startText: '7 or 9', example: '9212 3456' },
+  965: { name: 'Kuwait', len: [8, 8], start: /^[569]/, startText: '5, 6 or 9', example: '5012 3456' },
+  973: { name: 'Bahrain', len: [8, 8], start: /^3/, startText: '3', example: '3600 1234' },
+  44: { name: 'United Kingdom', len: [10, 10], start: /^7/, startText: '7', example: '7400 123456' },
+  1: { name: 'USA / Canada', len: [10, 10], start: /^[2-9]/, startText: '2–9', example: '201 555 0123' },
+  86: { name: 'China', len: [11, 11], start: /^1/, startText: '1', example: '131 2345 6789' },
+  93: { name: 'Afghanistan', len: [9, 9], start: /^7/, startText: '7', example: '70 123 4567' },
+  98: { name: 'Iran', len: [10, 10], start: /^9/, startText: '9', example: '912 345 6789' },
+  90: { name: 'Turkey', len: [10, 10], start: /^5/, startText: '5', example: '501 234 5678' },
+  60: { name: 'Malaysia', len: [9, 10], start: /^1/, startText: '1', example: '12 345 6789' },
+  65: { name: 'Singapore', len: [8, 8], start: /^[89]/, startText: '8 or 9', example: '8123 4567' },
+  49: { name: 'Germany', len: [10, 11], start: /^1[5-7]/, startText: '15, 16 or 17', example: '1512 3456789' },
+  61: { name: 'Australia', len: [9, 9], start: /^4/, startText: '4', example: '412 345 678' },
+  91: { name: 'India', len: [10, 10], start: /^[6-9]/, startText: '6–9', example: '81234 56789' },
+  880: { name: 'Bangladesh', len: [10, 10], start: /^1/, startText: '1', example: '1812 345678' },
+  94: { name: 'Sri Lanka', len: [9, 9], start: /^7/, startText: '7', example: '71 234 5678' },
+};
+// helper line under the box, and what is wrong (or '') for the digits typed
+function mobileHint(code, name, long) {
+  const r = MOBILE_RULES[code];
+  if (!r) return long ? `${name}: 7 to 12 digits after +${code}` : '7–12 digits';
+  const [min, max] = r.len, digits = min === max ? `${min} digits` : `${min}–${max} digits`;
+  if (long) return r.local ? `${r.name} mobile: 11 digits starting 03, e.g. ${r.example}` : `${r.name} mobile: ${digits} after +${code}, starting ${r.startText}, e.g. ${r.example}`;
+  return r.local ? '11 digits, starts 03' : `${digits}, starts ${r.startText}`;
+}
+function mobileIssue(code, typed) {
+  const r = MOBILE_RULES[code] || { len: [7, 12] }, d = String(typed || '');
+  if (!d) return '';
+  const national = r.local ? d.replace(/^0/, '') : d.replace(/^0+/, '');
+  if (r.local && !/^0?3/.test(d)) return 'must start with 03';
+  if (national.length < r.len[0]) return `too short (${r.local ? '11 digits' : `${r.len[0] === r.len[1] ? r.len[0] : `${r.len[0]}–${r.len[1]}`} digits`})`;
+  if (national.length > r.len[1]) return 'too many digits';
+  if (r.start && !r.start.test(national)) return `must start with ${r.local ? '03' : r.startText}`;
+  return '';
+}
 function phoneBox(inp) {
   const box = document.createElement('div'), btn = document.createElement('button'), num = document.createElement('input'), pop = document.createElement('div');
   box.className = 'relative flex gap-1';
@@ -2711,12 +2911,28 @@ function phoneBox(inp) {
   pop.className = 'cc-pop hidden absolute left-0 top-full mt-1 z-40 w-80 max-w-[90vw] bg-white border rounded-lg shadow-lg p-2';
   pop.innerHTML = '<input class="cc-q w-full mb-2" type="search" autocomplete="off" placeholder="Search country or code, e.g. Dubai, UAE, 971"><ul class="cc-list max-h-64 overflow-auto text-sm"></ul>';
   inp.before(box); box.append(btn, num, pop); inp.type = 'hidden';
+  // helper / error text in the label line above the box, so the box stays level with the fields beside it
+  const help = document.createElement('span'), caption = inp.closest('label')?.querySelector(':scope > span');
+  help.className = 'cc-help text-xs font-normal text-slate-500';
+  if (caption) caption.append(' ', help); else box.after(help);
   const q = pop.querySelector('.cc-q'), ul = pop.querySelector('.cc-list');
   let cur = DIAL_CODES[0];
   const native = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
   const show = () => {
     btn.innerHTML = `<span>${flagOf(cur.cc)}</span><span>+${cur.code}</span><span class="text-slate-400">▾</span>`; btn.title = cur.name;
-    num.placeholder = cur.cc === 'PK' ? '03001234567' : 'number without the country code';
+    num.placeholder = cur.cc === 'PK' ? '03001234567' : (MOBILE_RULES[cur.code]?.example || 'number without the country code').replace(/\s/g, '');
+    const r = MOBILE_RULES[cur.code];
+    num.maxLength = r?.local ? 11 : r ? r.len[1] + 1 : 13; // + room for a leading 0 people type out of habit
+    check();
+  };
+  // digits only; the helper line turns red with what is wrong, and the form can't be saved until it's fixed
+  const check = () => {
+    const issue = mobileIssue(cur.code, num.value);
+    num.setCustomValidity(issue ? `Mobile number: ${issue}` : '');
+    num.classList.toggle('!border-red-400', Boolean(issue));
+    help.className = `cc-help text-xs font-normal ${issue ? 'text-red-600' : 'text-slate-500'}`;
+    help.textContent = `· ${issue || mobileHint(cur.code, cur.name)}`;
+    help.title = mobileHint(cur.code, cur.name, true);
   };
   const join = () => {
     const d = num.value.trim();
@@ -2743,7 +2959,11 @@ function phoneBox(inp) {
     if (e.key === 'Escape') { e.preventDefault(); close(); btn.focus(); }
   });
   document.addEventListener('click', e => { if (!box.contains(e.target)) close(); });
-  num.addEventListener('input', join);
+  num.addEventListener('input', () => {
+    const clean = num.value.replace(/\D/g, '');
+    if (clean !== num.value) num.value = clean;
+    join(); check();
+  });
   // a saved value (edit / filled by code) is split back into country + number
   Object.defineProperty(inp, 'value', { get() { return native.get.call(inp); }, set(v) {
     native.set.call(inp, v ?? ''); const t = String(v ?? '').trim();
@@ -2755,7 +2975,7 @@ function phoneBox(inp) {
   box.phone = { get country() { return cur.cc; }, choose };
   show();
 }
-document.querySelectorAll('#buyerForm input[name=mobile], #customerForm input[name=mobile]').forEach(phoneBox);
+document.querySelectorAll('#buyerForm input[name=mobile], #customerForm input[name=mobile], #clientForm input[name=mobile], #settingsForm input[name=mobile], #contactForm input[name=mobile]').forEach(phoneBox);
 
 // Passwords: an eye button on every password box to show / hide what was typed, and on new-password boxes
 // (data-pwrules) a checklist that ticks each rule as it is met; the form can't be sent until all are ticked.
@@ -2987,7 +3207,7 @@ function renderItems() {
   const cell = (v, cls = '') => `<td class="px-3 py-3 ${cls}">${v || '<span class="text-slate-300">—</span>'}</td>`;
   $('#productRows').innerHTML = rows.map(p => `<tr class="item-row align-top">
     <td class="items-sticky-l px-3 py-3 font-medium">${esc(p.name)}</td>${cell(esc(p.description), 'whitespace-pre-line')}${cell(esc(p.notes), 'whitespace-pre-line text-slate-600')}
-    ${cell(esc(p.hsCode), 'font-mono')}<td class="px-3 py-3">${SOURCE_BADGE[p.source] || ''}</td>${cell(esc(p.uoM))}
+    ${cell(`<span class="font-mono">${esc(p.hsCode)}</span>${p.hsDescription ? `<div class="text-xs text-slate-500 mt-0.5 max-w-[16rem] line-clamp-2" title="${esc(p.hsDescription)}">${esc(p.hsDescription)}</div>` : ''}`)}<td class="px-3 py-3">${SOURCE_BADGE[p.source] || ''}</td>${cell(esc(p.uoM))}
     ${cell(pricesOf(p).map(x => `${esc(x.label)} ${money(x.price)}`).join('<br>'), 'whitespace-nowrap')}
     ${p.saleType ? `${cell(esc(p.saleType))}${cell(esc(p.rate))}${cell(salesTaxRefs(p).replace(/ · /g, '<br>'))}${cell(esc(salesTaxComment(p)), 'whitespace-pre-line text-slate-600')}
       ${cell(extraTaxesCell(p))}${cell(p.taxRuleAt ? `${fmtDate(p.taxRuleAt)}<div><button type="button" class="text-emerald-700 underline text-xs" onclick="ruleHistory('${p.id}')">Rule history</button></div>` : '', 'whitespace-nowrap')}`
@@ -3012,6 +3232,7 @@ function stepStatus() {
   const f = $('#productForm'), v = n => String(f[n]?.value || '').trim();
   const m1 = [['name', 'name'], ['description', 'description'], ['notes', 'notes'], ['hsCode', 'HS code'], ['uoM', 'UOM']].filter(([n]) => !v(n)).map(([, l]) => l);
   if (v('hsCode') && !/^\d{4}\.?\d{4}$/.test(v('hsCode'))) m1.push('HS code like 0101.2100');
+  if (v('hsCode') && !f.hsDescription.readOnly && !v('hsDescription')) m1.push('HS code description (your own code)');
   if (S.hsUoms?.length && v('uoM') && !S.hsUoms.some(u => u.toLowerCase() === v('uoM').toLowerCase())) m1.push(`UOM allowed by FBR for this HS code (${S.hsUoms.join(' / ')})`);
   const rows = [...document.querySelectorAll('#pfPrices .price-row')].map(r => [r.querySelector('.pr-label').value.trim(), r.querySelector('.pr-price').value]);
   const full = rows.filter(([l, p]) => l && p !== ''), half = rows.filter(([l, p]) => (l || p !== '') && !(l && p !== ''));
@@ -3042,7 +3263,7 @@ function renderTaxPreview() {
   const extras = readTaxes().filter(t => t.name && t.value !== '');
   const num = v => `<td class="px-3 py-2 text-right tabular-nums whitespace-nowrap">${money(v)}</td>`;
   head.innerHTML = `<tr><th class="px-3 py-2">Item</th><th class="px-3 py-2 text-right">Price exclusive of tax</th><th class="px-3 py-2 text-right">Sales tax (${esc(rate || '—')})</th>
-    <th class="px-3 py-2 text-right whitespace-nowrap">Further tax (${ftOn ? ftRate + '%' : 'none'}) <button type="button" class="ft-why text-emerald-700 underline font-normal text-xs" aria-controls="trFtWhy" title="Why further tax?">Why?</button></th>${extras.map(t => `<th class="px-3 py-2 text-right">${esc(t.name)} (${t.kind === 'FIXED' ? 'Rs ' + esc(t.value) : esc(t.value) + '%'})</th>`).join('')}
+    <th class="px-3 py-2 text-right whitespace-nowrap">Further tax (${ftOn ? ftRate + '%' : 'none'})</th>${extras.map(t => `<th class="px-3 py-2 text-right">${esc(t.name)} (${t.kind === 'FIXED' ? 'Rs ' + esc(t.value) : esc(t.value) + '%'})</th>`).join('')}
     <th class="px-3 py-2 text-right">Price after tax</th></tr>`;
   if (!prices.length || !rate) {
     body.innerHTML = `<tr><td colspan="${5 + extras.length}" class="px-3 py-3 text-slate-500">${!prices.length ? 'Add a price in section 2' : 'Enter the sales tax rate'} to see the tax on each price.</td></tr>`;
@@ -3063,31 +3284,9 @@ function renderTaxPreview() {
     'On an invoice it is multiplied by the quantity; a fixed Rs tax is charged once per line.',
   ].filter(Boolean).join(' ');
 }
-// "Why?" next to Further tax: the law behind it and why it is (or is not) charged for this item
-function renderFtWhy() {
-  const f = $('#productForm'), box = $('#trFtWhy'); if (!box) return;
-  const rate = f.rate.value.trim(), sale = f.saleType.value, pct = Number((rate.match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
-  const unreg = $('#trPrevBuyer').value === 'U', ftRate = Number(S.settings?.furtherTaxRate ?? 4);
-  const act = (S.guideLinks || []).find(l => /sales tax act/i.test(l.label));
-  const reason = !unreg ? 'Not charged here: the buyer is registered (and active with FBR).'
-    : !sale || !rate ? 'Choose the sale type and rate to see whether it applies to this item.'
-    : pct === 0 ? `Not charged here: the rate is ${esc(rate)} (no sales tax, so no further tax).`
-    : NO_FT.has(sale) ? `Not charged here: further tax is not charged on "${esc(sale)}".`
-    : `Charged here: a taxable item (${esc(rate)}) sold to an unregistered buyer, so ${ftRate}% of the price before tax is added.`;
-  box.innerHTML = `<p><b>Why further tax?</b> Sales Tax Act 1990, section 3(1A): when a registered business sells taxable goods to a buyer who is <b>not registered</b> (or is registered but <b>not on FBR's Active Taxpayers List</b>), further tax is charged on the value before tax, on top of the sales tax.</p>
-    <p>It is <b>not</b> charged to registered active buyers, to end consumers (a person buying for their own use), at a 0% / exempt rate, or on exempt, zero-rated and 3rd schedule goods. ETAX uses ${ftRate}%, the rate set by your administrator.</p>
-    <p class="font-medium">${reason}</p>
-    ${act ? `<p><a class="underline text-emerald-700" href="${esc(act.url)}" target="_blank" rel="noopener">Read the Sales Tax Act (section 3)</a> · ETAX does not decide the tax for you — check with your tax adviser.</p>` : ''}`;
-}
-document.addEventListener('click', e => {
-  if (!e.target.closest('.ft-why')) return;
-  e.preventDefault();
-  const box = $('#trFtWhy'); renderFtWhy(); box.classList.toggle('hidden');
-});
 function syncSteps() {
   if (!$('#itemsFormView') || $('#itemsFormView').classList.contains('hidden')) return;
   renderTaxPreview();
-  if (!$('#trFtWhy').classList.contains('hidden')) renderFtWhy();
   const st = stepStatus(), all = [st.m1, st.m2, st.m3];
   const ready = all.every(m => !m.length);
   all.concat([ready ? [] : ['finish the sections above']]).forEach((m, i) => {
@@ -3109,7 +3308,7 @@ function syncSteps() {
   const taxes = readTaxes();
   $('#pfReview').innerHTML = [
     box('Item', v('name') ? `<b>${esc(v('name'))}</b>${v('description') ? `<div class="text-slate-500">${esc(v('description'))}</div>` : ''}` : miss('no name yet')),
-    box('HS code · UOM', `${v('hsCode') ? esc(v('hsCode')) : miss('no HS code')} · ${v('uoM') ? esc(v('uoM')) : miss('no UOM')}`),
+    box('HS code · UOM', `${v('hsCode') ? esc(v('hsCode')) : miss('no HS code')} · ${v('uoM') ? esc(v('uoM')) : miss('no UOM')}${v('hsDescription') ? `<div class="text-slate-500 text-xs mt-0.5 line-clamp-2">${esc(v('hsDescription'))}</div>` : ''}`),
     box('Prices', st.prices.length ? st.prices.map(([l, p]) => `${esc(l)} ${money(p)}`).join('<br>') : miss('no price yet')),
     box('Sale type · sales tax', `${v('saleType') ? esc(v('saleType')) : miss('no sale type')} · ${v('rate') ? `<b>${esc(v('rate'))}</b>` : miss('no rate')}`),
     // FBR gets the SRO / Schedule only for exempt / reduced rate / SRO sale types: FBR's list, else the one typed
@@ -3134,6 +3333,7 @@ function clearProductForm() {
   const f = $('#productForm');
   f.reset(); f.id.value = '';
   S.hsUoms = null; $('#pfUomHint').textContent = '';
+  f.hsDescription.readOnly = true; f.hsDescription.classList.add('bg-slate-50'); $('#pfHsDescHint').textContent = "(filled from FBR's HS list when you pick a code)";
   $('#pfPrices').innerHTML = ''; addPriceRow();
   $('#pfSubmit').textContent = 'Save item with tax rule'; $('#pfMode').textContent = '';
   $('#pfBanner').classList.add('hidden');
@@ -3148,6 +3348,7 @@ function editProduct(id) {
   if (!pricesOf(p).length) addPriceRow();
   fillRuleForm(p);
   checkHsUom();
+  syncHsDesc(p.source === 'OFFICIAL' ? (p.hsDescription || undefined) : null).then(() => { if (p.source !== 'OFFICIAL') f.hsDescription.value = p.hsDescription || ''; syncSteps(); });
   $('#pfSubmit').textContent = 'Update item and tax rule'; $('#pfMode').textContent = '';
   $('#pfBanner').innerHTML = `<span>Editing <b>${esc(p.name)}</b>${p.saleType ? '' : ' — set its tax rule in section 3'}</span><button type="button" class="underline" onclick="clearProductForm(); itemsTab('list')">Cancel</button>`;
   $('#pfBanner').classList.remove('hidden');
@@ -3424,6 +3625,24 @@ function editBuyer(id) {
   $('#bfSubmit').textContent = 'Update buyer'; $('#bfMode').textContent = `Editing "${b.businessName}"`;
   f.businessName.focus();
 }
+// HS code description: FBR's own text for an official code (filled, read-only); for a code the client made up, they type it
+async function syncHsDesc(known) {
+  const f = $('#productForm'), box = f.hsDescription, hint = $('#pfHsDescHint'), code = f.hsCode.value.trim();
+  const lock = (text, desc) => { box.readOnly = true; box.classList.add('bg-slate-50'); box.value = desc; hint.textContent = text; };
+  if (!/^\d{4}\.?\d{4}$/.test(code)) { lock("(filled from FBR's HS list when you pick a code)", ''); syncSteps(); return; }
+  let desc = known;
+  if (desc === undefined) {
+    const hits = await api('/api/hs?q=' + encodeURIComponent(code)).catch(() => []);
+    desc = hits.find(h => h.code.replace('.', '') === code.replace('.', ''))?.description || null;
+  }
+  if (desc) lock("(from FBR's HS list)", desc);
+  else {
+    if (box.readOnly) box.value = '';
+    box.readOnly = false; box.classList.remove('bg-slate-50');
+    box.placeholder = 'Your own code — describe what it covers'; hint.textContent = '(not in FBR\'s list — describe this code)';
+  }
+  syncSteps();
+}
 // FBR DI API v1.12 §5.9 / error 0099: the unit must be one FBR allows for the HS code
 async function checkHsUom() {
   const f = $('#productForm'), code = f.hsCode.value.trim(), hint = $('#pfUomHint');
@@ -3449,12 +3668,13 @@ function setupSavedForms() {
       const rows = await api('/api/hs?q=' + encodeURIComponent(q)).catch(() => []);
       suggest(pf.hsCode, rows,
         r => `<span class="font-mono font-semibold">${esc(r.code)}</span> <div class="text-slate-600">${esc(r.description)}</div>`,
-        r => { pf.hsCode.value = r.code; checkHsUom(); if (!pf.name.value.trim()) pf.name.value = shortHsDesc(r.description); if (!pf.description.value.trim()) pf.description.value = r.description.slice(0, 500); });
+        r => { pf.hsCode.value = r.code; checkHsUom(); syncHsDesc(r.description); if (!pf.name.value.trim()) pf.name.value = shortHsDesc(r.description); if (!pf.description.value.trim()) pf.description.value = r.description.slice(0, 500); });
     });
   });
   if (!$('#pfPrices').children.length) addPriceRow();
   pf.hsCode.addEventListener('change', checkHsUom);
-  $('#trPrevBuyer').addEventListener('change', () => { renderTaxPreview(); if (!$('#trFtWhy').classList.contains('hidden')) renderFtWhy(); });
+  pf.hsCode.addEventListener('change', () => syncHsDesc());
+  $('#trPrevBuyer').addEventListener('change', renderTaxPreview);
   pf.addEventListener('submit', async e => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(pf));
@@ -3703,6 +3923,80 @@ function placeGuide() {
 window.addEventListener('scroll', () => { if ($('#guidePanel')?.classList.contains('open')) placeGuide(); }, { passive: true, capture: true });
 window.addEventListener('resize', () => { if ($('#guidePanel')?.classList.contains('open')) placeGuide(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#guidePanel')?.classList.contains('open')) toggleGuide(false); });
+
+/* ---------- Help & feedback (client) / Client queries (admin) ---------- */
+const TK_STATUS = { OPEN: ['Waiting for ETAX', 'bg-amber-100 text-amber-900'], ANSWERED: ['Answered', 'bg-sky-100 text-sky-900'], RESOLVED: ['Resolved', 'bg-emerald-100 text-emerald-800'] };
+const tkWhen = d => new Date(d).toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+// One query with its messages; admin = the admin's view (client name, resolve / reopen)
+function ticketHtml(t, admin) {
+  const [label, cls] = TK_STATUS[t.status] || [t.status, 'bg-slate-100'];
+  const open = S.tkOpen === t.id;
+  return `<div class="border rounded-lg" data-tk="${t.id}">
+    <button type="button" class="tk-head w-full text-left p-3 flex flex-wrap items-center gap-x-3 gap-y-1 hover:bg-slate-50">
+      <span class="px-2 py-0.5 rounded text-xs ${cls}">${admin && t.status === 'OPEN' ? 'Needs reply' : label}</span>
+      <b>${esc(t.subject)}</b><span class="text-xs text-slate-500">${esc(t.category)}${admin ? ` · ${esc(t.company || '')} · ${esc(t.userEmail)}` : ''}</span>
+      <span class="ml-auto text-xs text-slate-500">${tkWhen(t.updatedAt)} · ${t.messages.length} message${t.messages.length === 1 ? '' : 's'}</span></button>
+    <div class="tk-body ${open ? '' : 'hidden'} border-t p-3 space-y-2">
+      ${t.messages.map(m => `<div class="rounded-lg p-3 ${m.fromAdmin ? 'bg-emerald-50 border border-emerald-100 ml-6' : 'bg-slate-50 border mr-6'}">
+        <div class="text-xs text-slate-500 mb-1"><b class="text-slate-700">${m.fromAdmin ? 'ETAX' : esc(m.author)}</b> · ${tkWhen(m.createdAt)}</div>
+        <div class="whitespace-pre-line break-words">${esc(m.body)}</div></div>`).join('')}
+      <textarea class="tk-reply w-full" rows="3" maxlength="5000" placeholder="${admin ? 'Reply to the client…' : t.status === 'RESOLVED' ? 'Not solved? Write here to reopen it…' : 'Add more details…'}"></textarea>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="tk-send bg-emerald-700 text-white rounded px-3 py-1.5">${admin ? 'Send reply' : 'Send'}</button>
+        ${admin ? `<button type="button" class="tk-send-resolve border border-emerald-700 text-emerald-700 rounded px-3 py-1.5">Send &amp; mark resolved</button>
+          ${t.status === 'RESOLVED' ? '<button type="button" class="tk-reopen underline text-slate-600">Reopen</button>' : '<button type="button" class="tk-resolve underline text-slate-600">Mark resolved</button>'}` : ''}
+      </div>
+    </div></div>`;
+}
+async function loadTickets() {
+  try {
+    S.tickets = await api('/api/client/tickets');
+    $('#ticketList').innerHTML = S.tickets.map(t => ticketHtml(t, false)).join('') || '<p class="text-slate-500">No queries yet — send one above.</p>';
+  } catch (err) { toast(err.message); }
+}
+async function loadAdminTickets() {
+  try {
+    const status = S.tkStatus ?? 'OPEN', client = $('#tkClient').value;
+    const d = await api(`/api/admin/tickets?${new URLSearchParams({ ...(status && { status }), ...(client && { tenantId: client }) })}`);
+    S.adminTickets = d.tickets; setNavBadge('a-help', d.open);
+    $('#tkTabs').innerHTML = [['OPEN', `Needs reply${d.open ? ` (${d.open})` : ''}`], ['ANSWERED', 'Answered'], ['RESOLVED', 'Resolved'], ['', 'All']]
+      .map(([k, l]) => `<button type="button" data-tk-tab="${k}" class="px-3 py-1.5 rounded-lg border ${k === status ? 'bg-emerald-700 border-emerald-700 text-white' : 'bg-white hover:border-emerald-600'}">${l}</button>`).join('');
+    const sel = $('#tkClient');
+    if (sel.options.length < 2 && S.clients) sel.insertAdjacentHTML('beforeend', S.clients.map(c => `<option value="${c.id}">${esc(c.companyName)}</option>`).join(''));
+    $('#tkList').innerHTML = d.tickets.map(t => ticketHtml(t, true)).join('') || '<p class="text-slate-500">No queries here.</p>';
+  } catch (err) { toast(err.message); }
+}
+// "Client queries (2)" in the admin menu
+function setNavBadge(id, n) {
+  const a = document.querySelector(`#nav [data-nav="${id}"]`); if (!a) return;
+  a.querySelector('.nav-badge')?.remove();
+  if (n) a.insertAdjacentHTML('beforeend', `<span class="nav-badge ml-auto text-xs rounded-full bg-amber-400 text-slate-900 px-2 font-semibold">${n}</span>`);
+}
+$('#ticketForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    const t = await api('/api/client/tickets', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+    e.target.reset(); S.tkOpen = t.id; toast('Sent — ETAX will reply here', true); loadTickets();
+  } catch (err) { toast(err.message); }
+});
+document.addEventListener('click', async e => {
+  const tab = e.target.closest('[data-tk-tab]');
+  if (tab) { S.tkStatus = tab.dataset.tkTab; return loadAdminTickets(); }
+  const box = e.target.closest('[data-tk]'); if (!box) return;
+  const id = box.dataset.tk, admin = Boolean(box.closest('#tkList'));
+  if (e.target.closest('.tk-head')) { S.tkOpen = S.tkOpen === id ? null : id; box.querySelector('.tk-body').classList.toggle('hidden', S.tkOpen !== id); return; }
+  const msg = box.querySelector('.tk-reply')?.value.trim() || '';
+  const act = e.target.closest('.tk-send') ? 'send' : e.target.closest('.tk-send-resolve') ? 'send-resolve' : e.target.closest('.tk-resolve') ? 'resolve' : e.target.closest('.tk-reopen') ? 'reopen' : null;
+  if (!act) return;
+  if ((act === 'send' || act === 'send-resolve') && !msg) return toast('Write a message first');
+  try {
+    if (admin) await api(`/api/admin/tickets/${id}`, { method: 'POST', body: { message: act.startsWith('send') ? msg : '', ...(act === 'send-resolve' || act === 'resolve' ? { status: 'RESOLVED' } : act === 'reopen' ? { status: 'OPEN' } : {}) } });
+    else await api(`/api/client/tickets/${id}/messages`, { method: 'POST', body: { message: msg } });
+    S.tkOpen = id; toast(act === 'resolve' || act === 'send-resolve' ? 'Marked resolved' : act === 'reopen' ? 'Reopened' : 'Sent', true);
+    admin ? loadAdminTickets() : loadTickets();
+  } catch (err) { toast(err.message); }
+});
+$('#tkClient').addEventListener('change', () => loadAdminTickets());
 
 /* ---------- Change history of a buyer / item ---------- */
 async function showHistory(type, id) {
@@ -4068,7 +4362,72 @@ function quickRange(r) {
   if (r === 'week') { const dow = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7; return [iso(day(-dow)), today]; } // Monday-based
   if (r === 'month') return [`${today.slice(0, 7)}-01`, today];
   if (r === 'lastmonth') { const s = new Date(Date.UTC(y, m - 2, 1, 12)), e = new Date(Date.UTC(y, m - 1, 0, 12)); return [iso(s), iso(e)]; }
+  // the last N complete months before this one (e.g. in October, previous 3 = July to September)
+  const prev = n => [iso(new Date(Date.UTC(y, m - 1 - n, 1, 12))), iso(new Date(Date.UTC(y, m - 1, 0, 12)))];
+  if (r === 'prev2') return prev(2);
+  if (r === 'prev3') return prev(3);
+  if (r === 'prev6') return prev(6);
+  // Pakistan's tax year: 1 July to 30 June
+  const ty = m >= 7 ? y : y - 1;
+  if (r === 'taxyear') return [`${ty}-07-01`, today];
+  if (r === 'lasttaxyear') return [`${ty - 1}-07-01`, `${ty}-06-30`];
   return ['', ''];
+}
+// Annexure-C (Domestic Sales Invoices) for the sales tax return: every issued invoice in the From–To dates, one row per
+// item, laid out like FBR's Annex-C — Excel file written in the browser (ExcelJS)
+async function downloadAnnexC() {
+  const btn = $('#annexBtn'), from = $('#ivFrom').value, to = $('#ivTo').value;
+  btn.disabled = true; const label = btn.textContent; btn.textContent = 'Preparing…';
+  try {
+    const d = await api(`/api/client/annex-c?${new URLSearchParams({ ...(from && { from }), ...(to && { to }), ...($('#ivType').value && { type: $('#ivType').value }) })}`);
+    if (!d.rows.length) { toast('No issued invoices in these dates'); return; }
+    await loadExcelJs();
+    const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Annex-C', { views: [{ state: 'frozen', ySplit: 6 }] });
+    const COLS = [['srNo', 'Sr No.', 6], ['fa', 'Fixed Assets / Capital Goods', 11], ['src', 'Source Authority', 9], ['status', 'Status', 8],
+      ['buyerNtnCnic', 'Registration No.', 16], ['buyerName', 'Name', 26], ['buyerType', 'Type', 13], ['originProvince', 'Sale Origination Province', 13], ['destinationProvince', 'Destination Province', 13],
+      ['documentType', 'Invoice Type', 13], ['localInvoiceNo', 'Invoice No.', 15], ['documentDate', 'Invoice Date', 13], ['hsCode', 'HS Code', 11],
+      ['saleType', 'Sale Type', 24], ['rate', 'Rate', 10], ['uoM', 'UOM', 12], ['quantity', 'Quantity', 12], ['valueExclST', 'Value of Sales Excl. ST', 16], ['fixedNotifiedValue', 'Fixed / notified', 14],
+      ['salesTax', 'Sales Tax/ FED in ST', 14], ['stWithheld', 'ST withheld as WH', 12], ['extraTax', 'Extra Tax', 11], ['furtherTax', 'Further Tax', 11],
+      ['sroScheduleNo', 'SRO No./Schedule', 18], ['sroItemSerialNo', 'Item Sr. No.', 11], ['documentNo', 'FBR Invoice No. (DI)', 32]];
+    const GROUPS = [[5, 7, 'Particulars of Buyer'], [10, 13, 'Particulars of Document'], [14, 23, 'Invoice Details'], [24, 25, 'Exemption, Zero & Reduce Rated Reference']];
+    const NUM = new Set(['quantity', 'valueExclST', 'fixedNotifiedValue', 'salesTax', 'stWithheld', 'extraTax', 'furtherTax']);
+    ws.columns = COLS.map(([key, , width]) => ({ key, width }));
+    const pretty = ymd => ymd ? new Date(ymd + 'T12:00:00Z').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-') : '…';
+    ws.getCell('A1').value = 'Government of Pakistan'; ws.getCell('A2').value = 'Annex-C (Domestic Sales Invoices)';
+    ws.getCell('A3').value = `Registration: ${d.seller.ntn || d.seller.cnic || ''}`; ws.getCell('J3').value = `Name: ${d.seller.name}`;
+    ws.getCell('T3').value = `Tax Period: ${pretty(d.from)} / ${pretty(d.to)}`;
+    if (d.env !== 'PRODUCTION') ws.getCell('T1').value = 'SANDBOX (test invoices — not for the return)';
+    for (const a of ['A1', 'A2', 'A3', 'J3', 'T3', 'T1']) ws.getCell(a).font = { bold: true, size: a === 'A2' ? 12 : 10, color: a === 'T1' ? { argb: 'FFB91C1C' } : undefined };
+    const head = { font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 9 }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4B5B78' } }, alignment: { horizontal: 'center', vertical: 'middle', wrapText: true } };
+    const border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+    // two heading rows: groups on row 5, column names on row 6 (single columns span both)
+    COLS.forEach(([, label], i) => {
+      const c = i + 1, g = GROUPS.find(([a, b]) => c >= a && c <= b);
+      if (!g) { ws.mergeCells(5, c, 6, c); ws.getCell(5, c).value = label; } else ws.getCell(6, c).value = label;
+    });
+    for (const [a, b, label] of GROUPS) { ws.mergeCells(5, a, 5, b); ws.getCell(5, a).value = label; }
+    for (const r of [5, 6]) { ws.getRow(r).height = r === 5 ? 20 : 34; for (let c = 1; c <= COLS.length; c++) Object.assign(ws.getCell(r, c), head, { border }); }
+    d.rows.forEach((r, i) => {
+      const row = ws.getRow(7 + i);
+      row.values = COLS.map(([k]) => k === 'fa' ? 'False' : k === 'src' ? 'FBR' : k === 'status' ? 'Valid' : k === 'srNo' ? i + 1
+        : k === 'buyerType' ? (r.buyerType === 'Registered' ? 'Registered' : 'UnRegistered') : NUM.has(k) ? Number(r[k] || 0) : (r[k] ?? ''));
+      row.eachCell({ includeEmpty: true }, (cell, c) => {
+        cell.border = border; cell.font = { size: 9 }; cell.alignment = { vertical: 'top', wrapText: true };
+        if (NUM.has(COLS[c - 1][0])) cell.numFmt = '#,##0.00';
+      });
+    });
+    // Total Sales under the amount columns
+    const tr = ws.getRow(7 + d.rows.length + 1);
+    tr.getCell(16).value = 'Total Sales';
+    COLS.forEach(([k], i) => { if (NUM.has(k)) { const cell = tr.getCell(i + 1); cell.value = Number(d.totals[k] || 0); cell.numFmt = '#,##0.00'; } });
+    tr.eachCell(cell => { cell.font = { bold: true, size: 9 }; cell.border = border; });
+    const blob = new Blob([await wb.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const slug = (d.seller.name || 'client').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `annexure-c-${slug}-${d.from || 'all'}_to_${d.to || 'all'}.xlsx` });
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast(`Annexure-C downloaded: ${d.invoices} invoice(s), ${d.rows.length} line(s)`, true);
+  } catch (err) { toast(err.message); }
+  finally { btn.disabled = false; btn.textContent = label; }
 }
 function setupInvoiceFilters() {
   if (S.ivReady) return; S.ivReady = true; S.ivPage = 1;
@@ -4125,6 +4484,10 @@ async function loadInvoices() {
   } catch (err) { toast(err.message); }
 }
 async function loadDashboard() {
+  // the owner keeps the business contact mobile (the admin sees it in the clients list)
+  const cf = $('#contactForm'), owner = S.tenantRole === 'OWNER' && !S.settings?.workspace;
+  cf.classList.toggle('hidden', !owner);
+  if (owner) { cf.mobile.value = S.settings?.mobile || ''; $('#contactOut').textContent = S.settings?.mobile ? '' : 'Not added yet'; }
   try {
     const d = await api('/api/client/dashboard');
     const card = (l, v, sub, href, cls = '') => `<a href="${href}" class="bg-white rounded-xl shadow p-4 hover:ring-2 hover:ring-emerald-600"><div class="text-xs text-slate-500">${l}</div><div class="text-2xl font-bold mt-1 ${cls}">${v}</div><div class="text-xs text-slate-500 mt-1">${sub}</div></a>`;
@@ -4207,7 +4570,7 @@ function renderReceipt(inv, seller) {
       <div style="font-size:13px;font-weight:bold">${esc(seller.sellerBusinessName)}</div>
       <div>${esc(seller.sellerAddress)}</div>
       ${seller.sellerStrn ? `<div>STRN: ${esc(seller.sellerStrn)}</div>` : ''}
-      <div>NTN/CNIC: ${esc(seller.sellerNtnCnic)}</div>
+      <div>${esc(sellerIds(seller))}</div>
       <div style="margin-top:2px;font-weight:bold">${esc(inv.invoiceType.toUpperCase())}</div>
     </div>${line}
     ${row('Invoice #', esc(inv.invoiceNo || inv.localNo))}${row('Date', esc(inv.invoiceDate))}
@@ -4286,7 +4649,7 @@ function renderA4(inv, seller) {
       <div>
         <div style="font-size:20px;font-weight:bold">${esc(seller.sellerBusinessName)}</div>
         <div>${esc(seller.sellerAddress)}${seller.sellerProvince ? ', ' + esc(seller.sellerProvince) : ''}</div>
-        <div>${seller.sellerStrn ? `STRN: <b>${esc(seller.sellerStrn)}</b> &nbsp;·&nbsp; ` : ''}NTN/CNIC: <b>${esc(seller.sellerNtnCnic)}</b></div>
+        <div>${seller.sellerStrn ? `STRN: <b>${esc(seller.sellerStrn)}</b> &nbsp;·&nbsp; ` : ''}<b>${esc(sellerIds(seller))}</b></div>
       </div>
       <div style="text-align:right">
         <div style="font-size:18px;font-weight:bold;letter-spacing:.5px">${inv.invoiceType === 'Debit Note' ? 'DEBIT NOTE' : 'SALES TAX INVOICE'}</div>

@@ -36,7 +36,6 @@ async function checklist(prisma, tenant) {
 
     const steps = [
         { key: 'seller', label: 'Seller details: NTN, name, province, address', done: sellerDone },
-        { key: 'authLetter', label: 'Signed authorization letter (Form STR-13) on file', done: Boolean(tenant.authLetterAt) },
         { key: 'profile', label: 'Business nature & sector, same as chosen in IRIS', done: tenant.businessActivities.length > 0 && Boolean(tenant.sector) },
         { key: 'token', label: 'PRAL sandbox token saved', done: Boolean(tenant.fbrTokenEnc) },
         { key: 'scenarios', label: `Sandbox scenarios passed: ${passed} of ${assigned.length}${iris ? ' (as IRIS shows)' : ''}`, done: assigned.length > 0 && passed === assigned.length },

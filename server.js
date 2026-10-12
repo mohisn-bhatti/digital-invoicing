@@ -8,6 +8,7 @@ const { createAuth, requireRole, requireTenant, requireTenantRole, signToken, si
 const { encrypt, decrypt, mask } = require('./src/crypto');
 const itemImport = require('./src/itemImport');
 const importMerge = require('./src/importMerge');
+const { mobileProblem } = require('./src/phone');
 const squashName = v => String(v ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 const { calcInvoice, cleanExtraTaxes, WHOLE_NUMBER_UOMS, SRO_REQUIRED_SALE_TYPES } = require('./src/tax');
 const taxRules = require('./src/hsTaxRules');
@@ -72,6 +73,15 @@ function todayPKT() {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
 }
 
+// Contact mobile: a leading + and digits only; 10 to 15 digits
+function cleanMobile(v) {
+    const m = String(v ?? '').trim().replace(/(?!^\+)[^\d]/g, '');
+    const n = m.replace(/\D/g, '').length;
+    if (m && (n < 10 || n > 15)) throw new HttpError(400, 'Mobile number must be 10 to 15 digits (e.g. 03001234567).');
+    const problem = mobileProblem(m); // per country: length and how mobile numbers start
+    if (problem) throw new HttpError(400, problem);
+    return m;
+}
 // PRAL's security token is a UUID; text copied from IRIS ("Token: 3c43…-…") is reduced to the token itself
 function cleanToken(v) {
     const t = String(v || '').trim();
@@ -89,7 +99,8 @@ const industryOf = t => [t.businessActivities.join(', '), t.sector].filter(Boole
 function clientTenant(t) {
     return {
         companyName: t.companyName,
-        sellerNtnCnic: t.sellerNtnCnic,
+        mobile: t.mobile,
+        sellerNtnCnic: t.sellerNtnCnic, sellerNtn: t.sellerNtn, sellerCnic: t.sellerCnic,
         sellerBusinessName: t.sellerBusinessName,
         sellerProvince: t.sellerProvince,
         sellerAddress: t.sellerAddress,
@@ -109,7 +120,8 @@ function publicTenant(t) {
     return {
         id: t.id,
         companyName: t.companyName,
-        sellerNtnCnic: t.sellerNtnCnic,
+        mobile: t.mobile, active: t.active,
+        sellerNtnCnic: t.sellerNtnCnic, sellerNtn: t.sellerNtn, sellerCnic: t.sellerCnic,
         sellerBusinessName: t.sellerBusinessName,
         sellerProvince: t.sellerProvince,
         sellerAddress: t.sellerAddress,
@@ -233,6 +245,7 @@ app.post('/api/auth/login', async (req, res) => {
         throw new HttpError(400, 'Invalid email or password.');
     }
     if (!user.active) throw new HttpError(403, 'This account has been disabled. Contact your account owner or administrator.');
+    if (user.tenant && user.tenant.active === false) throw new HttpError(403, 'This business account is inactive. Contact ETAX to reactivate it.');
     const fresh = await prisma.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() }, include: { tenant: true } });
     await audit({ ip: req.ip, user }, { action: 'auth.login', summary: 'Logged in' });
     res.json(loginPayload(fresh));
@@ -313,6 +326,84 @@ app.get('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), asy
         };
     }));
     res.json(out);
+});
+
+// The client's owner keeps the business contact mobile up to date (the admin can change it too)
+app.put('/api/client/contact', authenticateToken, requireTenant, async (req, res) => {
+    if (req.user.tenantRole !== 'OWNER') throw new HttpError(403, 'Only the account owner can change the business contact.');
+    const before = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId } });
+    const mobile = cleanMobile(req.body?.mobile);
+    const t = await prisma.tenant.update({ where: { id: before.id }, data: { mobile } });
+    if (before.mobile !== mobile) await audit(req, { action: 'settings.update', entityType: 'Tenant', entityId: t.id,
+        summary: `Settings changed: Mobile number (by the client)`, details: { 'Mobile number': [before.mobile, mobile] } });
+    res.json({ mobile: t.mobile });
+});
+// ---------- Help & feedback: a client sends a query; the admin answers and resolves it ----------
+const TICKET_CATEGORIES = ['Question', 'Problem', 'Suggestion', 'FBR / invoice', 'Other'];
+const ticketText = (v, max, what) => {
+    const t = String(v ?? '').trim();
+    if (!t) throw new HttpError(400, `${what} is required.`);
+    if (t.length > max) throw new HttpError(400, `${what} can be at most ${max} characters.`);
+    return t;
+};
+const ticketView = t => ({ id: t.id, category: t.category, subject: t.subject, status: t.status, userEmail: t.userEmail, createdAt: t.createdAt, updatedAt: t.updatedAt,
+    company: t.tenant?.companyName, tenantId: t.tenantId,
+    messages: (t.messages || []).map(m => ({ id: m.id, fromAdmin: m.fromAdmin, author: m.author, body: m.body, createdAt: m.createdAt })) });
+const withMessages = { messages: { orderBy: { createdAt: 'asc' } } };
+app.get('/api/client/tickets', authenticateToken, requireTenant, async (req, res) => {
+    const rows = await prisma.supportTicket.findMany({ where: { tenantId: req.user.tenantId }, orderBy: { updatedAt: 'desc' }, include: withMessages, take: 200 });
+    res.json(rows.map(ticketView));
+});
+app.post('/api/client/tickets', authenticateToken, requireTenant, async (req, res) => {
+    const b = req.body || {};
+    const category = TICKET_CATEGORIES.includes(b.category) ? b.category : 'Other';
+    const subject = ticketText(b.subject, 150, 'Subject'), body = ticketText(b.message, 5000, 'Message');
+    const t = await prisma.supportTicket.create({ data: { tenantId: req.user.tenantId, userEmail: req.user.email, category, subject,
+        messages: { create: { fromAdmin: false, author: req.user.email, body } } }, include: withMessages });
+    await audit(req, { action: 'support.ticket', entityType: 'SupportTicket', entityId: t.id, summary: `Query sent: [${category}] ${subject}` });
+    res.json(ticketView(t));
+});
+// The client replies (also reopens a resolved query)
+app.post('/api/client/tickets/:id/messages', authenticateToken, requireTenant, async (req, res) => {
+    const t = await prisma.supportTicket.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
+    if (!t) throw new HttpError(404, 'Query not found.');
+    const body = ticketText(req.body?.message, 5000, 'Message');
+    await prisma.supportMessage.create({ data: { ticketId: t.id, fromAdmin: false, author: req.user.email, body } });
+    const u = await prisma.supportTicket.update({ where: { id: t.id }, data: { status: 'OPEN' }, include: withMessages });
+    await audit(req, { action: 'support.reply', entityType: 'SupportTicket', entityId: t.id, summary: `Client replied on "${t.subject}"` });
+    res.json(ticketView(u));
+});
+app.get('/api/admin/tickets', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const status = ['OPEN', 'ANSWERED', 'RESOLVED'].includes(req.query.status) ? req.query.status : undefined;
+    const rows = await prisma.supportTicket.findMany({ where: { ...(status && { status }), ...(req.query.tenantId && { tenantId: String(req.query.tenantId) }) },
+        orderBy: { updatedAt: 'desc' }, include: { ...withMessages, tenant: { select: { companyName: true } } }, take: 500 });
+    const open = await prisma.supportTicket.count({ where: { status: 'OPEN' } });
+    res.json({ open, tickets: rows.map(ticketView) });
+});
+// The admin replies (the query then waits for the client) and/or marks it resolved; or reopens it
+app.post('/api/admin/tickets/:id', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const t = await prisma.supportTicket.findUnique({ where: { id: req.params.id } });
+    if (!t) throw new HttpError(404, 'Query not found.');
+    const b = req.body || {};
+    const msg = String(b.message ?? '').trim();
+    if (msg.length > 5000) throw new HttpError(400, 'Reply can be at most 5000 characters.');
+    if (msg) await prisma.supportMessage.create({ data: { ticketId: t.id, fromAdmin: true, author: req.user.email || 'ETAX', body: msg } });
+    const status = b.status === 'RESOLVED' ? 'RESOLVED' : b.status === 'OPEN' ? 'OPEN' : msg ? 'ANSWERED' : t.status;
+    const u = await prisma.supportTicket.update({ where: { id: t.id }, data: { status }, include: { ...withMessages, tenant: { select: { companyName: true } } } });
+    await audit(req, { tenantId: t.tenantId, action: 'support.answer', entityType: 'SupportTicket', entityId: t.id,
+        summary: `Query "${t.subject}": ${[msg && 'replied', status !== t.status && `now ${status.toLowerCase()}`].filter(Boolean).join(', ') || 'no change'}` });
+    res.json(ticketView(u));
+});
+
+// History of one client's record: who changed what, when (from the activity log)
+app.get('/api/admin/clients/:id/history', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const rows = await prisma.auditLog.findMany({ where: { entityType: 'Tenant', entityId: req.params.id }, orderBy: { createdAt: 'desc' }, take: 300 });
+    res.json(rows.map(x => {
+        const d = x.details && typeof x.details === 'object' && !Array.isArray(x.details) ? x.details : {};
+        // settings changes are kept as { label: [before, after] }
+        const changes = Object.entries(d).filter(([, v]) => Array.isArray(v) && v.length === 2).map(([label, [from, to]]) => ({ label, from: String(from ?? ''), to: String(to ?? '') }));
+        return { at: x.createdAt, by: x.userEmail, action: x.action, summary: x.summary, changes, created: x.action === 'admin.client_create', file: '' };
+    }));
 });
 
 app.get('/api/admin/clients/:id/onboarding', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
@@ -448,6 +539,7 @@ app.get('/api/admin/clients/:id/annex-c', authenticateToken, requireRole('SUPER_
 
 app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
     const { companyName, clientEmail, clientPassword } = req.body || {};
+    const mobile = cleanMobile(req.body?.mobile);
     if (!companyName || !clientEmail || !clientPassword) throw new HttpError(400, 'Company name, email and password are required.');
     const email = String(clientEmail).toLowerCase().trim();
     checkNewPassword(clientPassword, email);
@@ -456,10 +548,11 @@ app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), as
     const tenant = await prisma.tenant.create({
         data: {
             companyName: String(companyName).trim(),
+            mobile,
             users: { create: { email, password: await bcrypt.hash(String(clientPassword), 10), role: 'CLIENT_USER', tenantRole: 'OWNER', mustChangePassword: true } },
         },
     });
-    await audit(req, { tenantId: tenant.id, action: 'admin.client_create', entityType: 'Tenant', entityId: tenant.id, summary: `Client "${tenant.companyName}" created with login ${email}` });
+    await audit(req, { tenantId: tenant.id, action: 'admin.client_create', entityType: 'Tenant', entityId: tenant.id, summary: `Client "${tenant.companyName}" created with login ${email}${mobile ? `, mobile ${mobile}` : ''}` });
     res.json({ success: true, tenantId: tenant.id });
 });
 
@@ -590,7 +683,7 @@ app.get('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
 });
 
 const SETTING_LABELS = {
-    sellerNtnCnic: 'Seller NTN', sellerStrn: 'STRN', sellerBusinessName: 'Business name', sellerProvince: 'Province',
+    mobile: 'Mobile number', active: 'Status', sellerNtn: 'Seller NTN', sellerCnic: 'Seller CNIC', sellerNtnCnic: 'Seller number sent to FBR', sellerStrn: 'STRN', sellerBusinessName: 'Business name', sellerProvince: 'Province',
     sellerAddress: 'Address', fbrEnv: 'Environment', furtherTaxRate: 'Further tax %', businessActivities: 'Business nature', sector: 'Sector',
     invoiceNumberFormat: 'Invoice number format', softwareRegNo: 'Software reg. no.', authLetterRef: 'Authorization letter ref', authLetterAt: 'Authorization letter date',
 };
@@ -602,10 +695,20 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
     for (const f of ['sellerBusinessName', 'sellerProvince', 'sellerAddress']) {
         if (b[f] !== undefined) data[f] = String(b[f]).trim();
     }
-    if (b.sellerNtnCnic !== undefined) {
+    // Seller NTN and CNIC in separate boxes (older screens / API: one "sellerNtnCnic" box, split by length)
+    if (b.sellerNtn === undefined && b.sellerCnic === undefined && b.sellerNtnCnic !== undefined) {
         const v = String(b.sellerNtnCnic).replace(/\D/g, '');
-        if (v && ![7, 9, 13].includes(v.length)) throw new HttpError(400, 'Seller NTN must be 7 or 9 digits, or CNIC 13 digits.');
-        data.sellerNtnCnic = v;
+        b.sellerNtn = v.length === 13 ? '' : v; b.sellerCnic = v.length === 13 ? v : '';
+    }
+    if (b.sellerNtn !== undefined) {
+        const v = String(b.sellerNtn).replace(/\D/g, '');
+        if (v && ![7, 9].includes(v.length)) throw new HttpError(400, 'Seller NTN must be 7 digits.');
+        data.sellerNtn = v;
+    }
+    if (b.sellerCnic !== undefined) {
+        const v = String(b.sellerCnic).replace(/\D/g, '');
+        if (v && v.length !== 13) throw new HttpError(400, 'Seller CNIC must be 13 digits.');
+        data.sellerCnic = v;
     }
     if (b.sellerStrn !== undefined) {
         const v = String(b.sellerStrn).replace(/\D/g, '');
@@ -642,6 +745,8 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
         data.sector = String(b.sector);
     }
     // Empty token field = keep existing token
+    if (b.mobile !== undefined) data.mobile = cleanMobile(b.mobile);
+    if (b.active !== undefined) data.active = b.active === true || b.active === 'true';
     // Remove this client's saved token (e.g. a wrong one) — only this client's record changes
     if (b.removeToken === true) { data.fbrTokenEnc = null; data.tokenIssuedAt = null; }
     else if (b.fbrToken) {
@@ -662,8 +767,10 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
     // a new token starts a new 5-year period, unless the admin typed a different issue date
     const sameDay = (a, c) => a && c && new Date(a).toISOString().slice(0, 10) === new Date(c).toISOString().slice(0, 10);
     if (b.fbrToken && (!data.tokenIssuedAt || sameDay(data.tokenIssuedAt, before.tokenIssuedAt))) data.tokenIssuedAt = new Date();
+    // FBR's invoice has one seller number (sellerNTNCNIC): the NTN if there is one, else the CNIC
+    if ('sellerNtn' in data || 'sellerCnic' in data) data.sellerNtnCnic = (data.sellerNtn ?? before.sellerNtn) || (data.sellerCnic ?? before.sellerCnic);
     const t = await prisma.tenant.update({ where: { id: tenantId }, data });
-    const show = v => Array.isArray(v) ? v.join(', ') : v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '');
+    const show = v => Array.isArray(v) ? v.join(', ') : v instanceof Date ? v.toISOString().slice(0, 10) : v === true ? 'Active' : v === false ? 'Inactive' : String(v ?? '');
     const changed = {};
     for (const [k, label] of Object.entries(SETTING_LABELS)) {
         if (k in data && show(before[k]) !== show(t[k])) changed[label] = [show(before[k]), show(t[k])];
@@ -812,14 +919,13 @@ app.post('/api/admin/tax-rules', authenticateToken, ADMIN, async (req, res) => {
 app.get('/api/admin/item-tax-rules', authenticateToken, ADMIN, async (req, res) => {
     const items = await prisma.product.findMany({
         where: { saleType: { not: '' } },
-        include: { tenant: { select: { id: true, companyName: true, sellerBusinessName: true, businessActivities: true, sector: true, sellerNtnCnic: true, sellerStrn: true } } },
+        include: { tenant: { select: { id: true, companyName: true, sellerBusinessName: true, businessActivities: true, sector: true, sellerNtnCnic: true, sellerNtn: true, sellerCnic: true, sellerStrn: true } } },
         orderBy: [{ tenantId: 'asc' }, { name: 'asc' }],
         take: 10000,
     });
     res.json(items.map(({ tenant: t, ...p }) => ({
         id: p.id, tenantId: t.id, userName: t.sellerBusinessName || t.companyName, industry: industryOf(t),
-        // DI settings have one NTN / CNIC box: 13 digits is a CNIC, 7 or 9 an NTN
-        userNtn: t.sellerNtnCnic.length === 13 ? '' : t.sellerNtnCnic, userCnic: t.sellerNtnCnic.length === 13 ? t.sellerNtnCnic : '', userStrn: t.sellerStrn,
+        userNtn: t.sellerNtn, userCnic: t.sellerCnic, userStrn: t.sellerStrn,
         // the same item details the client sees on Items with Tax Rules
         name: p.name, description: p.description, notes: p.notes, hsCode: p.hsCode, source: p.source, uoM: p.uoM, prices: p.prices, unitPrice: p.unitPrice,
         saleType: p.saleType, rate: p.rate, lawRefs: p.lawRefs, sroScheduleNo: p.sroScheduleNo, taxComment: p.taxComment, extraTaxes: p.extraTaxes, taxRuleAt: p.taxRuleAt,
@@ -1630,6 +1736,23 @@ async function sendAnnexC(tenantId, query, res, req) {
     res.json({ month: query.month, fbrEnv, invoices: invoices.length, lines: list.length, totals: sum, rows: list.slice(0, 50) });
 }
 
+// Annexure-C for the client's sales tax return: every invoice filed with FBR (issued) in a date range — one row per
+// item, as IRIS lays out Annex-C (Domestic Sales Invoices). The browser writes the Excel file.
+app.get('/api/client/annex-c', authenticateToken, requireTenant, async (req, res) => {
+    const q = req.query, isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId } });
+    const where = { tenantId: tenant.id, status: 'SUBMITTED', fbrEnv: tenant.fbrEnv };
+    if (isDate(q.from) || isDate(q.to)) where.invoiceDate = { ...(isDate(q.from) && { gte: q.from }), ...(isDate(q.to) && { lte: q.to }) };
+    if (q.type) where.invoiceType = String(q.type);
+    const invoices = await prisma.invoice.findMany({ where, orderBy: [{ invoiceDate: 'asc' }, { localNo: 'asc' }], include: ITEMS, take: 20000 });
+    const rows = annexC.rows(invoices, tenant.sellerProvince);
+    const dates = invoices.map(i => i.invoiceDate);
+    await audit(req, { action: 'report.annex_c', summary: `Annexure-C downloaded: ${q.from || dates[0] || '…'} to ${q.to || dates[dates.length - 1] || '…'}, ${invoices.length} invoices, ${rows.length} lines` });
+    res.json({ seller: { ntn: tenant.sellerNtn || tenant.sellerNtnCnic, cnic: tenant.sellerCnic, name: tenant.sellerBusinessName || tenant.companyName },
+        env: tenant.fbrEnv, from: isDate(q.from) ? q.from : dates[0] || '', to: isDate(q.to) ? q.to : dates[dates.length - 1] || '',
+        invoices: invoices.length, rows, totals: annexC.totals(rows) });
+});
+
 // ---------- Buyer check with FBR (STATL + Get_Reg_Type) ----------
 // DI Rules #26: decide Registered/Unregistered and active (ATL) status from FBR, which drives further tax
 app.get('/api/buyers/check', authenticateToken, requireTenant, async (req, res) => {
@@ -1733,6 +1856,7 @@ function itemData(b) {
         description: String(b.description ?? '').trim(),
         notes: String(b.notes ?? '').trim(),
         hsCode: hs.normalizeCode(b.hsCode || ''),
+        hsDescription: String(b.hsDescription ?? '').trim().slice(0, 500),
         uoM: String(b.uoM || '').trim(),
         prices, unitPrice: prices.length ? prices[0].price : null,
     };
@@ -1886,6 +2010,8 @@ app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT,
         if (dup) throw new HttpError(409, `HS code ${d.hsCode} with sale type "${rule.saleType}" is already used by "${dup.name}".`);
     }
     d.source = await hsSource(d.hsCode);
+    // an official code always carries FBR's own description; a code the client created keeps theirs
+    if (d.source === 'OFFICIAL') d.hsDescription = (await prisma.hsCode.findUnique({ where: { code: d.hsCode }, select: { description: true } }))?.description || d.hsDescription;
     try {
         let p;
         const before = await prisma.product.findFirst({ where: b.id ? { id: String(b.id), tenantId } : { tenantId, name: d.name } });
@@ -1942,15 +2068,17 @@ app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_
     const [t, { list: saleTypes }, codes] = await Promise.all([
         prisma.tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { businessActivities: true, sector: true } }),
         saleTypeList(tenantId),
-        prisma.hsCode.findMany({ select: { code: true } }),
+        prisma.hsCode.findMany({ select: { code: true, description: true } }),
     ]);
     const official = new Set(codes.map(c => c.code)), now = new Date(), industry = industryOf(t);
+    const hsText = new Map(codes.map(c => [c.code, c.description]));
     const products = [], rules = [], updates = [], details = [], problems = [];
     const choices = req.body?.choices || {}; // { [row]: { [field]: 'file' | 'saved' } } from the uploader's pop-up
     const saved = new Map((await prisma.product.findMany({ where: { tenantId } })).map(p => [p.id, p]));
     for (const { row, item, rule, existing } of r.ready) {
         if (!existing) {
             const d = itemData(item), tr = taxRuleData(rule, saleTypes), id = crypto.randomUUID();
+            if (hsText.has(d.hsCode)) d.hsDescription = hsText.get(d.hsCode);
             products.push({ id, tenantId, ...d, source: official.has(d.hsCode) ? 'OFFICIAL' : 'CUSTOMER', ...tr, taxRuleAt: now });
             rules.push({ ...tr, tenantId, productId: id, industry, createdBy: req.user.email, createdAt: now });
             continue;
@@ -1962,6 +2090,7 @@ app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_
         const m = importMerge.mergeRecord(base, incoming, importMerge.ITEM_FIELDS, choices[row]);
         try {
             const d = itemData({ ...base, ...m.patch });
+            if (hsText.has(d.hsCode)) d.hsDescription = hsText.get(d.hsCode);
             const ruleChanged = Object.keys(m.patch).some(k => importMerge.RULE_KEYS.has(k));
             let tr = null;
             if (ruleChanged) {
@@ -2044,8 +2173,10 @@ function buyerData(b) {
     if (d.cnic && d.cnic.length !== 13) throw new HttpError(400, 'CNIC must be 13 digits.');
     if (d.strn && ![7, 9, 13].includes(d.strn.length)) throw new HttpError(400, 'STRN must be 13 digits.');
     if (d.registrationType === 'Registered' && !d.ntnCnic) throw new HttpError(400, 'Registered buyer needs an NTN or CNIC.');
-    const mobileDigits = d.mobile.replace(/\D/g, '').length;
-    if (d.mobile && (mobileDigits < 10 || mobileDigits > 15)) throw new HttpError(400, 'Mobile number must be 10 to 15 digits (e.g. 03001234567).');
+    // per country (length, how mobile numbers start); Excel may have dropped the 0 of 03001234567
+    if (/^3\d{9}$/.test(d.mobile)) d.mobile = '0' + d.mobile;
+    const mobileIssue = mobileProblem(d.mobile);
+    if (mobileIssue) throw new HttpError(400, mobileIssue);
     if (d.email && (d.email.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email))) throw new HttpError(400, 'Email address looks wrong.');
     if (d.note.length > 500) throw new HttpError(400, 'Note can be at most 500 characters.');
     return d;
