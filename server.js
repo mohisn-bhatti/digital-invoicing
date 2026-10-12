@@ -642,7 +642,9 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
         data.sector = String(b.sector);
     }
     // Empty token field = keep existing token
-    if (b.fbrToken) {
+    // Remove this client's saved token (e.g. a wrong one) — only this client's record changes
+    if (b.removeToken === true) { data.fbrTokenEnc = null; data.tokenIssuedAt = null; }
+    else if (b.fbrToken) {
         // PRAL's security token is a long code from IRIS (Digital Invoicing → API Integration); a short value is a
         // placeholder or something else (e.g. the DI-CRM password) and FBR answers "Invalid Credentials"
         const tok = cleanToken(b.fbrToken);
@@ -667,6 +669,7 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
         if (k in data && show(before[k]) !== show(t[k])) changed[label] = [show(before[k]), show(t[k])];
     }
     if (data.fbrTokenEnc) changed['PRAL token'] = ['(hidden)', '(replaced)']; // never log the token itself
+    if (b.removeToken === true) changed['PRAL token'] = ['(hidden)', '(removed)'];
     if (Object.keys(changed).length) {
         await audit(req, {
             tenantId, action: 'settings.update', entityType: 'Tenant', entityId: t.id,

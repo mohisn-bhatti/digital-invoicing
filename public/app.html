@@ -265,14 +265,14 @@
           <label><span>Environment</span>
             <select name="fbrEnv"><option value="SANDBOX">Sandbox (testing)</option><option value="PRODUCTION">Production (live)</option></select>
           </label>
-          <label class="sm:col-span-2"><span>PRAL security token <span id="tokenMasked" class="text-slate-400"></span></span>
+          <label class="sm:col-span-2"><span>PRAL security token <span id="tokenMasked" class="text-slate-400"></span> <button type="button" id="tokenRemove" onclick="removeToken()" class="hidden text-red-600 underline text-xs">Remove saved token</button></span>
             <input name="fbrToken" type="text" class="token-mask pr-10" spellcheck="false" placeholder="Leave empty to keep current token" autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other"></label>
           <div class="sm:col-span-3 flex flex-wrap items-start gap-3 text-xs -mt-1">
             <button type="button" id="fbrTestBtn" onclick="testFbr()" class="border border-emerald-600 text-emerald-700 rounded px-3 py-1.5 font-medium hover:bg-emerald-50">Test FBR connection</button>
             <span id="fbrTestOut" class="text-slate-500 pt-1.5">Asks FBR for its province list with the token (records nothing at FBR) — the one typed above, else the saved one.</span>
           </div>
           <label><span>Software registration no. <span class="text-slate-400">(from PRAL, printed)</span></span><input name="softwareRegNo" maxlength="60" autocomplete="off"></label>
-          <label><span>Token issued on <span class="text-slate-400">(valid 5 years — set automatically when a new token is saved)</span></span><input name="tokenIssuedAt" type="date"><span id="tokenExpiry" class="block text-xs mt-1"></span></label>
+          <label><span>Token issued on <span class="text-slate-400">(valid 5 years — set automatically when a new token is saved)</span></span><input name="tokenIssuedAt" type="date" autocomplete="off"><span id="tokenExpiry" class="block text-xs mt-1"></span></label>
           <div class="sm:col-span-2 text-xs text-slate-600 self-end pb-2">Auto from FBR — HS codes: <span id="hsStats">…</span>
             <button type="button" id="hsSyncBtn" onclick="syncHs()" class="ml-2 text-emerald-700 underline">Sync HS codes from FBR</button></div>
         </div>
@@ -1496,6 +1496,11 @@ async function manageClient(id) {
   try {
     const [t, ob] = await Promise.all([api(`/api/admin/clients/${id}/settings`), api(`/api/admin/clients/${id}/onboarding`)]);
     S.manageId = id; S.managed = t;
+    // nothing from the previously opened client stays on screen
+    $('#settingsForm').fbrToken.value = '';
+    $('#fbrTestOut').className = 'text-slate-500 pt-1.5'; $('#fbrTestOut').textContent = 'Asks FBR for its province list with the token (records nothing at FBR) — the one typed above, else the saved one.';
+    for (const p of ['#irisPanel', '#sbxPanel']) { $(p).classList.add('hidden'); $(p).innerHTML = ''; }
+    S.sbxPlan = null; S.manageOb = null;
     $('#mpName').textContent = t.companyName;
     fillSettings(t);
     renderChecklist(ob);
@@ -1614,6 +1619,14 @@ async function saveIrisScenarios() {
   try {
     const ob = await api(`/api/admin/clients/${S.manageId}/iris-scenarios`, { method: 'PUT', body: { assigned: pick('.iris-a'), passed: pick('.iris-p') } });
     $('#irisPanel').classList.add('hidden'); renderChecklist(ob); loadClients(); toast('IRIS result saved', true);
+  } catch (err) { toast(err.message); }
+}
+async function removeToken() {
+  if (!confirm(`Remove the saved FBR token of ${S.managed.companyName}? Only this client changes; their invoices can't reach FBR until a new token is saved.`)) return;
+  try {
+    S.managed = await api(`/api/admin/clients/${S.manageId}/settings`, { method: 'PUT', body: { removeToken: true } });
+    fillSettings(S.managed); renderChecklist(await api(`/api/admin/clients/${S.manageId}/onboarding`)); loadClients();
+    toast('Token removed for this client', true);
   } catch (err) { toast(err.message); }
 }
 function closeManage() { S.manageId = null; go('a-clients'); }
@@ -1769,7 +1782,8 @@ function fillSettings(s) {
   }
   for (const cb of f.querySelectorAll('[name=businessActivities]')) cb.checked = (s.businessActivities || []).includes(cb.value);
   f.sector.value = s.sector || '';
-  $('#tokenMasked').textContent = s.fbrTokenMasked ? `(saved: ${s.fbrTokenMasked})` : '(not set)';
+  $('#tokenMasked').textContent = s.fbrTokenMasked ? `(saved for this client: ${s.fbrTokenMasked})` : '(not set for this client)';
+  $('#tokenRemove').classList.toggle('hidden', !s.fbrTokenMasked);
   $('#sellerCheck').textContent = '';
   showFmtExample();
   const sellerMissing = !s.sellerNtnCnic || !s.sellerBusinessName || !s.sellerProvince || !s.sellerAddress;
