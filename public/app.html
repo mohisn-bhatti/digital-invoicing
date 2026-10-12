@@ -310,9 +310,11 @@
       <h3 class="font-semibold mb-2">Go-live checklist <span id="mpObSummary" class="ml-2 text-xs font-normal"></span></h3>
       <div id="mpChecklist" class="text-sm"></div>
       <!-- IRIS → Digital Invoicing → Scenario Details is the official record: the admin ticks what it shows -->
-      <div class="mt-3"><button type="button" onclick="openIrisScenarios()" class="text-sm text-emerald-700 underline">Record IRIS result</button>
+      <div class="mt-3 flex flex-wrap items-center gap-3"><button type="button" id="sbxBtn" onclick="openSandboxRun()" class="bg-emerald-700 text-white rounded px-3 py-1.5 text-sm font-medium">Run sandbox scenarios</button>
+        <button type="button" onclick="openIrisScenarios()" class="text-sm text-emerald-700 underline">Record IRIS result</button>
         <span id="irisNote" class="text-xs text-slate-500 ml-2"></span></div>
       <div id="irisPanel" class="hidden mt-3 border rounded-lg p-3 bg-slate-50"></div>
+      <div id="sbxPanel" class="hidden mt-3 border rounded-lg p-3 bg-slate-50 text-sm"></div>
     </section>
   </div>
   </div>
@@ -1517,6 +1519,79 @@ async function testFbr() {
   } catch (err) { out.className = 'text-red-700 pt-1.5'; out.textContent = err.message; }
   btn.disabled = false;
 }
+// Run sandbox scenarios: one test invoice per scenario to FBR's sandbox (validated first, posted only when Valid)
+async function openSandboxRun() {
+  const panel = $('#sbxPanel');
+  if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden'); panel.innerHTML = '<p class="text-slate-500">Loading…</p>';
+  try {
+    const plan = S.sbxPlan = await api(`/api/admin/clients/${S.manageId}/sandbox-plan`);
+    const block = plan.env !== 'SANDBOX' ? 'The client is on <b>Production</b>. Sandbox scenarios need Environment = Sandbox with the sandbox token.'
+      : !plan.hasToken ? 'Save the client\'s <b>sandbox token</b> first (section 2 above).'
+      : plan.mock ? 'Mock mode is on (FBR_MOCK=true) — the test invoices would not reach FBR. Turn it off first.' : '';
+    if (block) { panel.innerHTML = `<p class="text-amber-800">${block}</p>`; return; }
+    if (!plan.scenarios.length) { panel.innerHTML = '<p class="text-amber-800">Set the business nature and sector (as in IRIS), or record the IRIS list, to know which scenarios to run.</p>'; return; }
+    const needBuyer = plan.scenarios.some(x => x.registeredBuyer && !x.passed);
+    const provinces = sortProvinces(S.lists?.provinces || S.meta.provinces).map(p => `<option value="${esc(p)}">${esc(provinceLabel(p))}</option>`).join('');
+    panel.innerHTML = `<p class="text-slate-600 mb-2">ETAX sends one test invoice per scenario to FBR's <b>sandbox</b> with the client's sandbox token: checked first, sent only when FBR says Valid. Nothing real is filed. Then check IRIS → Scenario Details.</p>
+      ${needBuyer ? `<div class="border rounded p-2 mb-3 bg-white"><div class="font-medium mb-1">Registered buyer for SN001 <span class="font-normal text-slate-500">— a real buyer that is active on FBR's list</span></div>
+        <div class="grid sm:grid-cols-4 gap-2 items-end">
+          <label class="sm:col-span-4"><span>Saved registered buyer</span><select id="sbxBuyerSel"><option value="">— type one below —</option>${plan.buyers.map(b => `<option value="${b.id}">${esc(b.businessName)} · ${esc(b.ntn || b.cnic)}</option>`).join('')}</select></label>
+          <label><span>NTN / CNIC</span><input id="sbxNtn" inputmode="numeric" autocomplete="off"></label>
+          <label><span>Business name</span><input id="sbxName" autocomplete="off"></label>
+          <label><span>Province</span><select id="sbxProv">${provinces}</select></label>
+          <label><span>Address</span><input id="sbxAddr" autocomplete="off"></label>
+        </div><div class="mt-1 text-xs"><button type="button" onclick="checkSandboxBuyer()" class="text-emerald-700 underline">Check with FBR</button> <span id="sbxBuyerOut" class="text-slate-500"></span></div></div>` : ''}
+      <table class="w-full text-sm bg-white border rounded"><thead class="text-left text-xs text-slate-500"><tr><th class="p-2">Scenario</th><th class="p-2">Result</th></tr></thead><tbody>
+      ${plan.scenarios.map(x => `<tr class="border-t align-top" data-sid="${x.id}"><td class="p-2 w-1/2"><b>${x.id}</b> ${esc(x.desc)}${!x.known ? ' <span class="text-red-700">(no test data)</span>' : !x.confirmed ? ` <span class="text-amber-700" title="${esc(x.note)}">(not confirmed for every business type)</span>` : ''}</td>
+        <td class="p-2 sbx-res">${x.passed ? '<span class="text-emerald-700">✔ already passed</span>' : '<span class="text-slate-400">—</span>'}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="flex flex-wrap items-center gap-3 mt-3"><button type="button" id="sbxGo" onclick="runSandbox()" class="bg-emerald-700 text-white rounded px-3 py-1.5">Run now</button>
+        <label class="!flex items-center gap-1.5 text-xs"><input type="checkbox" id="sbxAgain" class="!w-auto">Run again for scenarios already passed</label>
+        <span id="sbxSum" class="text-slate-600"></span></div>`;
+    const sel = $('#sbxBuyerSel');
+    sel?.addEventListener('change', () => {
+      const b = plan.buyers.find(x => x.id === sel.value) || {};
+      $('#sbxNtn').value = b.ntn || b.cnic || ''; $('#sbxName').value = b.businessName || ''; $('#sbxAddr').value = b.address || '';
+      if (b.province) $('#sbxProv').value = b.province;
+      $('#sbxBuyerOut').textContent = '';
+    });
+    if (sel && plan.buyers.length) { sel.value = plan.buyers[0].id; sel.dispatchEvent(new Event('change')); }
+    else if ($('#sbxProv') && S.managed?.sellerProvince) $('#sbxProv').value = S.managed.sellerProvince;
+  } catch (err) { panel.innerHTML = `<p class="text-red-700">${esc(err.message)}</p>`; }
+}
+async function checkSandboxBuyer() {
+  const out = $('#sbxBuyerOut'); out.className = 'text-slate-500'; out.textContent = 'Asking FBR…';
+  try {
+    const r = await api(`/api/admin/clients/${S.manageId}/check-buyer?ntn=${encodeURIComponent($('#sbxNtn').value)}`);
+    out.className = r.active ? 'text-emerald-700' : 'text-red-700';
+    out.textContent = !r.live ? 'FBR did not answer' : r.active ? 'Active on FBR\'s list ✓' : r.active === false ? 'Not active on FBR\'s list — choose another buyer' : 'FBR could not say';
+  } catch (err) { out.className = 'text-red-700'; out.textContent = err.message; }
+}
+async function runSandbox() {
+  const again = $('#sbxAgain').checked, go = $('#sbxGo');
+  const buyer = $('#sbxNtn') ? { ntn: $('#sbxNtn').value, name: $('#sbxName').value, province: $('#sbxProv').value, address: $('#sbxAddr').value } : undefined;
+  const todo = S.sbxPlan.scenarios.filter(x => x.known && (again || !x.passed));
+  if (!todo.length) return toast('Every scenario has already passed — tick "Run again" to send them again', true);
+  go.disabled = true; let ok = 0, bad = 0;
+  for (const [i, x] of todo.entries()) {
+    const cell = document.querySelector(`#sbxPanel tr[data-sid="${x.id}"] .sbx-res`);
+    $('#sbxSum').textContent = `Sending ${i + 1} of ${todo.length}…`;
+    cell.innerHTML = '<span class="text-slate-500">sending…</span>';
+    try {
+      const r = await api(`/api/admin/clients/${S.manageId}/sandbox-run/${x.id}`, { method: 'POST', body: { again, buyer: x.registeredBuyer ? buyer : undefined } });
+      r.ok ? ok++ : bad++;
+      cell.innerHTML = r.ok
+        ? `<span class="text-emerald-700">✔ ${r.skipped ? 'already accepted' : 'accepted by FBR'}</span>${r.invoiceNumber ? `<div class="font-mono text-xs">${esc(r.invoiceNumber)}</div>` : ''}${r.item ? `<div class="text-xs text-slate-500">${esc(r.item.saleType)} · ${esc(r.item.rate)} · ${esc(r.item.hsCode)} · tax ${money(r.item.salesTax)}</div>` : ''}`
+        : `<span class="text-red-700">✖ ${esc(r.error || 'not accepted')}</span>`;
+      if (r.notes?.length && !r.skipped) cell.innerHTML += `<div class="text-xs text-slate-500">${r.notes.map(esc).join(' · ')}</div>`;
+    } catch (err) { bad++; cell.innerHTML = `<span class="text-red-700">✖ ${esc(err.message)}</span>`; }
+  }
+  $('#sbxSum').textContent = `Done: ${ok} accepted${bad ? `, ${bad} not accepted` : ''}. Check IRIS → Scenario Details.`;
+  go.disabled = false;
+  renderChecklist(await api(`/api/admin/clients/${S.manageId}/onboarding`)); loadClients();
+}
+
 // Record IRIS result: which scenarios IRIS assigned to this client and which it shows as Successful
 function openIrisScenarios() {
   const panel = $('#irisPanel'), ob = S.manageOb || { scenarios: [] };

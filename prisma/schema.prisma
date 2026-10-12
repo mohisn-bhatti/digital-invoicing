@@ -88,6 +88,7 @@ model Tenant {
   stockEntries       StockEntry[]
   drafts             InvoiceDraft[]
   createdAt          DateTime  @default(now())
+  sandboxTests     SandboxTest[]
 }
 
 model Invoice {
@@ -421,3 +422,22 @@ model LegalReference {
   @@unique([source, url])
   @@index([source, issuedOn])
 }
+
+// Sandbox scenario test invoices from the admin's "Run sandbox scenarios" — not the client's own invoices
+model SandboxTest {
+  id               String   @id @default(uuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scenarioId       String
+  ok               Boolean
+  stage            String   // validate | post
+  fbrInvoiceNumber String?
+  error            String?
+  request          Json?
+  response         Json?
+  createdBy        String
+  createdAt        DateTime @default(now())
+
+  @@index([tenantId, scenarioId])
+}
+

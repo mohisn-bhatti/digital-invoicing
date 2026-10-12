@@ -25,8 +25,19 @@ function endpoint(method, fbrEnv) {
 // TLS stays end-to-end through the CONNECT tunnel; the proxy cannot read the token.
 const proxyAgent = process.env.FBR_PROXY_URL ? new HttpsProxyAgent(process.env.FBR_PROXY_URL) : undefined;
 
+// FBR sometimes answers with JSON that has a trailing comma ({"sourceInvoiceNo":"", }) — seen in the sandbox — which a
+// strict parser rejects; read it anyway so a real answer isn't taken for an unreadable one
+function parseLoose(raw) {
+    if (typeof raw !== 'string') return raw;
+    const t = raw.trim();
+    if (!t) return raw;
+    try { return JSON.parse(t); } catch { /* try without trailing commas */ }
+    try { return JSON.parse(t.replace(/,\s*([}\]])/g, '$1')); } catch { return raw; }
+}
+
 function client(token) {
     return axios.create({
+        transformResponse: [parseLoose],
         timeout: 20000,
         httpsAgent: proxyAgent,
         proxy: false, // use the agent above, not axios' built-in env proxy handling
@@ -268,4 +279,4 @@ async function egressIp() {
     return { ip: res.data.ip, viaProxy: Boolean(proxyAgent) };
 }
 
-module.exports = { testConnection, buildPayload, submit, reference, hsUom, saleTypeRates, sroSchedules, sroItems, checkBuyer, isValid, describeErrors, endpoint, egressIp, _call: call };
+module.exports = { parseLoose, testConnection, buildPayload, submit, reference, hsUom, saleTypeRates, sroSchedules, sroItems, checkBuyer, isValid, describeErrors, endpoint, egressIp, _call: call };

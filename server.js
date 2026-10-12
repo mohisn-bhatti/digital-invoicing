@@ -16,6 +16,7 @@ const fbr = require('./src/fbr');
 const hs = require('./src/hscodes');
 const annexC = require('./src/annexc');
 const onboarding = require('./src/onboarding');
+const sandbox = require('./src/sandboxRecipes');
 const importer = require('./src/importer');
 const stock = require('./src/stock');
 const { createAudit } = require('./src/audit');
@@ -331,6 +332,114 @@ app.put('/api/admin/clients/:id/iris-scenarios', authenticateToken, requireRole(
     await audit(req, { tenantId: t.id, action: 'onboarding.iris_scenarios', entityType: 'Tenant', entityId: t.id,
         summary: value ? `IRIS scenarios recorded: ${passed.length} of ${assigned.length} Successful (${passed.join(', ') || 'none'})` : 'IRIS scenarios cleared — back to the spec table' });
     res.json(await onboarding.checklist(prisma, await prisma.tenant.findUnique({ where: { id: t.id } })));
+});
+
+// ---------- Run sandbox scenarios (admin) ----------
+// One test invoice per scenario from src/sandboxRecipes.js, adapted to FBR's live lists (sale type spelling, rates,
+// SRO / serial, unit), validated and — only when FBR says Valid — posted to FBR's sandbox. Kept in SandboxTest (not the
+// client's invoices); the go-live checklist counts accepted ones. One scenario per call, so the screen shows progress.
+async function sandboxTenant(id) {
+    const t = await prisma.tenant.findUnique({ where: { id } });
+    if (!t) throw new HttpError(404, 'Client not found.');
+    return t;
+}
+app.get('/api/admin/clients/:id/sandbox-plan', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const t = await sandboxTenant(req.params.id);
+    const ob = await onboarding.checklist(prisma, t);
+    const buyers = await prisma.buyer.findMany({ where: { tenantId: t.id, registrationType: 'Registered' }, orderBy: { businessName: 'asc' },
+        select: { id: true, businessName: true, ntn: true, cnic: true, province: true, address: true } });
+    res.json({
+        env: t.fbrEnv, hasToken: Boolean(t.fbrTokenEnc), mock: process.env.FBR_MOCK === 'true',
+        scenarios: ob.scenarios.map(sc => {
+            const r = sandbox.RECIPES[sc.id];
+            return { ...sc, known: Boolean(r), confirmed: Boolean(r) && r.confirmed !== false, note: r?.note || '', registeredBuyer: r?.buyer === 'REG' };
+        }),
+        buyers,
+    });
+});
+// Is this NTN / CNIC on FBR's Active Taxpayers List? (SN001 needs a real, active registered buyer)
+app.get('/api/admin/clients/:id/check-buyer', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const t = await sandboxTenant(req.params.id);
+    const reg = String(req.query.ntn || '').replace(/\D/g, '');
+    if (![7, 9, 13].includes(reg.length)) throw new HttpError(400, 'Enter a 7-digit NTN or 13-digit CNIC.');
+    res.json(await fbr.checkBuyer(reg, todayPKT(), tenantToken(t)));
+});
+app.post('/api/admin/clients/:id/sandbox-run/:sid', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const t = await sandboxTenant(req.params.id), sid = String(req.params.sid);
+    const recipe = sandbox.RECIPES[sid];
+    if (!recipe) throw new HttpError(400, `ETAX has no test invoice for ${sid} yet.`);
+    if (t.fbrEnv !== 'SANDBOX') throw new HttpError(400, 'The client is on Production — sandbox scenarios need the Sandbox environment and the sandbox token.');
+    const token = tenantToken(t);
+    if (!token) throw new HttpError(400, 'Save the client\'s sandbox token first.');
+    if (process.env.FBR_MOCK === 'true') throw new HttpError(400, 'Mock mode is on (FBR_MOCK=true) — the test invoices would not reach FBR. Turn it off first.');
+    const done = await prisma.sandboxTest.findFirst({ where: { tenantId: t.id, scenarioId: sid, ok: true, stage: 'post' } });
+    if (done && !req.body?.again) return res.json({ id: sid, ok: true, skipped: true, invoiceNumber: done.fbrInvoiceNumber, notes: ['Already accepted earlier'] });
+
+    // Adapt the test invoice to FBR's live lists
+    const item = { ...recipe.item }, notes = [];
+    const fail = (msg, stage = 'build') => res.json({ id: sid, ok: false, stage, error: msg, notes });
+    const { provinceCode } = await fbrChainContext(t.id);
+    const live = await fbr.reference('transtypecode', token).catch(() => null);
+    let transTypeId = null;
+    if (Array.isArray(live) && live.length) {
+        const name = sandbox.pickSaleType(item.saleType, live.map(x => String(x.transactioN_DESC || '').trim()));
+        if (!name) return fail(`FBR's list has no sale type "${item.saleType}".`);
+        if (name !== item.saleType) notes.push(`sale type as FBR spells it: ${name}`);
+        item.saleType = name;
+        transTypeId = live.find(x => String(x.transactioN_DESC || '').trim() === name)?.transactioN_TYPE_ID ?? null;
+    }
+    if (transTypeId != null && provinceCode != null) {
+        const rates = await fbr.saleTypeRates(token, { transTypeId, provinceCode }).catch(() => null);
+        if (rates?.length) {
+            const r = sandbox.pickRate(item.rate, rates);
+            if (r.desc !== item.rate) notes.push(`rate from FBR's list: ${r.desc}`);
+            item.rate = r.desc;
+            const sros = await fbr.sroSchedules(token, { rateId: r.id, provinceCode }).catch(() => null);
+            if (sros?.length) {
+                const sro = sandbox.pickSro(item.sroScheduleNo, sros);
+                if (sro.desc !== item.sroScheduleNo) notes.push(`SRO / Schedule from FBR's list: ${sro.desc}`);
+                item.sroScheduleNo = sro.desc;
+                const serials = await fbr.sroItems(token, { sroId: sro.id }).catch(() => null);
+                if (serials?.length) {
+                    const it = sandbox.pickSerial(item.sroItemSerialNo, serials);
+                    if (it.desc !== item.sroItemSerialNo) notes.push(`item serial from FBR's list: ${it.desc}`);
+                    item.sroItemSerialNo = it.desc;
+                }
+            } else if (Array.isArray(sros) && !SRO_REQUIRED_SALE_TYPES.has(item.saleType)) { item.sroScheduleNo = ''; item.sroItemSerialNo = ''; }
+        }
+    }
+    const uoms = await fbr.hsUom(item.hsCode, token).catch(() => null);
+    const uoM = sandbox.pickUom(item.uoM, uoms);
+    if (uoM !== item.uoM) notes.push(`unit FBR allows for ${item.hsCode}: ${uoM}`);
+    item.uoM = uoM;
+
+    // Buyer: a real, active registered one for SN001 (checked with FBR); otherwise a walk-in customer
+    let buyer;
+    if (recipe.buyer === 'REG') {
+        const b = req.body?.buyer || {};
+        const reg = String(b.ntn || '').replace(/\D/g, '');
+        if (![7, 9, 13].includes(reg.length) || !String(b.name || '').trim()) return fail('This scenario needs a registered buyer — choose one, or enter their NTN and name.');
+        const chk = await fbr.checkBuyer(reg, todayPKT(), token).catch(() => null);
+        if (chk?.live && chk.active === false) return fail(`FBR's Active Taxpayers List says ${reg} is not active — use an active registered buyer.`);
+        buyer = { buyerRegistrationType: 'Registered', buyerNtnCnic: reg, buyerBusinessName: String(b.name).trim().slice(0, 200),
+            buyerProvince: String(b.province || t.sellerProvince || '').trim(), buyerAddress: String(b.address || t.sellerAddress || '').trim() };
+    } else {
+        buyer = { buyerRegistrationType: 'Unregistered', buyerNtnCnic: '', buyerBusinessName: 'Walk-in Customer', buyerProvince: t.sellerProvince, buyerAddress: t.sellerAddress };
+    }
+    let lines;
+    try { lines = calcInvoice([item], { buyerRegistrationType: buyer.buyerRegistrationType, furtherTaxRate: Number(t.furtherTaxRate ?? 4), endConsumer: Boolean(recipe.endConsumer) }).lines; }
+    catch (err) { return fail(`ETAX could not build the invoice: ${err.message}`); }
+    const payload = fbr.buildPayload(t, { invoiceType: 'Sale Invoice', invoiceDate: todayPKT(), ...buyer, invoiceRefNo: '', fbrEnv: 'SANDBOX', scenarioId: sid }, lines);
+
+    const r = await fbr.submit(token, 'SANDBOX', payload); // validate first; posted only when FBR says Valid
+    const stage = r.raw?.stage || 'validate';
+    await prisma.sandboxTest.create({ data: { tenantId: t.id, scenarioId: sid, ok: Boolean(r.ok), stage, fbrInvoiceNumber: r.invoiceNumber || null,
+        error: r.ok ? null : String(r.error || '').slice(0, 2000), request: payload, response: r.raw?.response ?? undefined, createdBy: req.user.email || 'admin' } });
+    await audit(req, { tenantId: t.id, action: 'onboarding.sandbox_test', entityType: 'Tenant', entityId: t.id,
+        summary: `Sandbox ${sid}: ${r.ok ? `accepted by FBR — ${r.invoiceNumber}` : `not accepted (${stage}) — ${String(r.error || '').slice(0, 300)}`}` });
+    const l = payload.items[0];
+    res.json({ id: sid, ok: Boolean(r.ok), stage, invoiceNumber: r.invoiceNumber || null, error: r.ok ? null : r.error, notes,
+        item: { description: l.productDescription, hsCode: l.hsCode, saleType: l.saleType, rate: l.rate, sro: l.sroScheduleNo, serial: l.sroItemSerialNo, value: l.valueSalesExcludingST, salesTax: l.salesTaxApplicable, total: l.totalValues } });
 });
 
 app.get('/api/admin/clients/:id/annex-c', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {

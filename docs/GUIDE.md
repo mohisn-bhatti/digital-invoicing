@@ -90,7 +90,8 @@ A client can't file real invoices while it is in **SANDBOX**. Only the admin swi
 
 ### A. Waiting on others (nothing to code until these arrive)
 1. **PRAL sandbox token and assigned scenarios** (from IRIS).
-   - Then: put the token in the client's FBR settings and run each assigned scenario until IRIS shows "Completed".
+   - Then: put the token in the client's FBR settings and click **Run sandbox scenarios** (admin → client → Manage, under the go-live checklist). ETAX sends one test invoice per assigned scenario to FBR's sandbox — checked first, sent only when FBR says Valid — using data FBR's sandbox accepted, adapted to FBR's live lists. SN001 needs one real registered buyer that is active on FBR's list (pick a saved one or type the NTN; "Check with FBR"). Then check IRIS → Scenario Details and, if needed, **Record IRIS result** so the checklist matches IRIS.
+   - Test data is confirmed for 24 of the 28 scenarios; SN009, SN011, SN012 and SN025 depend on the seller's own business type (or a field FBR has not documented) and are shown as "not confirmed".
    - After that, IRIS gives the **production token**.
    - A token is valid for 5 years. The client settings record the date it was issued, and the admin dashboard warns 60 days before it expires.
 2. **Static IP.** Create the Oracle Cloud Always Free VM proxy ([static-ip-proxy.md](static-ip-proxy.md)), whitelist

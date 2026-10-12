@@ -2,7 +2,7 @@
 const { assignedScenarios } = require('./activityScenarios');
 const { SCENARIOS } = require('./scenarios');
 
-// Scenario ids with a SUBMITTED sandbox invoice, split by whether FBR really saw it or it was mock mode
+// Scenario ids with a SUBMITTED sandbox invoice (or an accepted sandbox test), split by whether FBR really saw it or it was mock mode
 async function scenarioResults(prisma, tenantId) {
     const rows = await prisma.$queryRaw`
         SELECT "scenarioId" AS id,
@@ -10,7 +10,11 @@ async function scenarioResults(prisma, tenantId) {
         FROM "Invoice"
         WHERE "tenantId" = ${tenantId} AND "fbrEnv" = 'SANDBOX' AND status = 'SUBMITTED' AND "scenarioId" IS NOT NULL
         GROUP BY "scenarioId"`;
-    return new Map(rows.map(r => [r.id, r.real]));
+    const map = new Map(rows.map(r => [r.id, r.real]));
+    // test invoices the admin's "Run sandbox scenarios" got accepted by FBR's sandbox
+    const tests = await prisma.sandboxTest.findMany({ where: { tenantId, ok: true, stage: 'post' }, select: { scenarioId: true } });
+    for (const t of tests) map.set(t.scenarioId, true);
+    return map;
 }
 
 async function checklist(prisma, tenant) {
