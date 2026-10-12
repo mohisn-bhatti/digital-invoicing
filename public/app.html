@@ -309,6 +309,10 @@
     <section>
       <h3 class="font-semibold mb-2">Go-live checklist <span id="mpObSummary" class="ml-2 text-xs font-normal"></span></h3>
       <div id="mpChecklist" class="text-sm"></div>
+      <!-- IRIS → Digital Invoicing → Scenario Details is the official record: the admin ticks what it shows -->
+      <div class="mt-3"><button type="button" onclick="openIrisScenarios()" class="text-sm text-emerald-700 underline">Record IRIS result</button>
+        <span id="irisNote" class="text-xs text-slate-500 ml-2"></span></div>
+      <div id="irisPanel" class="hidden mt-3 border rounded-lg p-3 bg-slate-50"></div>
     </section>
   </div>
   </div>
@@ -1148,7 +1152,7 @@ function checklistHtml(ob, clickable) {
   const chips = ob.scenarios.length
     ? ob.scenarios.map(sc => {
         const cls = sc.passed ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : sc.mockOnly ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-white text-slate-700 border-slate-300';
-        const tip = sc.passed ? 'Passed with FBR sandbox' : sc.mockOnly ? 'Only tried in mock mode — submit with the real sandbox token' : 'Not passed yet';
+        const tip = sc.iris ? 'Successful in IRIS' : sc.passed ? 'Passed with FBR sandbox' : sc.mockOnly ? 'Only tried in mock mode — submit with the real sandbox token' : 'Not passed yet';
         const tag = 'span';
         return `<${tag} class="inline-block border rounded px-2 py-0.5 text-xs mr-1 mb-1 ${cls}" title="${esc(sc.desc)} — ${tip}">${sc.passed ? '✔ ' : ''}${sc.id}</${tag.split(' ')[0]}>`;
       }).join('')
@@ -1513,11 +1517,37 @@ async function testFbr() {
   } catch (err) { out.className = 'text-red-700 pt-1.5'; out.textContent = err.message; }
   btn.disabled = false;
 }
+// Record IRIS result: which scenarios IRIS assigned to this client and which it shows as Successful
+function openIrisScenarios() {
+  const panel = $('#irisPanel'), ob = S.manageOb || { scenarios: [] };
+  if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
+  const assigned = new Set(ob.scenarios.map(x => x.id)), passed = new Set(ob.scenarios.filter(x => x.passed).map(x => x.id));
+  panel.innerHTML = `<p class="text-xs text-slate-600 mb-2">From IRIS → Digital Invoicing → <b>Scenario Details</b>: tick each scenario IRIS lists, and whether it shows <b>Successful</b>.</p>
+    <div class="overflow-x-auto max-h-80 overflow-y-auto"><table class="w-full text-sm"><thead class="text-left text-xs text-slate-500 sticky top-0 bg-slate-50"><tr><th class="py-1 pr-2">Scenario</th><th class="py-1 px-2 text-center">Assigned in IRIS</th><th class="py-1 px-2 text-center">Successful</th></tr></thead><tbody>
+    ${S.meta.scenarios.map(sc => `<tr class="border-t"><td class="py-1 pr-2"><b>${sc.id}</b> <span class="text-slate-500">${esc(sc.desc)}</span></td>
+      <td class="text-center"><input type="checkbox" class="iris-a" value="${sc.id}" ${assigned.has(sc.id) ? 'checked' : ''}></td>
+      <td class="text-center"><input type="checkbox" class="iris-p" value="${sc.id}" ${passed.has(sc.id) ? 'checked' : ''}></td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="flex flex-wrap gap-3 items-center mt-3"><button type="button" onclick="saveIrisScenarios()" class="bg-emerald-700 text-white rounded px-3 py-1.5 text-sm">Save IRIS result</button>
+      <button type="button" onclick="$('#irisPanel').classList.add('hidden')" class="text-sm underline">Cancel</button></div>`;
+  // ticking "Successful" also ticks "Assigned"
+  panel.onchange = e => { if (e.target.matches('.iris-p') && e.target.checked) panel.querySelector(`.iris-a[value="${e.target.value}"]`).checked = true; };
+  panel.classList.remove('hidden');
+}
+async function saveIrisScenarios() {
+  const pick = cls => [...document.querySelectorAll(`#irisPanel ${cls}:checked`)].map(x => x.value);
+  try {
+    const ob = await api(`/api/admin/clients/${S.manageId}/iris-scenarios`, { method: 'PUT', body: { assigned: pick('.iris-a'), passed: pick('.iris-p') } });
+    $('#irisPanel').classList.add('hidden'); renderChecklist(ob); loadClients(); toast('IRIS result saved', true);
+  } catch (err) { toast(err.message); }
+}
 function closeManage() { S.manageId = null; go('a-clients'); }
 function renderChecklist(ob) {
   const live = ob.done === ob.total;
   $('#mpObSummary').innerHTML = live ? '<span class="text-emerald-700">✔ Live with FBR</span>'
     : `<span class="text-amber-700">${ob.done} of ${ob.total} done · scenarios ${ob.scenariosPassed}/${ob.scenariosAssigned || '?'}</span>`;
+  S.manageOb = ob;
+  $('#irisNote').textContent = ob.iris ? `Recorded from IRIS on ${fmtDate(ob.iris.at)} by ${ob.iris.by}` : 'Tick what IRIS → Scenario Details shows (assigned and Successful)';
   $('#mpChecklist').innerHTML = checklistHtml(ob, false)
     + (ob.scenariosAssigned && ob.scenariosPassed < ob.scenariosAssigned ? '<div class="text-xs text-slate-500 mt-2">Run the remaining scenarios with <b>Open workspace</b>, using the real sandbox token (FBR_MOCK off).</div>' : '');
 }

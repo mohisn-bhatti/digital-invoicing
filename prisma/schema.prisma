@@ -64,6 +64,7 @@ model Tenant {
   // Sales tax registration no. — printed on invoices (STA s.23); not part of the DI API payload
   sellerStrn         String    @default("")
   tokenIssuedAt      DateTime? // FBR token is valid for 5 years (spec §3.1)
+  irisScenarios   Json?    // sandbox scenarios as IRIS shows them (admin records): { assigned, passed, at, by }
   // PRAL security token, AES-256-GCM encrypted (src/crypto.js)
   fbrTokenEnc        String?
   fbrEnv             FbrEnv    @default(SANDBOX)

@@ -14,13 +14,17 @@ async function scenarioResults(prisma, tenantId) {
 }
 
 async function checklist(prisma, tenant) {
-    const assigned = assignedScenarios(tenant.businessActivities, tenant.sector);
+    // IRIS is the official record: when the admin has recorded what IRIS shows, its list is the one to pass
+    const iris = tenant.irisScenarios && Array.isArray(tenant.irisScenarios.assigned) ? tenant.irisScenarios : null;
+    const assigned = iris?.assigned.length ? iris.assigned : assignedScenarios(tenant.businessActivities, tenant.sector);
     const results = await scenarioResults(prisma, tenant.id);
+    const irisPassed = new Set(iris?.passed || []);
     const scenarios = assigned.map(id => ({
         id,
         desc: SCENARIOS.find(s => s.id === id)?.desc || id,
-        passed: results.get(id) === true,
-        mockOnly: results.get(id) === false,
+        passed: results.get(id) === true || irisPassed.has(id),
+        iris: irisPassed.has(id),
+        mockOnly: results.get(id) === false && !irisPassed.has(id),
     }));
     const passed = scenarios.filter(s => s.passed).length;
     const live = await prisma.invoice.count({ where: { tenantId: tenant.id, fbrEnv: 'PRODUCTION', status: 'SUBMITTED' } });
@@ -31,11 +35,11 @@ async function checklist(prisma, tenant) {
         { key: 'authLetter', label: 'Signed authorization letter (Form STR-13) on file', done: Boolean(tenant.authLetterAt) },
         { key: 'profile', label: 'Business nature & sector, same as chosen in IRIS', done: tenant.businessActivities.length > 0 && Boolean(tenant.sector) },
         { key: 'token', label: 'PRAL sandbox token saved', done: Boolean(tenant.fbrTokenEnc) },
-        { key: 'scenarios', label: `Sandbox scenarios passed: ${passed} of ${assigned.length}`, done: assigned.length > 0 && passed === assigned.length },
+        { key: 'scenarios', label: `Sandbox scenarios passed: ${passed} of ${assigned.length}${iris ? ' (as IRIS shows)' : ''}`, done: assigned.length > 0 && passed === assigned.length },
         { key: 'production', label: 'Production token saved and environment set to Production', done: tenant.fbrEnv === 'PRODUCTION' && Boolean(tenant.fbrTokenEnc) },
         { key: 'live', label: 'First live invoice filed with FBR', done: live > 0 },
     ];
-    return { steps, done: steps.filter(s => s.done).length, total: steps.length, scenarios, scenariosPassed: passed, scenariosAssigned: assigned.length };
+    return { steps, done: steps.filter(s => s.done).length, total: steps.length, scenarios, scenariosPassed: passed, scenariosAssigned: assigned.length, iris: iris && { at: iris.at, by: iris.by } };
 }
 
 module.exports = { checklist };

@@ -2,7 +2,7 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { PrismaClient } = require('@prisma/client');
+const { PrismaClient, Prisma } = require('@prisma/client');
 
 const { createAuth, requireRole, requireTenant, requireTenantRole, signToken, signWorkspaceToken } = require('./src/auth');
 const { encrypt, decrypt, mask } = require('./src/crypto');
@@ -318,6 +318,19 @@ app.get('/api/admin/clients/:id/onboarding', authenticateToken, requireRole('SUP
     const t = await prisma.tenant.findUnique({ where: { id: req.params.id } });
     if (!t) throw new HttpError(404, 'Client not found.');
     res.json(await onboarding.checklist(prisma, t));
+});
+
+// Admin records what IRIS shows for the client's sandbox scenarios (assigned / Successful) — the checklist follows IRIS
+app.put('/api/admin/clients/:id/iris-scenarios', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const t = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+    if (!t) throw new HttpError(404, 'Client not found.');
+    const ids = v => [...new Set((Array.isArray(v) ? v : []).map(String).filter(x => /^SN\d{3}$/.test(x)))].sort();
+    const assigned = ids(req.body?.assigned), passed = ids(req.body?.passed).filter(x => assigned.includes(x));
+    const value = assigned.length ? { assigned, passed, at: new Date().toISOString(), by: req.user.email || 'admin' } : null;
+    await prisma.tenant.update({ where: { id: t.id }, data: { irisScenarios: value ?? Prisma.DbNull } });
+    await audit(req, { tenantId: t.id, action: 'onboarding.iris_scenarios', entityType: 'Tenant', entityId: t.id,
+        summary: value ? `IRIS scenarios recorded: ${passed.length} of ${assigned.length} Successful (${passed.join(', ') || 'none'})` : 'IRIS scenarios cleared — back to the spec table' });
+    res.json(await onboarding.checklist(prisma, await prisma.tenant.findUnique({ where: { id: t.id } })));
 });
 
 app.get('/api/admin/clients/:id/annex-c', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
