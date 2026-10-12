@@ -268,7 +268,7 @@
             <input name="fbrToken" type="password" placeholder="Leave empty to keep current token" autocomplete="new-password" data-lpignore="true" data-1p-ignore></label>
           <div class="sm:col-span-3 flex flex-wrap items-start gap-3 text-xs -mt-1">
             <button type="button" id="fbrTestBtn" onclick="testFbr()" class="border border-emerald-600 text-emerald-700 rounded px-3 py-1.5 font-medium hover:bg-emerald-50">Test FBR connection</button>
-            <span id="fbrTestOut" class="text-slate-500 pt-1.5">Asks FBR for its province list with the saved token (records nothing at FBR). Save a new token first.</span>
+            <span id="fbrTestOut" class="text-slate-500 pt-1.5">Asks FBR for its province list with the token (records nothing at FBR) — the one typed above, else the saved one.</span>
           </div>
           <label><span>Software registration no. <span class="text-slate-400">(from PRAL, printed)</span></span><input name="softwareRegNo" maxlength="60" autocomplete="off"></label>
           <label><span>Token issued on <span class="text-slate-400">(valid 5 years — set automatically when a new token is saved)</span></span><input name="tokenIssuedAt" type="date"><span id="tokenExpiry" class="block text-xs mt-1"></span></label>
@@ -1504,7 +1504,9 @@ async function testFbr() {
   const out = $('#fbrTestOut'), btn = $('#fbrTestBtn');
   btn.disabled = true; out.className = 'text-slate-500 pt-1.5'; out.textContent = 'Asking FBR…';
   try {
-    const r = await api(`/api/admin/clients/${S.manageId}/fbr-test`, { method: 'POST' });
+    // a token typed but not saved yet is tested as typed (and the result says to save it)
+    const typed = $('#settingsForm').fbrToken.value.trim();
+    const r = await api(`/api/admin/clients/${S.manageId}/fbr-test`, { method: 'POST', body: typed ? { token: typed } : {} });
     out.className = `pt-1.5 ${r.ok ? 'text-emerald-700' : 'text-red-700'}`;
     out.innerHTML = `${r.ok ? '✅' : '❌'} ${esc(r.verdict)}${r.ip ? ` <span class="text-slate-500">· our IP: <b class="font-mono">${esc(r.ip)}</b>${r.viaProxy ? ' (static proxy)' : ''}${r.ms ? ` · ${r.ms} ms` : ''}</span>` : ''}`;
   } catch (err) { out.className = 'text-red-700 pt-1.5'; out.textContent = err.message; }
@@ -1731,6 +1733,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   try {
     S.managed = await api(`/api/admin/clients/${S.manageId}/settings`, { method: 'PUT', body });
     fillSettings(S.managed);
+    if (body.fbrToken) { $('#fbrTestOut').className = 'text-slate-500 pt-1.5'; $('#fbrTestOut').textContent = 'Token saved — click Test FBR connection to check it.'; }
     renderChecklist(await api(`/api/admin/clients/${S.manageId}/onboarding`));
     loadClients();
     toast('Settings saved', true);

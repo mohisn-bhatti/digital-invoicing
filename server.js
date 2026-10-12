@@ -436,7 +436,10 @@ app.post('/api/admin/clients/:id/fbr-test', authenticateToken, requireRole('SUPE
     const t = await prisma.tenant.findUnique({ where: { id: req.params.id } });
     if (!t) throw new HttpError(404, 'Client not found.');
     if (process.env.FBR_MOCK === 'true') res.set('X-Note', 'mock'); // the test always calls the real FBR
-    const r = await fbr.testConnection(tenantToken(t));
+    // the token typed on the screen (not saved yet) if sent, else the saved one
+    const typed = String(req.body?.token || '').trim();
+    const r = await fbr.testConnection(typed || tenantToken(t));
+    if (typed) r.verdict += r.ok ? ' (Typed token — click Save to keep it.)' : ' (This was the typed token, not saved yet.)';
     await audit(req, { tenantId: t.id, action: 'fbr.test', entityType: 'Tenant', entityId: t.id, summary: `FBR connection test: ${r.ok ? 'OK' : 'failed'} — ${r.verdict}`.slice(0, 480) });
     res.json(r);
 });
