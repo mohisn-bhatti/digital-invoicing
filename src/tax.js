@@ -11,9 +11,13 @@
 //   totalValues           = valueSalesExcludingST + ST + furtherTax + extraTax + fedPayable
 
 // Sale types where further tax is not charged by default
-const NO_FURTHER_TAX_SALE_TYPES = new Set(['3rd Schedule Goods', 'Exempt Goods', 'Goods at zero-rate']);
+// Sale type names compared without case or spaces: FBR's live list says "Exempt goods" and
+// "Processing/Conversion of Goods" where its spec document says "Exempt Goods" / "Processing/ Conversion of Goods"
+const saleTypeKey = v => String(v || '').toLowerCase().replace(/\s+/g, '');
+const saleTypeSet = list => { const keys = new Set(list.map(saleTypeKey)); return Object.assign(new Set(list), { has: v => keys.has(saleTypeKey(v)) }); };
+const NO_FURTHER_TAX_SALE_TYPES = saleTypeSet(['3rd Schedule Goods', 'Exempt Goods', 'Goods at zero-rate']);
 // Exempt / concessionary lines must name the schedule/SRO and its serial (e.g. "6th Schedule Table I", "176(i)")
-const SRO_REQUIRED_SALE_TYPES = new Set(['Exempt Goods', 'Goods at Reduced Rate', 'Goods as per SRO.297(|)/2023']);
+const SRO_REQUIRED_SALE_TYPES = saleTypeSet(['Exempt Goods', 'Goods at Reduced Rate', 'Goods as per SRO.297(|)/2023']);
 // Counted units can't be sold in fractions (CA feedback: quantity should be a round number); KG, litre etc. can
 const WHOLE_NUMBER_UOMS = new Set(['numbers, pieces, units', 'pair', 'dozen', 'set', 'bag', 'carton', 'packs', 'thousand unit', 'timber logs']);
 const isWholeNumberUom = uom => WHOLE_NUMBER_UOMS.has(String(uom || '').trim().toLowerCase());
@@ -33,11 +37,16 @@ function ratePercent(rate) {
     const m = String(rate || '').match(/^\s*(\d+(?:\.\d+)?)\s*%/);
     return m ? Number(m[1]) : 0;
 }
-// FBR rates like "18% along with rupees 60 per kilogram" (spec §5.8) also charge Rs 60 per unit sold (error 0105)
+// Rupee amounts per unit in FBR's rate list (SaleTypeToRate §5.8, error 0105): "18% along with rupees 60 per kilogram",
+// "18% and Rs. 80 per Liter", "Rs.700/MT", or just "Rs.3" (cement blocks) — FBR charges that amount × quantity
 function rupeesPerUnit(rate) {
-    const m = String(rate || '').match(/rupees?\s*([\d,]+(?:\.\d+)?)\s*per\b/i);
+    const s = String(rate || '');
+    const m = s.match(/(?:rupees?|rs\.?)\s*([\d,]+(?:\.\d+)?)\s*(?:per\b|\/)/i) || s.match(/^\s*(?:rupees?|rs\.?)\s*([\d,]+(?:\.\d+)?)\s*$/i);
     return m ? Number(m[1].replace(/,/g, '')) : 0;
 }
+
+// "Goods (FED in ST Mode)", "Services (FED in ST Mode)"
+const fedInStMode = saleType => /fed in st mode/i.test(String(saleType || ''));
 
 function hasOverride(v) {
     return v !== null && v !== undefined && v !== '';
@@ -138,7 +147,11 @@ function calcItem(raw, { buyerRegistrationType, furtherTaxRate, endConsumer = fa
     const stBase = fixedNotifiedValueOrRetailPrice > 0 ? fixedNotifiedValueOrRetailPrice : valueSalesExcludingST;
     const salesTaxApplicable = hasOverride(raw.salesTaxApplicable)
         ? round2(num(raw.salesTaxApplicable))
-        : round2(stBase * pct / 100 + rupeesPerUnit(raw.rate) * quantity);
+        : round2(fedInStMode(raw.saleType)
+            // FED in sales tax mode (confirmed with FBR's sandbox, error 0131): FED = Rs per unit × quantity, added to the
+            // value, then the rate on that total; both go in salesTaxApplicable ("Sales Tax / FED in ST mode")
+            ? rupeesPerUnit(raw.rate) * quantity + (stBase + rupeesPerUnit(raw.rate) * quantity) * pct / 100
+            : stBase * pct / 100 + rupeesPerUnit(raw.rate) * quantity);
 
     const furtherBuyer = buyerRegistrationType === 'Unregistered' ? !endConsumer : buyerNonAtl;
     const furtherApplies = furtherBuyer && pct > 0 && !NO_FURTHER_TAX_SALE_TYPES.has(raw.saleType);
@@ -222,4 +235,4 @@ function calcInvoice(items, ctx, invoiceDiscount = 0) {
     };
 }
 
-module.exports = { calcInvoice, calcItem, spreadDiscount, cleanExtraTaxes, calcExtraTaxes, ratePercent, rupeesPerUnit, round2, SRO_REQUIRED_SALE_TYPES, WHOLE_NUMBER_UOMS, isWholeNumberUom };
+module.exports = { fedInStMode, calcInvoice, calcItem, spreadDiscount, cleanExtraTaxes, calcExtraTaxes, ratePercent, rupeesPerUnit, round2, SRO_REQUIRED_SALE_TYPES, WHOLE_NUMBER_UOMS, isWholeNumberUom };

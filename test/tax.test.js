@@ -359,7 +359,12 @@ test('a line without a rate is refused (not filed at Rs 0)', () => {
 test('FBR 0105: "18% along with rupees 60 per kilogram" adds Rs 60 × quantity to the sales tax', () => {
     const { rupeesPerUnit } = require('../src/tax');
     assert.strictEqual(rupeesPerUnit('18% along with rupees 60 per kilogram'), 60);
-    assert.strictEqual(rupeesPerUnit('Rs.1,250.50 per unit'), 0); // only the spec's "rupees X per" wording
+    // FBR's live rate list (SaleTypeToRate) also has these forms
+    assert.strictEqual(rupeesPerUnit('18% and Rs. 80 per Liter'), 80);
+    assert.strictEqual(rupeesPerUnit('Rs.700/MT'), 700);
+    assert.strictEqual(rupeesPerUnit('Rs.3'), 3);
+    assert.strictEqual(rupeesPerUnit('Rs.1,250.50 per unit'), 1250.5);
+    assert.strictEqual(rupeesPerUnit('Exempt'), 0);
     assert.strictEqual(rupeesPerUnit('18%'), 0);
     const l = calcInvoice([{ ...base, quantity: 10, unitPrice: 100, rate: '18% along with rupees 60 per kilogram' }], REG).lines[0];
     assert.strictEqual(l.salesTaxApplicable, 780); // 18% of 1,000 + 60 × 10
@@ -403,3 +408,17 @@ test('FBR lists §5.7 / §5.8 / §5.10: null without a token or in mock mode; ma
         if (mock === undefined) delete process.env.FBR_MOCK; else process.env.FBR_MOCK = mock;
     }
 });
+
+test('FED in ST mode (FBR sandbox, error 0131): FED = Rs per unit × qty, added to the value, then the rate on the total', () => {
+    const l = calcInvoice([{ ...base, hsCode: '2710.1240', uoM: 'Liter', saleType: 'Goods (FED in ST Mode)', rate: '18% and Rs. 80 per Liter', quantity: 10, unitPrice: 100 }], REG).lines[0];
+    assert.strictEqual(l.salesTaxApplicable, 1124); // 800 + 18% of (1,000 + 800) — FBR answered "Valid"
+    const c = calcInvoice([{ ...base, hsCode: '6810.1100', uoM: 'KG', saleType: 'Cement /Concrete Block', rate: 'Rs.3', quantity: 100, unitPrice: 50 }], REG).lines[0];
+    assert.strictEqual(c.salesTaxApplicable, 300); // Rs 3 × 100 — FBR answered "Valid"
+});
+
+test('sale types from FBR\'s live list ("Exempt goods") get the same rules as the spec\'s spelling', () => {
+    assert.throws(() => calcInvoice([{ ...base, hsCode: '0401.1000', saleType: 'Exempt goods', rate: 'Exempt', quantity: 1, unitPrice: 100 }], REG), /0077 \/ 0078/);
+    const l = calcInvoice([{ ...base, hsCode: '0401.1000', saleType: 'Exempt goods', rate: 'Exempt', quantity: 1, unitPrice: 100, sroScheduleNo: '6th Schd Table I', sroItemSerialNo: '100' }], { buyerRegistrationType: 'Unregistered', furtherTaxRate: 4 }).lines[0];
+    assert.strictEqual(l.furtherTax, 0);
+});
+

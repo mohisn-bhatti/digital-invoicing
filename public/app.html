@@ -1909,7 +1909,12 @@ function spreadDiscount(items, total) {
 }
 
 // Mirrors src/tax.js for the live preview; the server recalculates and is authoritative
-const NO_FT = new Set(['3rd Schedule Goods', 'Exempt Goods', 'Goods at zero-rate']);
+// Sale type names compared without case or spaces (FBR's live list: "Exempt goods", "Processing/Conversion of Goods") — as src/tax.js
+const saleTypeKey = v => String(v || '').toLowerCase().replace(/\s+/g, '');
+const saleTypeSet = list => { const keys = new Set(list.map(saleTypeKey)); return Object.assign(new Set(list), { has: v => keys.has(saleTypeKey(v)) }); };
+const NO_FT = saleTypeSet(['3rd Schedule Goods', 'Exempt Goods', 'Goods at zero-rate']);
+// Rupee amounts per unit in FBR's rates (same as src/tax.js rupeesPerUnit): "…rupees 60 per kilogram", "18% and Rs. 80 per Liter", "Rs.700/MT", "Rs.3"
+const rupeesPerUnit = rate => { const t = String(rate || ''); const m = t.match(/(?:rupees?|rs\.?)\s*([\d,]+(?:\.\d+)?)\s*(?:per\b|\/)/i) || t.match(/^\s*(?:rupees?|rs\.?)\s*([\d,]+(?:\.\d+)?)\s*$/i); return m ? Number(m[1].replace(/,/g, '')) : 0; };
 function recalc() {
   // Further tax: unregistered business buyers, and registered buyers not active with FBR (non-ATL); never end consumers
   const f0 = $('#invoiceForm'), regd = $('#buyerType').value === 'Registered';
@@ -1927,8 +1932,10 @@ function recalc() {
     const excl = r2(Number(it.quantity || 0) * Number(it.unitPrice || 0) - shares[i]);
     const base = Number(it.fixedNotifiedValueOrRetailPrice) > 0 ? Number(it.fixedNotifiedValueOrRetailPrice) : excl;
     // FBR rates like "18% along with rupees 60 per kilogram" add Rs 60 per unit (same as src/tax.js, error 0105)
-    const perUnit = Number((String(it.rate).match(/rupees?\s*([\d,]+(?:\.\d+)?)\s*per\b/i) || [])[1]?.replace(/,/g, '') || 0);
-    const st0 = r2(base * pct / 100 + perUnit * Number(it.quantity || 0));
+    const perUnit = rupeesPerUnit(it.rate);
+    // FED in ST mode: FED (Rs per unit × qty) is added to the value, then the rate on the total (same as src/tax.js)
+    const fed = perUnit * Number(it.quantity || 0);
+    const st0 = r2(/fed in st mode/i.test(it.saleType || '') ? fed + (base + fed) * pct / 100 : base * pct / 100 + fed);
     const ft0 = unreg && pct > 0 && !NO_FT.has(it.saleType) ? r2(excl * ftRate / 100) : 0;
     // More taxes from the item's tax rule, each into its FBR box (same as src/tax.js calcExtraTaxes)
     const detail = extraTaxLine(it.extraTaxes, excl, st0);
@@ -1968,7 +1975,7 @@ function recalc() {
   $('#ntnReq').title = !regd && f0.endConsumer.checked ? `Required above Rs ${limit.toLocaleString('en-PK')}` : 'Required';
   return t;
 }
-const SRO_SALE_TYPES = new Set(['Exempt Goods', 'Goods at Reduced Rate', 'Goods as per SRO.297(|)/2023']);
+const SRO_SALE_TYPES = saleTypeSet(['Exempt Goods', 'Goods at Reduced Rate', 'Goods as per SRO.297(|)/2023']);
 // New invoice: 4 sections with a ✓ and a short summary when done, else what is missing
 function syncInvoiceSteps(t, needNtn) {
   const f = $('#invoiceForm'), debit = f.invoiceType.value === 'Debit Note';
@@ -2909,7 +2916,7 @@ function renderTaxPreview() {
     .filter(x => x.price !== '' && Number(x.price) >= 0);
   const rate = f.rate.value.trim(), sale = f.saleType.value, name = f.name.value.trim() || 'This item';
   const pct = Number((rate.match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
-  const perUnit = Number((rate.match(/rupees?\s*([\d,]+(?:\.\d+)?)\s*per\b/i) || [])[1]?.replace(/,/g, '') || 0);
+  const perUnit = rupeesPerUnit(rate);
   const retail = sale === '3rd Schedule Goods' ? Number(f.notifiedRate.value || 0) : 0;
   const unreg = $('#trPrevBuyer').value === 'U', ftRate = Number(S.settings?.furtherTaxRate ?? 4);
   const ftOn = unreg && pct > 0 && !NO_FT.has(sale);
@@ -2923,7 +2930,7 @@ function renderTaxPreview() {
   } else {
     body.innerHTML = prices.map(x => {
       const value = r2(Number(x.price));
-      const st = r2((retail > 0 ? retail : value) * pct / 100 + perUnit);
+      const st = r2(/fed in st mode/i.test(sale) ? perUnit + ((retail > 0 ? retail : value) + perUnit) * pct / 100 : (retail > 0 ? retail : value) * pct / 100 + perUnit);
       const ft = ftOn ? r2(value * ftRate / 100) : 0;
       const ex = extraTaxLine(extras, value, st);
       const total = r2(value + st + ft + ex.reduce((a, t) => a + t.amount, 0));

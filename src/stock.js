@@ -8,8 +8,9 @@ const r2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
 const r4 = n => Math.round((n + Number.EPSILON) * 10000) / 10000;
 
 function supplyCategory(saleType) {
-    if (saleType === 'Exempt Goods') return 'exempt';
-    if (saleType === 'Goods at zero-rate') return 'zero';
+    const k = String(saleType || '').toLowerCase().replace(/\s+/g, ''); // FBR spells it "Exempt goods"
+    if (k === 'exemptgoods') return 'exempt';
+    if (k === 'goodsatzero-rate') return 'zero';
     return 'taxable';
 }
 

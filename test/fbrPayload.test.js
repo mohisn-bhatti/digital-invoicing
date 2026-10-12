@@ -63,12 +63,13 @@ function checkFields(obj, spec, where) {
 }
 const r2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
 const pct = rate => Number((String(rate).match(/^\s*(\d+(?:\.\d+)?)\s*%/) || [])[1] || 0);
-const perUnit = rate => Number((String(rate).match(/rupees?\s*([\d,]+(?:\.\d+)?)\s*per\b/i) || [])[1]?.replace(/,/g, '') || 0);
+const { rupeesPerUnit: perUnit } = require('../src/tax');
 // The sums FBR checks on each item
 function checkSums(it, where) {
     const problems = [];
     const base = it.fixedNotifiedValueOrRetailPrice > 0 ? it.fixedNotifiedValueOrRetailPrice : it.valueSalesExcludingST;
-    const st = r2(base * pct(it.rate) / 100 + perUnit(it.rate) * it.quantity);
+    const fed = perUnit(it.rate) * it.quantity;
+    const st = r2(/fed in st mode/i.test(it.saleType) ? fed + (base + fed) * pct(it.rate) / 100 : base * pct(it.rate) / 100 + fed);
     if (Math.abs(it.salesTaxApplicable - st) > 0.01) problems.push(`${where}: sales tax ${it.salesTaxApplicable} ≠ rate × value ${st} (FBR 0102 / 0104 / 0105)`);
     const total = r2(it.valueSalesExcludingST + it.salesTaxApplicable + it.furtherTax + Number(it.extraTax || 0) + it.fedPayable);
     if (Math.abs(it.totalValues - total) > 0.01) problems.push(`${where}: totalValues ${it.totalValues} ≠ value + taxes ${total}`);
