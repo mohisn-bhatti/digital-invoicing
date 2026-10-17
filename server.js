@@ -93,7 +93,7 @@ function tenantToken(tenant) {
 }
 
 // Business nature and sector as chosen in IRIS, e.g. "Retailer · Wholesale / Retails"
-const industryOf = t => [t.businessActivities.join(', '), t.sector].filter(Boolean).join(' · ');
+const industryOf = t => [t.businessActivities.join(', '), t.sectors.join(', ')].filter(Boolean).join(' · ');
 
 // What a client (and its receipts) may see: no token, no IRIS profile
 function clientTenant(t) {
@@ -132,7 +132,7 @@ function publicTenant(t) {
         tokenExpiresAt: t.tokenIssuedAt ? new Date(new Date(t.tokenIssuedAt).setFullYear(new Date(t.tokenIssuedAt).getFullYear() + 5)) : null,
         tokenExpiring: Boolean(t.tokenIssuedAt && Date.now() > new Date(t.tokenIssuedAt).setFullYear(new Date(t.tokenIssuedAt).getFullYear() + 5) - 60 * 86400000),
         businessActivities: t.businessActivities,
-        sector: t.sector,
+        sectors: t.sectors,
         invoiceNumberFormat: t.invoiceNumberFormat,
         softwareRegNo: t.softwareRegNo,
         authLetterRef: t.authLetterRef,
@@ -684,7 +684,7 @@ app.get('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
 
 const SETTING_LABELS = {
     mobile: 'Mobile number', active: 'Status', sellerNtn: 'Seller NTN', sellerCnic: 'Seller CNIC', sellerNtnCnic: 'Seller number sent to FBR', sellerStrn: 'STRN', sellerBusinessName: 'Business name', sellerProvince: 'Province',
-    sellerAddress: 'Address', fbrEnv: 'Environment', furtherTaxRate: 'Further tax %', businessActivities: 'Business nature', sector: 'Sector',
+    sellerAddress: 'Address', fbrEnv: 'Environment', furtherTaxRate: 'Further tax %', businessActivities: 'Business nature', sectors: 'Sector',
     invoiceNumberFormat: 'Invoice number format', softwareRegNo: 'Software reg. no.', authLetterRef: 'Authorization letter ref', authLetterAt: 'Authorization letter date',
 };
 app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
@@ -740,9 +740,10 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
         if (list.some(a => !BUSINESS_ACTIVITIES.includes(a))) throw new HttpError(400, 'Unknown business nature.');
         data.businessActivities = list;
     }
-    if (b.sector !== undefined) {
-        if (b.sector && !SECTORS.includes(b.sector)) throw new HttpError(400, 'Unknown sector.');
-        data.sector = String(b.sector);
+    if (b.sectors !== undefined) {
+        const list = Array.isArray(b.sectors) ? [...new Set(b.sectors.map(String))] : [];
+        if (list.some(s => !SECTORS.includes(s))) throw new HttpError(400, 'Unknown sector.');
+        data.sectors = list;
     }
     // Empty token field = keep existing token
     if (b.mobile !== undefined) data.mobile = cleanMobile(b.mobile);
@@ -919,7 +920,7 @@ app.post('/api/admin/tax-rules', authenticateToken, ADMIN, async (req, res) => {
 app.get('/api/admin/item-tax-rules', authenticateToken, ADMIN, async (req, res) => {
     const items = await prisma.product.findMany({
         where: { saleType: { not: '' } },
-        include: { tenant: { select: { id: true, companyName: true, sellerBusinessName: true, businessActivities: true, sector: true, sellerNtnCnic: true, sellerNtn: true, sellerCnic: true, sellerStrn: true } } },
+        include: { tenant: { select: { id: true, companyName: true, sellerBusinessName: true, businessActivities: true, sectors: true, sellerNtnCnic: true, sellerNtn: true, sellerCnic: true, sellerStrn: true } } },
         orderBy: [{ tenantId: 'asc' }, { name: 'asc' }],
         take: 10000,
     });
@@ -1969,7 +1970,7 @@ async function hsSource(code) {
 const ITEM_DETAIL_FIELDS = importMerge.ITEM_FIELDS.filter(f => !importMerge.RULE_KEYS.has(f.key));
 const ITEM_RULE_FIELDS = importMerge.ITEM_FIELDS.filter(f => importMerge.RULE_KEYS.has(f.key));
 async function setTaxRule(req, product, r) {
-    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: product.tenantId }, select: { businessActivities: true, sector: true } });
+    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: product.tenantId }, select: { businessActivities: true, sectors: true } });
     const changes = importMerge.diffRecord(itemImport.savedItem(product), itemImport.savedItem(r), ITEM_RULE_FIELDS);
     const [rule, updated] = await prisma.$transaction([
         prisma.productTaxRule.create({ data: { ...r, tenantId: product.tenantId, productId: product.id, industry: industryOf(t), createdBy: req.user.email } }),
@@ -2066,7 +2067,7 @@ app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_
     const r = await checkItemImport(tenantId, req.body);
     if (r.errors.length) return res.status(400).json({ error: 'The file has problems — check it again.', errors: r.errors, warnings: r.warnings });
     const [t, { list: saleTypes }, codes] = await Promise.all([
-        prisma.tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { businessActivities: true, sector: true } }),
+        prisma.tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { businessActivities: true, sectors: true } }),
         saleTypeList(tenantId),
         prisma.hsCode.findMany({ select: { code: true, description: true } }),
     ]);

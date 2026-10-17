@@ -274,7 +274,8 @@
           </div>
           <div class="sm:col-span-2"><span class="block text-xs text-slate-600 mb-1">Business nature — same as chosen in IRIS (tick all that apply)</span>
             <div id="bizActs" class="flex flex-wrap gap-x-4 gap-y-1 text-sm"></div></div>
-          <label><span>Sector (as in IRIS)</span><select name="sector"></select></label>
+          <div class="sm:col-span-2"><span class="block text-xs text-slate-600 mb-1">Sector — same as chosen in IRIS (tick all that apply)</span>
+            <div id="sectorBoxes" class="flex flex-wrap gap-x-4 gap-y-1 text-sm"></div></div>
       </div>
       <div class="mt-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button></div>
     </section>
@@ -1216,7 +1217,7 @@ async function loadClients() {
     $('#clientRows').innerHTML = rows.map(c => {
       const ob = c.onboarding, live = ob.done === ob.total;
       return `<tr class="border-b align-top">
-      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc(c.sector || 'sector not set')}</div></td>
+      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc((c.sectors || []).join(', ') || 'sector not set')}</div></td>
       <td class="text-xs">${esc(c.emails.join(', '))}</td>
       <td class="text-xs font-mono whitespace-nowrap">${c.mobile ? esc(c.mobile) : '<span class="text-slate-300">—</span>'}</td>
       <td class="text-xs whitespace-nowrap"><span class="px-2 py-0.5 rounded ${c.active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}">${c.active ? 'Active' : 'Inactive'}</span>
@@ -1935,10 +1936,10 @@ function fillSettings(s) {
   f.fbrToken.value = '';
   if (!$('#bizActs').children.length) {
     $('#bizActs').innerHTML = S.meta.businessActivities.map(a => `<label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" name="businessActivities" value="${esc(a)}" style="width:auto"> ${esc(a)}</label>`).join('');
-    f.sector.innerHTML = '<option value="">— select —</option>' + S.meta.sectors.map(x => `<option>${esc(x)}</option>`).join('');
+    $('#sectorBoxes').innerHTML = S.meta.sectors.map(x => `<label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" name="sectors" value="${esc(x)}" style="width:auto"> ${esc(x)}</label>`).join('');
   }
   for (const cb of f.querySelectorAll('[name=businessActivities]')) cb.checked = (s.businessActivities || []).includes(cb.value);
-  f.sector.value = s.sector || '';
+  for (const cb of f.querySelectorAll('[name=sectors]')) cb.checked = (s.sectors || []).includes(cb.value);
   $('#tokenMasked').textContent = s.fbrTokenMasked ? `(saved for this client: ${s.fbrTokenMasked})` : '(not set for this client)';
   $('#tokenRemove').classList.toggle('hidden', !s.fbrTokenMasked);
   $('#sellerCheck').textContent = '';
@@ -2006,6 +2007,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   const fd = new FormData(e.target);
   const body = Object.fromEntries(fd);
   body.businessActivities = fd.getAll('businessActivities');
+  body.sectors = fd.getAll('sectors');
   if (!body.fbrToken) delete body.fbrToken;
   if (body.fbrEnv === 'PRODUCTION' && S.managed.fbrEnv !== 'PRODUCTION' &&
       !confirm(`Switch ${S.managed.companyName} to PRODUCTION? Their invoices will be filed with FBR for real. Make sure you saved the production token.`)) return;

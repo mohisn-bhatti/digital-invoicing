@@ -20,7 +20,7 @@ async function scenarioResults(prisma, tenantId) {
 async function checklist(prisma, tenant) {
     // IRIS is the official record: when the admin has recorded what IRIS shows, its list is the one to pass
     const iris = tenant.irisScenarios && Array.isArray(tenant.irisScenarios.assigned) ? tenant.irisScenarios : null;
-    const assigned = iris?.assigned.length ? iris.assigned : assignedScenarios(tenant.businessActivities, tenant.sector);
+    const assigned = iris?.assigned.length ? iris.assigned : assignedScenarios(tenant.businessActivities, tenant.sectors);
     const results = await scenarioResults(prisma, tenant.id);
     const irisPassed = new Set(iris?.passed || []);
     const scenarios = assigned.map(id => ({
@@ -36,7 +36,7 @@ async function checklist(prisma, tenant) {
 
     const steps = [
         { key: 'seller', label: 'Seller details: NTN, name, province, address', done: sellerDone },
-        { key: 'profile', label: 'Business nature & sector, same as chosen in IRIS', done: tenant.businessActivities.length > 0 && Boolean(tenant.sector) },
+        { key: 'profile', label: 'Business nature & sector, same as chosen in IRIS', done: tenant.businessActivities.length > 0 && tenant.sectors.length > 0 },
         { key: 'token', label: 'PRAL sandbox token saved', done: Boolean(tenant.fbrTokenEnc) },
         { key: 'scenarios', label: `Sandbox scenarios passed: ${passed} of ${assigned.length}${iris ? ' (as IRIS shows)' : ''}`, done: assigned.length > 0 && passed === assigned.length },
         { key: 'production', label: 'Production token saved and environment set to Production', done: tenant.fbrEnv === 'PRODUCTION' && Boolean(tenant.fbrTokenEnc) },
