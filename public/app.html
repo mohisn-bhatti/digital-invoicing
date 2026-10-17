@@ -215,6 +215,11 @@
       <button class="bg-emerald-700 text-white rounded py-2">Create</button>
     </form>
   </div>
+  <div id="userRequests" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-5 overflow-x-auto">
+    <h2 class="font-semibold mb-1">Users waiting for approval</h2>
+    <p class="text-xs text-slate-600 mb-3">Added by a client's owner. They cannot log in until you approve.</p>
+    <table class="w-full text-sm"><tbody id="userRequestRows"></tbody></table>
+  </div>
   <div class="bg-white rounded-xl shadow p-5 overflow-x-auto">
     <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
       <h2 class="font-semibold">Clients</h2>
@@ -906,7 +911,7 @@
       <label><span>Email</span><input name="email" type="email" required autocomplete="off"></label>
       <label><span>Temporary password</span><input name="password" type="password" required minlength="8" autocomplete="new-password" data-pwrules="quiet"></label>
       <label><span>Role</span><select name="tenantRole"><option value="CASHIER">Cashier</option><option value="ACCOUNTANT">Accountant</option><option value="OWNER">Owner</option></select></label>
-      <button class="bg-emerald-700 text-white rounded px-3 py-2">Add user</button>
+      <button class="bg-emerald-700 text-white rounded px-3 py-2">Request user</button>
     </form>
     <div class="overflow-x-auto"><table class="w-full">
       <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">User</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead>
@@ -1211,7 +1216,27 @@ $('#loginForm').addEventListener('submit', async e => {
 
 /* ---------- Admin ---------- */
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+async function loadUserRequests() {
+  try {
+    const list = await api('/api/admin/user-requests');
+    $('#userRequests').classList.toggle('hidden', !list.length);
+    $('#userRequestRows').innerHTML = list.map(u => `<tr class="border-b last:border-0 align-top">
+      <td class="py-1.5"><div class="font-medium">${esc(u.companyName)}</div><div class="text-xs text-slate-500">asked by ${esc(u.requestedBy || 'owner')} · ${fmtDate(u.createdAt)}</div></td>
+      <td><div>${esc(u.name || '—')}</div><div class="text-xs text-slate-500">${esc(u.email)}</div></td>
+      <td class="text-xs">${esc(u.tenantRole[0] + u.tenantRole.slice(1).toLowerCase())}</td>
+      <td class="text-right whitespace-nowrap text-xs">
+        <button class="text-emerald-700 underline mr-2" onclick="decideUser('${u.tenantId}','${u.id}',true)">Approve</button>
+        <button class="text-red-600 underline" onclick="decideUser('${u.tenantId}','${u.id}',false)">Reject</button></td></tr>`).join('');
+  } catch (err) { toast(err.message); }
+}
+async function decideUser(tenantId, id, approve) {
+  if (!approve && !confirm('Reject this request? The user is removed.')) return;
+  try { await api(`/api/admin/clients/${tenantId}/users/${id}/${approve ? 'approve' : 'reject'}`, { method: 'POST', body: {} }); toast(approve ? 'User approved — they can log in now' : 'Request rejected', true); }
+  catch (err) { toast(err.message); }
+  loadUserRequests(); if (S.manageId) loadUsers('a');
+}
 async function loadClients() {
+  loadUserRequests();
   try {
     const rows = await api('/api/admin/clients');
     $('#clientRows').innerHTML = rows.map(c => {
@@ -1359,13 +1384,15 @@ async function loadUsers(prefix) {
     const list = await api(usersBase(prefix));
     $(`#${prefix}UserRows`).innerHTML = list.map(u => `<tr class="border-b last:border-0 align-top">
       <td class="py-1.5"><div class="font-medium">${esc(u.name || '—')}</div><div class="text-xs text-slate-500">${esc(u.email)}</div></td>
-      <td><select class="!w-auto !text-xs" onchange="updateUser('${prefix}','${u.id}',{tenantRole:this.value})">
+      <td><select class="!w-auto !text-xs" ${u.pendingApproval && prefix === 'c' ? 'disabled' : ''} onchange="updateUser('${prefix}','${u.id}',{tenantRole:this.value})">
         ${['OWNER', 'ACCOUNTANT', 'CASHIER'].map(r => `<option value="${r}" ${r === u.tenantRole ? 'selected' : ''}>${r[0] + r.slice(1).toLowerCase()}</option>`).join('')}</select></td>
-      <td class="text-xs">${u.active ? '<span class="text-emerald-700">Active</span>' : '<span class="text-slate-500">Disabled</span>'}${u.locked ? ' · <span class="text-red-700">Locked</span>' : ''}${u.mustChangePassword ? ' · <span class="text-amber-700">must set password</span>' : ''}</td>
+      <td class="text-xs">${u.pendingApproval ? '<span class="text-amber-700">Waiting for admin approval</span>' : u.active ? '<span class="text-emerald-700">Active</span>' : '<span class="text-slate-500">Disabled</span>'}${u.locked ? ' · <span class="text-red-700">Locked</span>' : ''}${u.mustChangePassword ? ' · <span class="text-amber-700">must set password</span>' : ''}</td>
       <td class="text-xs">${u.lastLoginAt ? fmtDate(u.lastLoginAt) : '—'}</td>
-      <td class="text-right whitespace-nowrap text-xs">
+      <td class="text-right whitespace-nowrap text-xs">${u.pendingApproval ? (prefix === 'a'
+        ? `<button class="text-emerald-700 underline mr-2" onclick="decideUser('${S.manageId}','${u.id}',true)">Approve</button><button class="text-red-600 underline" onclick="decideUser('${S.manageId}','${u.id}',false)">Reject</button>`
+        : '<span class="text-slate-500">Pending</span>') : `
         <button class="text-emerald-700 underline mr-2" onclick="resetUserPw('${prefix}','${u.id}','${esc(u.email)}')">Reset password</button>
-        <button class="${u.active ? 'text-red-600' : 'text-emerald-700'} underline" onclick="updateUser('${prefix}','${u.id}',{active:${!u.active}})">${u.active ? 'Disable' : 'Enable'}</button></td></tr>`).join('')
+        <button class="${u.active ? 'text-red-600' : 'text-emerald-700'} underline" onclick="updateUser('${prefix}','${u.id}',{active:${!u.active}})">${u.active ? 'Disable' : 'Enable'}</button>`}</td></tr>`).join('')
       || '<tr><td colspan="5" class="py-2 text-slate-500">No users.</td></tr>';
   } catch (err) { toast(err.message); }
 }
@@ -1386,7 +1413,7 @@ for (const prefix of ['c', 'a']) {
     e.preventDefault();
     try {
       await api(usersBase(prefix), { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
-      e.target.reset(); toast('User added — they set their own password at first login', true); loadUsers(prefix);
+      e.target.reset(); toast(prefix === 'a' ? 'User added — they set their own password at first login' : 'Request sent — the user can log in once the administrator approves', true); loadUsers(prefix);
     } catch (err) { toast(err.message); }
   });
 }

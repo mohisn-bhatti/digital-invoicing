@@ -244,6 +244,7 @@ app.post('/api/auth/login', async (req, res) => {
         await audit({ ip: req.ip }, { tenantId: user?.tenantId ?? null, userEmail: mail, action: summary.includes('locked') ? 'auth.locked' : 'auth.login_failed', summary });
         throw new HttpError(400, 'Invalid email or password.');
     }
+    if (user.pendingApproval) throw new HttpError(403, 'This user is waiting for the administrator\'s approval. You will be able to log in once it is approved.');
     if (!user.active) throw new HttpError(403, 'This account has been disabled. Contact your account owner or administrator.');
     if (user.tenant && user.tenant.active === false) throw new HttpError(403, 'This business account is inactive. Contact ETAX to reactivate it.');
     const fresh = await prisma.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() }, include: { tenant: true } });
@@ -558,7 +559,7 @@ app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), as
 
 // ---------- Users inside a client (Owner manages own staff; super admin manages any client) ----------
 const TENANT_ROLES = ['OWNER', 'ACCOUNTANT', 'CASHIER'];
-const userView = u => ({ id: u.id, email: u.email, name: u.name, tenantRole: u.tenantRole, active: u.active,
+const userView = u => ({ id: u.id, email: u.email, name: u.name, tenantRole: u.tenantRole, active: u.active, pendingApproval: u.pendingApproval, requestedBy: u.requestedBy,
     locked: Boolean(u.lockedUntil && u.lockedUntil > new Date()), mustChangePassword: u.mustChangePassword, lastLoginAt: u.lastLoginAt, createdAt: u.createdAt });
 
 async function tenantUsers(tenantId) {
@@ -571,11 +572,15 @@ async function addTenantUser(req, tenantId, b) {
     if (!TENANT_ROLES.includes(b.tenantRole)) throw new HttpError(400, 'Choose a role: Owner, Accountant or Cashier.');
     const pw = checkNewPassword(b.password, email);
     if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
+    // an owner's new user waits for the administrator; the administrator's own additions are live at once
+    const request = req.user.role !== 'SUPER_ADMIN';
     const u = await prisma.user.create({ data: {
         email, name: String(b.name || '').trim().slice(0, 100), password: await bcrypt.hash(pw, 10),
         role: 'CLIENT_USER', tenantRole: b.tenantRole, tenantId, mustChangePassword: true, // first login asks for their own password
+        ...(request ? { active: false, pendingApproval: true, requestedBy: req.user.email } : {}),
     } });
-    await audit(req, { tenantId, action: 'user.create', entityType: 'User', entityId: u.id, summary: `User ${email} added as ${b.tenantRole.toLowerCase()}` });
+    await audit(req, { tenantId, action: request ? 'user.request' : 'user.create', entityType: 'User', entityId: u.id,
+        summary: request ? `User ${email} requested as ${b.tenantRole.toLowerCase()} — waiting for administrator approval` : `User ${email} added as ${b.tenantRole.toLowerCase()}` });
     return userView(u);
 }
 async function findTenantUser(tenantId, id) {
@@ -589,6 +594,7 @@ async function activeOwners(tenantId, exceptId) {
 async function updateTenantUser(req, tenantId, id, b) {
     const u = await findTenantUser(tenantId, id);
     const data = {};
+    if (u.pendingApproval && req.user.role !== 'SUPER_ADMIN') throw new HttpError(403, 'This user is waiting for the administrator\'s approval.');
     if (b.name !== undefined) data.name = String(b.name).trim().slice(0, 100);
     if (b.tenantRole !== undefined) {
         if (!TENANT_ROLES.includes(b.tenantRole)) throw new HttpError(400, 'Unknown role.');
@@ -605,12 +611,26 @@ async function updateTenantUser(req, tenantId, id, b) {
 }
 async function resetTenantUserPassword(req, tenantId, id, password) {
     const u = await findTenantUser(tenantId, id);
+    if (u.pendingApproval && req.user.role !== 'SUPER_ADMIN') throw new HttpError(403, 'This user is waiting for the administrator\'s approval.');
     const pw = checkNewPassword(password, u.email);
     const upd = await prisma.user.update({ where: { id: u.id }, data: {
         password: await bcrypt.hash(pw, 10), mustChangePassword: true, tokenVersion: { increment: 1 }, failedLogins: 0, lockedUntil: null,
     } });
     await audit(req, { tenantId, action: 'user.password_reset', entityType: 'User', entityId: u.id, summary: `Password reset for ${u.email} (must change at next login; account unlocked)` });
     return userView(upd);
+}
+// Administrator decides on a user an owner asked for
+async function decideUserRequest(req, tenantId, id, approve) {
+    const u = await findTenantUser(tenantId, id);
+    if (!u.pendingApproval) throw new HttpError(400, 'This user is not waiting for approval.');
+    if (approve) {
+        await prisma.user.update({ where: { id: u.id }, data: { pendingApproval: false, active: true } });
+        await audit(req, { tenantId, action: 'user.approve', entityType: 'User', entityId: u.id, summary: `User ${u.email} approved (requested by ${u.requestedBy || 'owner'}) — can log in now` });
+    } else {
+        await prisma.user.delete({ where: { id: u.id } }); // never logged in: nothing else points at it
+        await audit(req, { tenantId, action: 'user.reject', entityType: 'User', entityId: u.id, summary: `User request for ${u.email} rejected (requested by ${u.requestedBy || 'owner'})` });
+    }
+    return { ok: true };
 }
 const OWNER_ONLY = requireTenantRole('OWNER');
 app.get('/api/client/users', authenticateToken, requireTenant, OWNER_ONLY, async (req, res) => res.json(await tenantUsers(req.user.tenantId)));
@@ -624,6 +644,12 @@ app.post('/api/admin/clients/:id/users', authenticateToken, ADMIN, async (req, r
     res.json(await addTenantUser(req, req.params.id, req.body || {}));
 });
 app.patch('/api/admin/clients/:id/users/:uid', authenticateToken, ADMIN, async (req, res) => res.json(await updateTenantUser(req, req.params.id, req.params.uid, req.body || {})));
+app.post('/api/admin/clients/:id/users/:uid/approve', authenticateToken, ADMIN, async (req, res) => res.json(await decideUserRequest(req, req.params.id, req.params.uid, true)));
+app.post('/api/admin/clients/:id/users/:uid/reject', authenticateToken, ADMIN, async (req, res) => res.json(await decideUserRequest(req, req.params.id, req.params.uid, false)));
+app.get('/api/admin/user-requests', authenticateToken, ADMIN, async (req, res) => {
+    const list = await prisma.user.findMany({ where: { role: 'CLIENT_USER', pendingApproval: true }, include: { tenant: { select: { id: true, companyName: true } } }, orderBy: { createdAt: 'asc' } });
+    res.json(list.map(u => ({ ...userView(u), tenantId: u.tenantId, companyName: u.tenant?.companyName })));
+});
 app.post('/api/admin/clients/:id/users/:uid/reset-password', authenticateToken, ADMIN, async (req, res) => res.json(await resetTenantUserPassword(req, req.params.id, req.params.uid, req.body?.password)));
 
 // Open a client's workspace (e.g. to run the sandbox scenarios). Returns a 2-hour client token for the admin.

@@ -43,6 +43,8 @@ model User {
   role               Role        @default(CLIENT_USER)
   tenantRole         TenantRole  @default(OWNER) // only for CLIENT_USER
   active             Boolean     @default(true)
+  pendingApproval    Boolean     @default(false) // added by a client owner: cannot log in until the administrator approves
+  requestedBy        String?     // email of the owner who asked for this user
   tokenVersion       Int         @default(0)     // bump to log the user out everywhere (password change / reset / deactivate)
   mustChangePassword Boolean     @default(false) // set after an admin/owner reset
   failedLogins       Int         @default(0)
