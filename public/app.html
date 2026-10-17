@@ -1664,7 +1664,7 @@ async function openSandboxRun() {
     const needBuyer = plan.scenarios.some(x => x.registeredBuyer && !x.passed);
     const provinces = sortProvinces(S.lists?.provinces || S.meta.provinces).map(p => `<option value="${esc(p)}">${esc(provinceLabel(p))}</option>`).join('');
     panel.innerHTML = `<p class="text-slate-600 mb-2">ETAX sends one test invoice per scenario to FBR's <b>sandbox</b> with the client's sandbox token: checked first, sent only when FBR says Valid. Nothing real is filed. Then check IRIS → Scenario Details.</p>
-      ${needBuyer ? `<div class="border rounded p-2 mb-3 bg-white"><div class="font-medium mb-1">Registered buyer for SN001 <span class="font-normal text-slate-500">— a real buyer that is active on FBR's list</span></div>
+      ${needBuyer ? `<div class="border rounded p-2 mb-3 bg-white"><div class="font-medium mb-1">Registered buyer for ${plan.scenarios.filter(x => x.registeredBuyer && !x.passed).map(x => x.id).join(' / ')} <span class="font-normal text-slate-500">— a real buyer that is active on FBR's list</span></div>
         <div class="grid sm:grid-cols-4 gap-2 items-end">
           <label class="sm:col-span-4"><span>Saved registered buyer</span><select id="sbxBuyerSel"><option value="">— type one below —</option>${plan.buyers.map(b => `<option value="${b.id}">${esc(b.businessName)} · ${esc(b.ntn || b.cnic)}</option>`).join('')}</select></label>
           <label><span>NTN / CNIC</span><input id="sbxNtn" inputmode="numeric" autocomplete="off"></label>
