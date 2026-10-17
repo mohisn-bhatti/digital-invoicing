@@ -166,9 +166,9 @@ app.get('/contact', page('contact.html'));
 app.get('/api/public/site', (req, res) => {
     res.json({
         name: 'ETAX',
-        whatsapp: (process.env.CONTACT_WHATSAPP || '').replace(/\D/g, ''), // e.g. 923001234567
+        whatsapp: (process.env.CONTACT_WHATSAPP || '923334351102').replace(/\D/g, ''), // e.g. 923001234567
         phone: process.env.CONTACT_PHONE || '',
-        email: process.env.CONTACT_EMAIL || '',
+        email: process.env.CONTACT_EMAIL || 'e.tax.di@gmail.com',
         city: process.env.CONTACT_CITY || '',
     });
 });
