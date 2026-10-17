@@ -93,7 +93,7 @@ function tenantToken(tenant) {
 }
 
 // Business nature and sector as chosen in IRIS, e.g. "Retailer · Wholesale / Retails"
-const industryOf = t => [t.businessActivities.join(', '), t.sector].filter(Boolean).join(' · ');
+const industryOf = t => [t.businessActivities.join(', '), t.sectors.join(', ')].filter(Boolean).join(' · ');
 
 // What a client (and its receipts) may see: no token, no IRIS profile
 function clientTenant(t) {
@@ -132,7 +132,7 @@ function publicTenant(t) {
         tokenExpiresAt: t.tokenIssuedAt ? new Date(new Date(t.tokenIssuedAt).setFullYear(new Date(t.tokenIssuedAt).getFullYear() + 5)) : null,
         tokenExpiring: Boolean(t.tokenIssuedAt && Date.now() > new Date(t.tokenIssuedAt).setFullYear(new Date(t.tokenIssuedAt).getFullYear() + 5) - 60 * 86400000),
         businessActivities: t.businessActivities,
-        sector: t.sector,
+        sectors: t.sectors,
         invoiceNumberFormat: t.invoiceNumberFormat,
         softwareRegNo: t.softwareRegNo,
         authLetterRef: t.authLetterRef,
@@ -244,6 +244,7 @@ app.post('/api/auth/login', async (req, res) => {
         await audit({ ip: req.ip }, { tenantId: user?.tenantId ?? null, userEmail: mail, action: summary.includes('locked') ? 'auth.locked' : 'auth.login_failed', summary });
         throw new HttpError(400, 'Invalid email or password.');
     }
+    if (user.pendingApproval) throw new HttpError(403, 'This user is waiting for the administrator\'s approval. You will be able to log in once it is approved.');
     if (!user.active) throw new HttpError(403, 'This account has been disabled. Contact your account owner or administrator.');
     if (user.tenant && user.tenant.active === false) throw new HttpError(403, 'This business account is inactive. Contact ETAX to reactivate it.');
     const fresh = await prisma.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() }, include: { tenant: true } });
@@ -558,7 +559,7 @@ app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), as
 
 // ---------- Users inside a client (Owner manages own staff; super admin manages any client) ----------
 const TENANT_ROLES = ['OWNER', 'ACCOUNTANT', 'CASHIER'];
-const userView = u => ({ id: u.id, email: u.email, name: u.name, tenantRole: u.tenantRole, active: u.active,
+const userView = u => ({ id: u.id, email: u.email, name: u.name, tenantRole: u.tenantRole, active: u.active, pendingApproval: u.pendingApproval, requestedBy: u.requestedBy,
     locked: Boolean(u.lockedUntil && u.lockedUntil > new Date()), mustChangePassword: u.mustChangePassword, lastLoginAt: u.lastLoginAt, createdAt: u.createdAt });
 
 async function tenantUsers(tenantId) {
@@ -571,11 +572,15 @@ async function addTenantUser(req, tenantId, b) {
     if (!TENANT_ROLES.includes(b.tenantRole)) throw new HttpError(400, 'Choose a role: Owner, Accountant or Cashier.');
     const pw = checkNewPassword(b.password, email);
     if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
+    // an owner's new user waits for the administrator; the administrator's own additions are live at once
+    const request = req.user.role !== 'SUPER_ADMIN';
     const u = await prisma.user.create({ data: {
         email, name: String(b.name || '').trim().slice(0, 100), password: await bcrypt.hash(pw, 10),
         role: 'CLIENT_USER', tenantRole: b.tenantRole, tenantId, mustChangePassword: true, // first login asks for their own password
+        ...(request ? { active: false, pendingApproval: true, requestedBy: req.user.email } : {}),
     } });
-    await audit(req, { tenantId, action: 'user.create', entityType: 'User', entityId: u.id, summary: `User ${email} added as ${b.tenantRole.toLowerCase()}` });
+    await audit(req, { tenantId, action: request ? 'user.request' : 'user.create', entityType: 'User', entityId: u.id,
+        summary: request ? `User ${email} requested as ${b.tenantRole.toLowerCase()} — waiting for administrator approval` : `User ${email} added as ${b.tenantRole.toLowerCase()}` });
     return userView(u);
 }
 async function findTenantUser(tenantId, id) {
@@ -589,28 +594,51 @@ async function activeOwners(tenantId, exceptId) {
 async function updateTenantUser(req, tenantId, id, b) {
     const u = await findTenantUser(tenantId, id);
     const data = {};
+    if (u.pendingApproval && req.user.role !== 'SUPER_ADMIN') throw new HttpError(403, 'This user is waiting for the administrator\'s approval.');
     if (b.name !== undefined) data.name = String(b.name).trim().slice(0, 100);
     if (b.tenantRole !== undefined) {
         if (!TENANT_ROLES.includes(b.tenantRole)) throw new HttpError(400, 'Unknown role.');
         data.tenantRole = b.tenantRole;
     }
     if (b.active !== undefined) data.active = Boolean(b.active);
+    // Correcting a mistyped login email: administrator only (owners can never change it, even by calling the API)
+    if (b.email !== undefined && String(b.email).toLowerCase().trim() !== u.email) {
+        if (req.user.role !== 'SUPER_ADMIN') throw new HttpError(403, 'Only the administrator can change a login email.');
+        const email = String(b.email).toLowerCase().trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Enter a valid email.');
+        if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
+        data.email = email;
+    }
     const losesOwner = u.tenantRole === 'OWNER' && u.active && (data.tenantRole && data.tenantRole !== 'OWNER' || data.active === false);
     if (losesOwner && !(await activeOwners(tenantId, u.id))) throw new HttpError(400, 'Keep at least one active owner on the account.');
-    if (data.active === false || (data.tenantRole && data.tenantRole !== u.tenantRole)) data.tokenVersion = { increment: 1 }; // sign them out
+    if (data.email || data.active === false || (data.tenantRole && data.tenantRole !== u.tenantRole)) data.tokenVersion = { increment: 1 }; // sign them out
     const upd = await prisma.user.update({ where: { id: u.id }, data });
-    const what = [data.tenantRole && `role → ${data.tenantRole.toLowerCase()}`, data.active === false && 'disabled', data.active === true && !u.active && 'enabled', data.name !== undefined && data.name !== u.name && 'name changed'].filter(Boolean);
+    const what = [data.email && `login email ${u.email} → ${data.email} (signed out)`, data.tenantRole && `role → ${data.tenantRole.toLowerCase()}`, data.active === false && 'disabled', data.active === true && !u.active && 'enabled', data.name !== undefined && data.name !== u.name && 'name changed'].filter(Boolean);
     if (what.length) await audit(req, { tenantId, action: 'user.update', entityType: 'User', entityId: u.id, summary: `User ${u.email}: ${what.join(', ')}` });
     return userView(upd);
 }
 async function resetTenantUserPassword(req, tenantId, id, password) {
     const u = await findTenantUser(tenantId, id);
+    if (u.pendingApproval && req.user.role !== 'SUPER_ADMIN') throw new HttpError(403, 'This user is waiting for the administrator\'s approval.');
     const pw = checkNewPassword(password, u.email);
     const upd = await prisma.user.update({ where: { id: u.id }, data: {
         password: await bcrypt.hash(pw, 10), mustChangePassword: true, tokenVersion: { increment: 1 }, failedLogins: 0, lockedUntil: null,
     } });
     await audit(req, { tenantId, action: 'user.password_reset', entityType: 'User', entityId: u.id, summary: `Password reset for ${u.email} (must change at next login; account unlocked)` });
     return userView(upd);
+}
+// Administrator decides on a user an owner asked for
+async function decideUserRequest(req, tenantId, id, approve) {
+    const u = await findTenantUser(tenantId, id);
+    if (!u.pendingApproval) throw new HttpError(400, 'This user is not waiting for approval.');
+    if (approve) {
+        await prisma.user.update({ where: { id: u.id }, data: { pendingApproval: false, active: true } });
+        await audit(req, { tenantId, action: 'user.approve', entityType: 'User', entityId: u.id, summary: `User ${u.email} approved (requested by ${u.requestedBy || 'owner'}) — can log in now` });
+    } else {
+        await prisma.user.delete({ where: { id: u.id } }); // never logged in: nothing else points at it
+        await audit(req, { tenantId, action: 'user.reject', entityType: 'User', entityId: u.id, summary: `User request for ${u.email} rejected (requested by ${u.requestedBy || 'owner'})` });
+    }
+    return { ok: true };
 }
 const OWNER_ONLY = requireTenantRole('OWNER');
 app.get('/api/client/users', authenticateToken, requireTenant, OWNER_ONLY, async (req, res) => res.json(await tenantUsers(req.user.tenantId)));
@@ -624,6 +652,12 @@ app.post('/api/admin/clients/:id/users', authenticateToken, ADMIN, async (req, r
     res.json(await addTenantUser(req, req.params.id, req.body || {}));
 });
 app.patch('/api/admin/clients/:id/users/:uid', authenticateToken, ADMIN, async (req, res) => res.json(await updateTenantUser(req, req.params.id, req.params.uid, req.body || {})));
+app.post('/api/admin/clients/:id/users/:uid/approve', authenticateToken, ADMIN, async (req, res) => res.json(await decideUserRequest(req, req.params.id, req.params.uid, true)));
+app.post('/api/admin/clients/:id/users/:uid/reject', authenticateToken, ADMIN, async (req, res) => res.json(await decideUserRequest(req, req.params.id, req.params.uid, false)));
+app.get('/api/admin/user-requests', authenticateToken, ADMIN, async (req, res) => {
+    const list = await prisma.user.findMany({ where: { role: 'CLIENT_USER', pendingApproval: true }, include: { tenant: { select: { id: true, companyName: true } } }, orderBy: { createdAt: 'asc' } });
+    res.json(list.map(u => ({ ...userView(u), tenantId: u.tenantId, companyName: u.tenant?.companyName })));
+});
 app.post('/api/admin/clients/:id/users/:uid/reset-password', authenticateToken, ADMIN, async (req, res) => res.json(await resetTenantUserPassword(req, req.params.id, req.params.uid, req.body?.password)));
 
 // Open a client's workspace (e.g. to run the sandbox scenarios). Returns a 2-hour client token for the admin.
@@ -684,7 +718,7 @@ app.get('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
 
 const SETTING_LABELS = {
     mobile: 'Mobile number', active: 'Status', sellerNtn: 'Seller NTN', sellerCnic: 'Seller CNIC', sellerNtnCnic: 'Seller number sent to FBR', sellerStrn: 'STRN', sellerBusinessName: 'Business name', sellerProvince: 'Province',
-    sellerAddress: 'Address', fbrEnv: 'Environment', furtherTaxRate: 'Further tax %', businessActivities: 'Business nature', sector: 'Sector',
+    sellerAddress: 'Address', fbrEnv: 'Environment', furtherTaxRate: 'Further tax %', businessActivities: 'Business nature', sectors: 'Sector',
     invoiceNumberFormat: 'Invoice number format', softwareRegNo: 'Software reg. no.', authLetterRef: 'Authorization letter ref', authLetterAt: 'Authorization letter date',
 };
 app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
@@ -740,9 +774,10 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
         if (list.some(a => !BUSINESS_ACTIVITIES.includes(a))) throw new HttpError(400, 'Unknown business nature.');
         data.businessActivities = list;
     }
-    if (b.sector !== undefined) {
-        if (b.sector && !SECTORS.includes(b.sector)) throw new HttpError(400, 'Unknown sector.');
-        data.sector = String(b.sector);
+    if (b.sectors !== undefined) {
+        const list = Array.isArray(b.sectors) ? [...new Set(b.sectors.map(String))] : [];
+        if (list.some(s => !SECTORS.includes(s))) throw new HttpError(400, 'Unknown sector.');
+        data.sectors = list;
     }
     // Empty token field = keep existing token
     if (b.mobile !== undefined) data.mobile = cleanMobile(b.mobile);
@@ -919,7 +954,7 @@ app.post('/api/admin/tax-rules', authenticateToken, ADMIN, async (req, res) => {
 app.get('/api/admin/item-tax-rules', authenticateToken, ADMIN, async (req, res) => {
     const items = await prisma.product.findMany({
         where: { saleType: { not: '' } },
-        include: { tenant: { select: { id: true, companyName: true, sellerBusinessName: true, businessActivities: true, sector: true, sellerNtnCnic: true, sellerNtn: true, sellerCnic: true, sellerStrn: true } } },
+        include: { tenant: { select: { id: true, companyName: true, sellerBusinessName: true, businessActivities: true, sectors: true, sellerNtnCnic: true, sellerNtn: true, sellerCnic: true, sellerStrn: true } } },
         orderBy: [{ tenantId: 'asc' }, { name: 'asc' }],
         take: 10000,
     });
@@ -1969,7 +2004,7 @@ async function hsSource(code) {
 const ITEM_DETAIL_FIELDS = importMerge.ITEM_FIELDS.filter(f => !importMerge.RULE_KEYS.has(f.key));
 const ITEM_RULE_FIELDS = importMerge.ITEM_FIELDS.filter(f => importMerge.RULE_KEYS.has(f.key));
 async function setTaxRule(req, product, r) {
-    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: product.tenantId }, select: { businessActivities: true, sector: true } });
+    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: product.tenantId }, select: { businessActivities: true, sectors: true } });
     const changes = importMerge.diffRecord(itemImport.savedItem(product), itemImport.savedItem(r), ITEM_RULE_FIELDS);
     const [rule, updated] = await prisma.$transaction([
         prisma.productTaxRule.create({ data: { ...r, tenantId: product.tenantId, productId: product.id, industry: industryOf(t), createdBy: req.user.email } }),
@@ -2066,7 +2101,7 @@ app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_
     const r = await checkItemImport(tenantId, req.body);
     if (r.errors.length) return res.status(400).json({ error: 'The file has problems — check it again.', errors: r.errors, warnings: r.warnings });
     const [t, { list: saleTypes }, codes] = await Promise.all([
-        prisma.tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { businessActivities: true, sector: true } }),
+        prisma.tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { businessActivities: true, sectors: true } }),
         saleTypeList(tenantId),
         prisma.hsCode.findMany({ select: { code: true, description: true } }),
     ]);

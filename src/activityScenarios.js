@@ -1,5 +1,5 @@
 // DI API v1.12 §10 "Applicable Scenarios based on Business Activity" — generated from the spec text.
-// IRIS: Business Nature can be several, Sector is one. Assigned scenarios = union over the chosen natures.
+// IRIS: both Business Nature and Sector can be several. Assigned scenarios = union over every chosen nature and sector.
 const BUSINESS_ACTIVITIES = ["Manufacturer","Importer","Distributor","Wholesaler","Exporter","Retailer","Service Provider","Other"];
 const SECTORS = ["All Other Sectors","Steel","FMCG","Textile","Telecom","Petroleum","Electricity Distribution","Gas Distribution","Services","Automobile","CNG Stations","Pharmaceuticals","Wholesale / Retails"];
 
@@ -126,9 +126,9 @@ const ACTIVITY_SECTOR_SCENARIOS = {
     },
 };
 
-function assignedScenarios(activities, sector) {
+function assignedScenarios(activities, sectors) {
     const set = new Set();
-    for (const a of activities || []) for (const sn of ACTIVITY_SECTOR_SCENARIOS[a]?.[sector] || []) set.add(sn);
+    for (const a of activities || []) for (const s of sectors || []) for (const sn of ACTIVITY_SECTOR_SCENARIOS[a]?.[s] || []) set.add(sn);
     return [...set].sort();
 }
 

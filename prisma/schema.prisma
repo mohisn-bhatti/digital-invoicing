@@ -43,6 +43,8 @@ model User {
   role               Role        @default(CLIENT_USER)
   tenantRole         TenantRole  @default(OWNER) // only for CLIENT_USER
   active             Boolean     @default(true)
+  pendingApproval    Boolean     @default(false) // added by a client owner: cannot log in until the administrator approves
+  requestedBy        String?     // email of the owner who asked for this user
   tokenVersion       Int         @default(0)     // bump to log the user out everywhere (password change / reset / deactivate)
   mustChangePassword Boolean     @default(false) // set after an admin/owner reset
   failedLogins       Int         @default(0)
@@ -77,7 +79,7 @@ model Tenant {
   invoiceSeq         Int       @default(0)
   // As chosen in IRIS: decides the sandbox scenarios to pass (DI spec §10)
   businessActivities String[]  @default([])
-  sector             String    @default("")
+  sectors            String[]  @default([]) // IRIS lets several be ticked
   // Internal invoice number printed next to the FBR number, e.g. INV-{YYYY}-{NNNN} → INV-2026-0042
   invoiceNumberFormat String   @default("INV-{YYYY}-{NNNN}")
   softwareRegNo      String    @default("") // software registration no. from PRAL/FBR, printed on receipts

@@ -215,6 +215,11 @@
       <button class="bg-emerald-700 text-white rounded py-2">Create</button>
     </form>
   </div>
+  <div id="userRequests" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-5 overflow-x-auto">
+    <h2 class="font-semibold mb-1">Users waiting for approval</h2>
+    <p class="text-xs text-slate-600 mb-3">Added by a client's owner. They cannot log in until you approve.</p>
+    <table class="w-full text-sm"><tbody id="userRequestRows"></tbody></table>
+  </div>
   <div class="bg-white rounded-xl shadow p-5 overflow-x-auto">
     <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
       <h2 class="font-semibold">Clients</h2>
@@ -274,7 +279,8 @@
           </div>
           <div class="sm:col-span-2"><span class="block text-xs text-slate-600 mb-1">Business nature — same as chosen in IRIS (tick all that apply)</span>
             <div id="bizActs" class="flex flex-wrap gap-x-4 gap-y-1 text-sm"></div></div>
-          <label><span>Sector (as in IRIS)</span><select name="sector"></select></label>
+          <div class="sm:col-span-2"><span class="block text-xs text-slate-600 mb-1">Sector — same as chosen in IRIS (tick all that apply)</span>
+            <div id="sectorBoxes" class="flex flex-wrap gap-x-4 gap-y-1 text-sm"></div></div>
       </div>
       <div class="mt-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button></div>
     </section>
@@ -905,7 +911,7 @@
       <label><span>Email</span><input name="email" type="email" required autocomplete="off"></label>
       <label><span>Temporary password</span><input name="password" type="password" required minlength="8" autocomplete="new-password" data-pwrules="quiet"></label>
       <label><span>Role</span><select name="tenantRole"><option value="CASHIER">Cashier</option><option value="ACCOUNTANT">Accountant</option><option value="OWNER">Owner</option></select></label>
-      <button class="bg-emerald-700 text-white rounded px-3 py-2">Add user</button>
+      <button class="bg-emerald-700 text-white rounded px-3 py-2">Request user</button>
     </form>
     <div class="overflow-x-auto"><table class="w-full">
       <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">User</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead>
@@ -1210,13 +1216,33 @@ $('#loginForm').addEventListener('submit', async e => {
 
 /* ---------- Admin ---------- */
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+async function loadUserRequests() {
+  try {
+    const list = await api('/api/admin/user-requests');
+    $('#userRequests').classList.toggle('hidden', !list.length);
+    $('#userRequestRows').innerHTML = list.map(u => `<tr class="border-b last:border-0 align-top">
+      <td class="py-1.5"><div class="font-medium">${esc(u.companyName)}</div><div class="text-xs text-slate-500">asked by ${esc(u.requestedBy || 'owner')} · ${fmtDate(u.createdAt)}</div></td>
+      <td><div>${esc(u.name || '—')}</div><div class="text-xs text-slate-500">${esc(u.email)}</div></td>
+      <td class="text-xs">${esc(u.tenantRole[0] + u.tenantRole.slice(1).toLowerCase())}</td>
+      <td class="text-right whitespace-nowrap text-xs">
+        <button class="text-emerald-700 underline mr-2" onclick="decideUser('${u.tenantId}','${u.id}',true)">Approve</button>
+        <button class="text-red-600 underline" onclick="decideUser('${u.tenantId}','${u.id}',false)">Reject</button></td></tr>`).join('');
+  } catch (err) { toast(err.message); }
+}
+async function decideUser(tenantId, id, approve) {
+  if (!approve && !confirm('Reject this request? The user is removed.')) return;
+  try { await api(`/api/admin/clients/${tenantId}/users/${id}/${approve ? 'approve' : 'reject'}`, { method: 'POST', body: {} }); toast(approve ? 'User approved — they can log in now' : 'Request rejected', true); }
+  catch (err) { toast(err.message); }
+  loadUserRequests(); if (S.manageId) loadUsers('a');
+}
 async function loadClients() {
+  loadUserRequests();
   try {
     const rows = await api('/api/admin/clients');
     $('#clientRows').innerHTML = rows.map(c => {
       const ob = c.onboarding, live = ob.done === ob.total;
       return `<tr class="border-b align-top">
-      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc(c.sector || 'sector not set')}</div></td>
+      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc((c.sectors || []).join(', ') || 'sector not set')}</div></td>
       <td class="text-xs">${esc(c.emails.join(', '))}</td>
       <td class="text-xs font-mono whitespace-nowrap">${c.mobile ? esc(c.mobile) : '<span class="text-slate-300">—</span>'}</td>
       <td class="text-xs whitespace-nowrap"><span class="px-2 py-0.5 rounded ${c.active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}">${c.active ? 'Active' : 'Inactive'}</span>
@@ -1357,14 +1383,16 @@ async function loadUsers(prefix) {
   try {
     const list = await api(usersBase(prefix));
     $(`#${prefix}UserRows`).innerHTML = list.map(u => `<tr class="border-b last:border-0 align-top">
-      <td class="py-1.5"><div class="font-medium">${esc(u.name || '—')}</div><div class="text-xs text-slate-500">${esc(u.email)}</div></td>
-      <td><select class="!w-auto !text-xs" onchange="updateUser('${prefix}','${u.id}',{tenantRole:this.value})">
+      <td class="py-1.5"><div class="font-medium">${esc(u.name || '—')}</div><div class="text-xs text-slate-500">${esc(u.email)}${prefix === 'a' ? ` <button class="text-emerald-700 underline ml-1" onclick="editUserEmail('${u.id}','${esc(u.email)}')">Edit email</button>` : ''}</div></td>
+      <td><select class="!w-auto !text-xs" ${u.pendingApproval && prefix === 'c' ? 'disabled' : ''} onchange="updateUser('${prefix}','${u.id}',{tenantRole:this.value})">
         ${['OWNER', 'ACCOUNTANT', 'CASHIER'].map(r => `<option value="${r}" ${r === u.tenantRole ? 'selected' : ''}>${r[0] + r.slice(1).toLowerCase()}</option>`).join('')}</select></td>
-      <td class="text-xs">${u.active ? '<span class="text-emerald-700">Active</span>' : '<span class="text-slate-500">Disabled</span>'}${u.locked ? ' · <span class="text-red-700">Locked</span>' : ''}${u.mustChangePassword ? ' · <span class="text-amber-700">must set password</span>' : ''}</td>
+      <td class="text-xs">${u.pendingApproval ? '<span class="text-amber-700">Waiting for admin approval</span>' : u.active ? '<span class="text-emerald-700">Active</span>' : '<span class="text-slate-500">Disabled</span>'}${u.locked ? ' · <span class="text-red-700">Locked</span>' : ''}${u.mustChangePassword ? ' · <span class="text-amber-700">must set password</span>' : ''}</td>
       <td class="text-xs">${u.lastLoginAt ? fmtDate(u.lastLoginAt) : '—'}</td>
-      <td class="text-right whitespace-nowrap text-xs">
+      <td class="text-right whitespace-nowrap text-xs">${u.pendingApproval ? (prefix === 'a'
+        ? `<button class="text-emerald-700 underline mr-2" onclick="decideUser('${S.manageId}','${u.id}',true)">Approve</button><button class="text-red-600 underline" onclick="decideUser('${S.manageId}','${u.id}',false)">Reject</button>`
+        : '<span class="text-slate-500">Pending</span>') : `
         <button class="text-emerald-700 underline mr-2" onclick="resetUserPw('${prefix}','${u.id}','${esc(u.email)}')">Reset password</button>
-        <button class="${u.active ? 'text-red-600' : 'text-emerald-700'} underline" onclick="updateUser('${prefix}','${u.id}',{active:${!u.active}})">${u.active ? 'Disable' : 'Enable'}</button></td></tr>`).join('')
+        <button class="${u.active ? 'text-red-600' : 'text-emerald-700'} underline" onclick="updateUser('${prefix}','${u.id}',{active:${!u.active}})">${u.active ? 'Disable' : 'Enable'}</button>`}</td></tr>`).join('')
       || '<tr><td colspan="5" class="py-2 text-slate-500">No users.</td></tr>';
   } catch (err) { toast(err.message); }
 }
@@ -1373,6 +1401,13 @@ async function updateUser(prefix, id, body) {
   try { await api(`${usersBase(prefix)}/${id}`, { method: 'PATCH', body }); toast('User updated', true); }
   catch (err) { toast(err.message); }
   loadUsers(prefix);
+}
+async function editUserEmail(id, current) {
+  const email = prompt(`New login email for ${current}. The user is signed out and logs in with the new email and the same password:`, current);
+  if (!email || email.trim().toLowerCase() === current) return;
+  try { await api(`${usersBase('a')}/${id}`, { method: 'PATCH', body: { email } }); toast('Login email changed — the user must log in again', true); }
+  catch (err) { toast(err.message); }
+  loadUsers('a');
 }
 async function resetUserPw(prefix, id, email) {
   const pw = prompt(`New temporary password for ${email} — at least 8 characters with an uppercase letter, a lowercase letter, a number and a special character. They must change it at next login:`);
@@ -1385,7 +1420,7 @@ for (const prefix of ['c', 'a']) {
     e.preventDefault();
     try {
       await api(usersBase(prefix), { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
-      e.target.reset(); toast('User added — they set their own password at first login', true); loadUsers(prefix);
+      e.target.reset(); toast(prefix === 'a' ? 'User added — they set their own password at first login' : 'Request sent — the user can log in once the administrator approves', true); loadUsers(prefix);
     } catch (err) { toast(err.message); }
   });
 }
@@ -1935,10 +1970,10 @@ function fillSettings(s) {
   f.fbrToken.value = '';
   if (!$('#bizActs').children.length) {
     $('#bizActs').innerHTML = S.meta.businessActivities.map(a => `<label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" name="businessActivities" value="${esc(a)}" style="width:auto"> ${esc(a)}</label>`).join('');
-    f.sector.innerHTML = '<option value="">— select —</option>' + S.meta.sectors.map(x => `<option>${esc(x)}</option>`).join('');
+    $('#sectorBoxes').innerHTML = S.meta.sectors.map(x => `<label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" name="sectors" value="${esc(x)}" style="width:auto"> ${esc(x)}</label>`).join('');
   }
   for (const cb of f.querySelectorAll('[name=businessActivities]')) cb.checked = (s.businessActivities || []).includes(cb.value);
-  f.sector.value = s.sector || '';
+  for (const cb of f.querySelectorAll('[name=sectors]')) cb.checked = (s.sectors || []).includes(cb.value);
   $('#tokenMasked').textContent = s.fbrTokenMasked ? `(saved for this client: ${s.fbrTokenMasked})` : '(not set for this client)';
   $('#tokenRemove').classList.toggle('hidden', !s.fbrTokenMasked);
   $('#sellerCheck').textContent = '';
@@ -2006,6 +2041,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   const fd = new FormData(e.target);
   const body = Object.fromEntries(fd);
   body.businessActivities = fd.getAll('businessActivities');
+  body.sectors = fd.getAll('sectors');
   if (!body.fbrToken) delete body.fbrToken;
   if (body.fbrEnv === 'PRODUCTION' && S.managed.fbrEnv !== 'PRODUCTION' &&
       !confirm(`Switch ${S.managed.companyName} to PRODUCTION? Their invoices will be filed with FBR for real. Make sure you saved the production token.`)) return;
