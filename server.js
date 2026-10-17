@@ -601,11 +601,19 @@ async function updateTenantUser(req, tenantId, id, b) {
         data.tenantRole = b.tenantRole;
     }
     if (b.active !== undefined) data.active = Boolean(b.active);
+    // Correcting a mistyped login email: administrator only (owners can never change it, even by calling the API)
+    if (b.email !== undefined && String(b.email).toLowerCase().trim() !== u.email) {
+        if (req.user.role !== 'SUPER_ADMIN') throw new HttpError(403, 'Only the administrator can change a login email.');
+        const email = String(b.email).toLowerCase().trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'Enter a valid email.');
+        if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
+        data.email = email;
+    }
     const losesOwner = u.tenantRole === 'OWNER' && u.active && (data.tenantRole && data.tenantRole !== 'OWNER' || data.active === false);
     if (losesOwner && !(await activeOwners(tenantId, u.id))) throw new HttpError(400, 'Keep at least one active owner on the account.');
-    if (data.active === false || (data.tenantRole && data.tenantRole !== u.tenantRole)) data.tokenVersion = { increment: 1 }; // sign them out
+    if (data.email || data.active === false || (data.tenantRole && data.tenantRole !== u.tenantRole)) data.tokenVersion = { increment: 1 }; // sign them out
     const upd = await prisma.user.update({ where: { id: u.id }, data });
-    const what = [data.tenantRole && `role → ${data.tenantRole.toLowerCase()}`, data.active === false && 'disabled', data.active === true && !u.active && 'enabled', data.name !== undefined && data.name !== u.name && 'name changed'].filter(Boolean);
+    const what = [data.email && `login email ${u.email} → ${data.email} (signed out)`, data.tenantRole && `role → ${data.tenantRole.toLowerCase()}`, data.active === false && 'disabled', data.active === true && !u.active && 'enabled', data.name !== undefined && data.name !== u.name && 'name changed'].filter(Boolean);
     if (what.length) await audit(req, { tenantId, action: 'user.update', entityType: 'User', entityId: u.id, summary: `User ${u.email}: ${what.join(', ')}` });
     return userView(upd);
 }

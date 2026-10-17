@@ -1383,7 +1383,7 @@ async function loadUsers(prefix) {
   try {
     const list = await api(usersBase(prefix));
     $(`#${prefix}UserRows`).innerHTML = list.map(u => `<tr class="border-b last:border-0 align-top">
-      <td class="py-1.5"><div class="font-medium">${esc(u.name || '—')}</div><div class="text-xs text-slate-500">${esc(u.email)}</div></td>
+      <td class="py-1.5"><div class="font-medium">${esc(u.name || '—')}</div><div class="text-xs text-slate-500">${esc(u.email)}${prefix === 'a' ? ` <button class="text-emerald-700 underline ml-1" onclick="editUserEmail('${u.id}','${esc(u.email)}')">Edit email</button>` : ''}</div></td>
       <td><select class="!w-auto !text-xs" ${u.pendingApproval && prefix === 'c' ? 'disabled' : ''} onchange="updateUser('${prefix}','${u.id}',{tenantRole:this.value})">
         ${['OWNER', 'ACCOUNTANT', 'CASHIER'].map(r => `<option value="${r}" ${r === u.tenantRole ? 'selected' : ''}>${r[0] + r.slice(1).toLowerCase()}</option>`).join('')}</select></td>
       <td class="text-xs">${u.pendingApproval ? '<span class="text-amber-700">Waiting for admin approval</span>' : u.active ? '<span class="text-emerald-700">Active</span>' : '<span class="text-slate-500">Disabled</span>'}${u.locked ? ' · <span class="text-red-700">Locked</span>' : ''}${u.mustChangePassword ? ' · <span class="text-amber-700">must set password</span>' : ''}</td>
@@ -1401,6 +1401,13 @@ async function updateUser(prefix, id, body) {
   try { await api(`${usersBase(prefix)}/${id}`, { method: 'PATCH', body }); toast('User updated', true); }
   catch (err) { toast(err.message); }
   loadUsers(prefix);
+}
+async function editUserEmail(id, current) {
+  const email = prompt(`New login email for ${current}. The user is signed out and logs in with the new email and the same password:`, current);
+  if (!email || email.trim().toLowerCase() === current) return;
+  try { await api(`${usersBase('a')}/${id}`, { method: 'PATCH', body: { email } }); toast('Login email changed — the user must log in again', true); }
+  catch (err) { toast(err.message); }
+  loadUsers('a');
 }
 async function resetUserPw(prefix, id, email) {
   const pw = prompt(`New temporary password for ${email} — at least 8 characters with an uppercase letter, a lowercase letter, a number and a special character. They must change it at next login:`);
