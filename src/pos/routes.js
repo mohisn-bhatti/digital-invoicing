@@ -2,9 +2,12 @@
 // encryption key are shared with it.
 //
 // Who may do what (the SRS's three user classes, mapped to the business's own roles):
-//   Cashier        (CASHIER)     make sales, send again, correct the buyer, reprint receipts, see sales
-//   Manager        (ACCOUNTANT)  also items, returns (credit notes), cancel, record the result of a manual PRA check
-//   Administrator  (OWNER)       also the business profile, branches, counters, PRA tokens, decommissioning
+//   Cashier        (CASHIER)     make sales, send again, correct the buyer, reprint receipts, see sales; scan, find and add a customer,
+//                                the day-end sheet (their own sales only), read the defaults
+//   Manager        (ACCOUNTANT)  also items, returns (credit notes), cancel, record the result of a manual PRA check, customers' history,
+//                                reports and spreadsheets
+//   Administrator  (OWNER)       also the business profile, the defaults and the look of the receipt, branches, counters, PRA tokens,
+//                                decommissioning
 const { PosError } = require('./service');
 const { PosCalcError } = require('./calc');
 const { PosValidationError } = require('./validate');
@@ -37,6 +40,9 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
     app.get('/api/pos/egress-ip', ...owner, wrap(() => pra.egressIp()));
     app.get('/api/pos/profile', ...base, wrap(req => service.getProfile(req.user.tenantId)));
     app.put('/api/pos/profile', ...owner, wrap(req => service.saveProfile(ctxOf(req), req.body || {})));
+    // Defaults and the look of the receipt: everyone reads them (the cashier screen and the item form start from them), the owner sets them
+    app.get('/api/pos/settings', ...base, wrap(req => service.getSettings(req.user.tenantId)));
+    app.put('/api/pos/settings', ...owner, wrap(req => service.saveSettings(ctxOf(req), req.body || {})));
 
     app.get('/api/pos/branches', ...manager, wrap(req => service.listBranches(req.user.tenantId)));
     app.post('/api/pos/branches', ...owner, wrap(async req => { await service.createBranch(ctxOf(req), req.body || {}); return service.listBranches(req.user.tenantId); }));

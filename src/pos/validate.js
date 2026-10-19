@@ -104,6 +104,39 @@ function cleanProfile(p) {
     };
 }
 
+// What the account owner sets once for the whole business: how a new sale starts, how the receipt looks, and what a new item starts
+// with (a convenience for the item form: an item is still checked in full when it is saved). A field that is not sent keeps its stored
+// value (`current`), so one thing can be changed without knowing the rest.
+const RECEIPT_WIDTHS = [58, 80]; // millimetres: the two common thermal rolls
+const flag = (v, what) => {
+    if (v === true || v === 'true') return true;
+    if (v === false || v === 'false') return false;
+    throw new PosValidationError(`${what} must be yes or no.`);
+};
+const optionalRate = (v, what) => (v === null || String(v).trim() === '' ? null : num(v, what, { max: 100 }));
+function cleanSettings(s, current = {}) {
+    s = isObject(s) ? s : {};
+    const pick = (key, clean) => (s[key] === undefined ? current[key] : clean(s[key]));
+    return {
+        defaultPaymentMode: pick('defaultPaymentMode', v => {
+            const n = typeof v === 'number' || (typeof v === 'string' && /^\s*\d{1,2}\s*$/.test(v)) ? Number(v) : NaN;
+            if (!Number.isInteger(n) || n < 1 || n > 6) throw new PosValidationError('Choose how a new sale starts: cash, card, gift voucher, loyalty card, mixed or cheque.');
+            return n;
+        }),
+        receiptHeader: pick('receiptHeader', v => text(v, 120, 'Receipt header')),
+        receiptWidth: pick('receiptWidth', v => {
+            const n = typeof v === 'number' || (typeof v === 'string' && /^\s*\d{2}\s*$/.test(v)) ? Number(v) : NaN;
+            if (!RECEIPT_WIDTHS.includes(n)) throw new PosValidationError(`The receipt paper is ${RECEIPT_WIDTHS.join(' mm or ')} mm wide.`);
+            return n;
+        }),
+        showCashier: pick('showCashier', v => flag(v, 'Showing the cashier on the receipt')),
+        itemPct: pick('itemPct', v => (String(v === undefined || v === null ? '' : v).trim() === '' ? '' : cleanPct(v))),
+        itemTaxRate: pick('itemTaxRate', v => optionalRate(v, 'The sales tax for new items')),
+        itemTaxRateCard: pick('itemTaxRateCard', v => optionalRate(v, 'The sales tax on card payments for new items')),
+        itemCategory: pick('itemCategory', v => text(v, 60, 'Category')),
+    };
+}
+
 function cleanBranch(b) {
     b = isObject(b) ? b : {};
     const name = text(b.name, 80, 'Branch name');
@@ -129,4 +162,4 @@ function cleanToken(v) {
     return t;
 }
 
-module.exports = { PosValidationError, cleanBuyer, cleanCustomer, cleanPct, cleanItem, cleanPaymentMode, cleanProfile, cleanBranch, cleanCounter, cleanToken };
+module.exports = { PosValidationError, RECEIPT_WIDTHS, cleanBuyer, cleanCustomer, cleanPct, cleanItem, cleanPaymentMode, cleanProfile, cleanSettings, cleanBranch, cleanCounter, cleanToken };

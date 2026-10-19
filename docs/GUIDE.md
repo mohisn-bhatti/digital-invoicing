@@ -107,11 +107,13 @@ Every sale is sent to PRA (Punjab Revenue Authority) and the receipt carries PRA
 
 | Menu | Who | What it does |
 |---|---|---|
-| New Sale | everyone | Touch screen: tap items (or scan a barcode), quantity buttons, discount in rupees or %, pay mode (cash, card, gift voucher, loyalty card, mixed, cheque; card, mobile wallet and QR are all *Card*), buyer details (required above Rs 50,000 before tax: name and CNIC or NTN), **Finalize & send to PRA** |
-| Sales & Receipts | everyone | Every sale and its status; reprint a receipt (never re-sent); send again, correct the buyer; managers also see totals for the dates chosen, download a CSV, cancel, return items (credit note, or everything that is left) and record a manual PRA check |
+| New Sale | everyone | Touch screen: tap items, or **scan** them (a barcode scanner, or the phone's camera): the item goes in with the price and tax rate it is set to. Quantity buttons, discount in rupees or %, pay mode (cash, card, gift voucher, loyalty card, mixed, cheque; card, mobile wallet and QR are all *Card*; the owner chooses which one a new sale starts as), buyer details or a **saved customer** (details required above Rs 50,000 before tax: name and CNIC or NTN), **Finalize & send to PRA**, and the *Day-end sheet* |
+| Sales & Receipts | everyone | Every sale and its status, with filters (dates, status, counter, cashier, how paid, sale or return, customer, bill size, a word); *Scan receipt* opens a sale from its QR; reprint a receipt (never re-sent); send again, correct the buyer; managers also see totals for what is filtered, download a CSV, cancel, return items (credit note, or everything that is left) and record a manual PRA check |
 | Dashboard | manager, owner | Today's sales and returns, what needs attention (unknown outcome, refused, waiting), the connection to PRA per counter |
-| Items | manager, owner | Services with their PCT code (9801.xxxx), tax rate, an optional rate for card payments, price |
-| Settings | owner | Business details printed on receipts, branches, counters (POS ID + PRA token, sandbox or production), the server IP to give PRA |
+| Items | manager, owner | Services with their PCT code (9801.xxxx), tax rate, an optional rate for card payments, price, category and an optional barcode; *Scan* to find or add an item, *Print labels* for QR labels, and a *quick rate* list that fills in the heading and tax for a kind of business |
+| Customers | manager, owner | Saved buyers (name, PNTN or CNIC, phone, address), their history and a spreadsheet |
+| Reports | manager, owner | **Daily closing** (the day-end sheet: cash expected, by payment way, tax rate and cashier; prints on A4 or a roll), **Sales analysis** (by day, hour, item, category, cashier, counter, branch, payment way, tax rate or customer) and **Tax summary**, all with filters and a spreadsheet |
+| Settings | owner | Business details printed on receipts, **defaults and receipt** (how a new sale starts, 58 or 80 mm paper, a header line, the cashier's name on or off, what a new item starts with), branches, counters (POS ID + PRA token, sandbox or production), the server IP to give PRA |
 
 It runs in **test mode** until the server has `PRA_MOCK=false`: nothing is sent to PRA and receipts say they are not fiscal invoices.
 While PRA cannot be reached, new sales are blocked for a few seconds with a clear message. A sale whose answer from PRA is lost is

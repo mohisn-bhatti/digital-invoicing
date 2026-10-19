@@ -153,7 +153,7 @@
     body.print-a4:not(.print-pos) #invoiceA4, body.print-a4:not(.print-pos) #invoiceA4 * { visibility: visible; }
     body.print-a4:not(.print-pos) #invoiceA4 { position: absolute; left: 0; top: 0; }
     body.print-pos #posReceipt, body.print-pos #posReceipt * { visibility: visible; }
-    body.print-pos #posReceipt { position: absolute; left: 0; top: 0; }
+    body.print-pos #posReceipt { position: absolute; left: 0; top: 0; width: 100% !important; } /* its own max-width (the roll chosen in Settings) still applies */
     body.print-a4 #invoiceA4 thead { display: table-header-group; } /* repeat the item header on every page */
     body.print-a4 #invoiceA4 tr { break-inside: avoid; }
   }
@@ -1131,6 +1131,7 @@
 <script src="/clients-view.js"></script>
 <script src="/pos-calc.js"></script>
 <script src="/pos-scan.js"></script>
+<script src="/pos-rates.js"></script>
 <script src="/pos.js"></script>
 <script src="/pos-camera.js"></script>
 <script src="/pos-customers.js"></script>

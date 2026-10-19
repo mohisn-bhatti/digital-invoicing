@@ -66,6 +66,25 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         return getProfile(ctx.tenantId);
     }
 
+    // ---------- settings: how a new sale starts, how the receipt looks, what a new item starts with ----------
+    const SETTINGS_FIELDS = ['defaultPaymentMode', 'receiptHeader', 'receiptWidth', 'showCashier', 'itemPct', 'itemTaxRate', 'itemTaxRateCard', 'itemCategory'];
+    const settingsView = p => ({
+        defaultPaymentMode: (p && p.defaultPaymentMode) || 1, receiptHeader: (p && p.receiptHeader) || '', receiptWidth: (p && p.receiptWidth) || 80,
+        showCashier: p ? p.showCashier : true, itemPct: (p && p.itemPct) || '', itemTaxRate: p ? num(p.itemTaxRate) : null, itemTaxRateCard: p ? num(p.itemTaxRateCard) : null,
+        itemCategory: (p && p.itemCategory) || '',
+    });
+    async function getSettings(tenantId) {
+        return settingsView(await prisma.posProfile.findUnique({ where: { tenantId } }));
+    }
+    async function saveSettings(ctx, data) {
+        const was = await getSettings(ctx.tenantId);
+        const d = V.cleanSettings(data, was);
+        await prisma.posProfile.upsert({ where: { tenantId: ctx.tenantId }, create: { tenantId: ctx.tenantId, ...d }, update: d });
+        const changed = SETTINGS_FIELDS.filter(k => was[k] !== d[k]).map(k => `${k}: ${was[k] === '' || was[k] === null ? 'none' : was[k]} → ${d[k] === '' || d[k] === null ? 'none' : d[k]}`);
+        if (changed.length) await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.settings.update', entityType: 'PosProfile', entityId: ctx.tenantId, summary: `Point of Sale settings changed: ${changed.join(', ')}`.slice(0, 480) });
+        return getSettings(ctx.tenantId);
+    }
+
     // ---------- branches and counters ----------
     function counterView(c, pending) {
         let masked = '';
@@ -714,14 +733,15 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     async function receipt(ctx, id) {
         const s = await loadSale(ctx, id, { events: false });
         if (s.state !== 'FISCALIZED') throw new PosError(409, 'A receipt can be printed once PRA has given the fiscal invoice number.');
-        const [profile, branch] = await Promise.all([getProfile(ctx.tenantId), prisma.posBranch.findUnique({ where: { id: s.counter.branchId } })]);
+        const [profile, branch, settings] = await Promise.all([getProfile(ctx.tenantId), prisma.posBranch.findUnique({ where: { id: s.counter.branchId } }), getSettings(ctx.tenantId)]);
         return {
             business: { name: profile.businessName, pntn: profile.pntn, address: profile.address, phone: profile.phone, footer: profile.receiptFooter },
+            look: { header: settings.receiptHeader, width: settings.receiptWidth, showCashier: settings.showCashier }, // the owner's choices for the paper
             branch: branch ? { name: branch.name, address: branch.address, city: branch.city, phone: branch.phone } : null,
             counter: { name: s.counter.name, posId: s.counter.posId },
             sale: {
                 usin: s.usin, fiscalNumber: s.fiscalNumber, verifyUrl: pra.verifyUrl(s.fiscalNumber), invoiceType: s.invoiceType, refUsin: s.refUsin, paymentMode: s.paymentMode,
-                mock: s.mock, env: s.env, at: s.finalizedAt || s.createdAt, cashier: String(s.createdBy || '').split('@')[0].slice(0, 24), buyer: { name: s.buyerName, pntn: s.buyerPntn, cnic: s.buyerCnic, phone: s.buyerPhone },
+                mock: s.mock, env: s.env, at: s.finalizedAt || s.createdAt, cashier: settings.showCashier ? String(s.createdBy || '').split('@')[0].slice(0, 24) : '', buyer: { name: s.buyerName, pntn: s.buyerPntn, cnic: s.buyerCnic, phone: s.buyerPhone },
                 totals: { quantity: num(s.totalQuantity), saleValue: num(s.totalSaleValue), discount: num(s.totalDiscount), tax: num(s.totalTax), bill: num(s.totalBill) },
                 lines: s.lines.map(lineView),
             },
@@ -901,9 +921,9 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
 
     // What the cashier screen needs to start: usable counters (no tokens) and the items
     async function cashierSetup(ctx) {
-        const [branches, items, profile] = await Promise.all([listBranches(ctx.tenantId), listItems(ctx.tenantId, { activeOnly: true }), getProfile(ctx.tenantId)]);
+        const [branches, items, profile, settings] = await Promise.all([listBranches(ctx.tenantId), listItems(ctx.tenantId, { activeOnly: true }), getProfile(ctx.tenantId), getSettings(ctx.tenantId)]);
         const counters = branches.filter(b => b.active).flatMap(b => b.counters.filter(c => c.active).map(c => ({ id: c.id, name: c.name, branch: b.name, env: c.env, hasToken: c.hasToken, breaker: c.breaker })));
-        return { testMode: pra.isMock(), counters, items, profileComplete: profile.complete, paymentModes: C.PAYMENT_MODES };
+        return { testMode: pra.isMock(), counters, items, profileComplete: profile.complete, paymentModes: C.PAYMENT_MODES, settings };
     }
 
     const reports = R.createReports({ prisma, pra, getProfile, listBranches });
@@ -921,7 +941,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
 
     return {
         reportBy: reports.byReport, reportClosing: reports.closing, reportOptions: reports.options, reportCsv,
-        getProfile, saveProfile, listBranches, createBranch, updateBranch, createCounter, updateCounter, setToken, decommission,
+        getProfile, saveProfile, getSettings, saveSettings, listBranches, createBranch, updateBranch, createCounter, updateCounter, setToken, decommission,
         listItems, createItem, updateItem, searchPct, createSale, retry, updateBuyer, cancel, resolve, creditNote,
         listCustomers, createCustomer, updateCustomer, customerDetail, customersCsv, lookup,
         listSales, saleDetail, receipt, overview, attention, cashierSetup, sweepInterrupted, salesReport, salesCsv, adminFigures, adminSummary,

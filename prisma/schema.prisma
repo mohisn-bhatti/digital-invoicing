@@ -515,14 +515,23 @@ enum PosSaleState {
 
 // What the receipt shows about the business (SRS 4.1: name, address, PNTN/NTN)
 model PosProfile {
-  tenantId      String   @id
-  tenant        Tenant   @relation(fields: [tenantId], references: [id])
-  businessName  String   @default("")
-  pntn          String   @default("")
-  address       String   @default("")
-  phone         String   @default("")
-  receiptFooter String   @default("")
-  updatedAt     DateTime @updatedAt
+  tenantId           String   @id
+  tenant             Tenant   @relation(fields: [tenantId], references: [id])
+  businessName       String   @default("")
+  pntn               String   @default("")
+  address            String   @default("")
+  phone              String   @default("")
+  receiptFooter      String   @default("")
+  // Defaults and the look of the receipt (src/pos/validate.js: cleanSettings)
+  defaultPaymentMode Int      @default(1) // what a new sale starts as: 1 cash ... 6 cheque
+  receiptHeader      String   @default("") // a line under the business name
+  receiptWidth       Int      @default(80) // paper: 58 or 80 mm
+  showCashier        Boolean  @default(true)
+  itemPct            String   @default("") // what a NEW item starts with (the account owner's choice; the item can differ)
+  itemTaxRate        Decimal? @db.Decimal(5, 2)
+  itemTaxRateCard    Decimal? @db.Decimal(5, 2)
+  itemCategory       String   @default("")
+  updatedAt          DateTime @updatedAt
 }
 
 model PosBranch {

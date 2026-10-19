@@ -40,9 +40,10 @@ function page(overrides = {}) {
     box.self = box; box.window.document = box.document;
     const ctx = vm.createContext(box);
     // the same scripts, in the same order, as app.html loads them
-    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos.js', 'pos-camera.js', 'pos-customers.js', 'pos-reports.js']) vm.runInContext(pub(f), ctx, { filename: f });
+    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos-rates.js', 'pos.js', 'pos-camera.js', 'pos-customers.js', 'pos-reports.js']) vm.runInContext(pub(f), ctx, { filename: f });
     vm.runInContext(`
         const S = { token: 't', module: 'POS', tenantRole: 'OWNER' }, PAGE_ENTER = {};
+        const showPlanHint = () => {}; // (the plan-limit hint under a list: not what these tests are about)
         const $ = __$, api = __api, toast = __toast, go = __go, route = () => {}, renderNav = () => {}, syncModules = () => false, saveSession = () => {};
         ${HELPERS}`, ctx, { filename: 'helpers.js' });
     const run = code => vm.runInContext(code, ctx);
@@ -522,4 +523,198 @@ test('POS screen: the analysis table shows each group with its share, and a labe
     // the tax summary: what the monthly return needs
     const tax = decode(p.run(`posTaxHtml(${JSON.stringify({ ...report, groupBy: 'taxRate', title: 'Tax rate', rows: [row('16%', { returnValue: 100, returnTax: 16, netValue: 200, netTax: 32 })], totals: row('Total', { returnValue: 100, returnTax: 16, netValue: 200, netTax: 32, tax: 48, returns: 1 }) })})`));
     for (const need of ['Sales tax by rate', 'Tax to pay (net)', '32.00', 'Value returned', '−100.00', '−16.00', 'taxed at the card rate']) assert.ok(tax.includes(need), `the tax summary says "${need}"`);
+});
+
+// ---------- settings: how a sale starts, what the receipt looks like, what a new item starts with ----------
+const withDefault = (mode, extra = '') => `${SCAN_SETUP}; POS.setup.settings = { defaultPaymentMode: ${mode}, receiptHeader: '', receiptWidth: 80, showCashier: true, itemPct: '', itemTaxRate: null, itemTaxRateCard: null, itemCategory: '' }; ${extra}`;
+const pickedButton = p => (p.$('#pPay').innerHTML.match(/posMode\((\d)\)" class="[^"]*bg-emerald-700 border-emerald-700 text-white/) || [])[1];
+
+test('POS screen: a new sale starts as the owner chose, until the cashier picks a way', async () => {
+    const tea = { id: 'i1', code: 'A', name: 'Tea', category: '', pctCode: '98012000', taxRate: 16, taxRateCard: null, unitPrice: 100, openPrice: false, active: true };
+    const setup = mode => ({ testMode: false, counters: [], items: [tea], paymentModes: JSON.parse(JSON.stringify(require('../public/pos-calc.js').PAYMENT_MODES)), profileComplete: true, settings: { defaultPaymentMode: mode } });
+    let mode = 2;
+    const p = page({ answers: { '/api/pos/setup': () => setup(mode) } });
+    await p.run('posLoadSetup()');
+    assert.strictEqual(p.run('POS.mode'), 2, 'card, as chosen');
+    p.run('posRenderPay()');
+    assert.strictEqual(pickedButton(p), '2', 'and the Card button shows as picked');
+    // the cashier picks cash: a reload (the owner changed the default) does not take it away
+    p.run('posMode(1)');
+    mode = 4; await p.run('posLoadSetup()');
+    assert.strictEqual(p.run('POS.mode'), 1);
+    // clearing the sale starts the next one as the (new) default, picked by nobody
+    p.run('posClear()');
+    assert.deepStrictEqual([p.run('POS.mode'), p.run('POS.modePicked')], [4, false]);
+    // a reload brings a new default while nobody has picked: the screen follows it, and the buttons too
+    mode = 3; await p.run('posLoadSetup()');
+    assert.strictEqual(p.run('POS.mode'), 3);
+    assert.strictEqual(pickedButton(p), '3');
+    // a sale being made keeps its way when the default changes under it
+    p.run("POS.cart = [{ itemId: 'i1', qty: '1', price: '', disc: '' }]; POS.mode = 3");
+    mode = 6; await p.run('posLoadSetup()');
+    assert.strictEqual(p.run('POS.mode'), 3, 'not changed in the middle of a sale');
+});
+
+test('POS screen: a default the screen does not offer (or none at all) means cash', async () => {
+    const setup = settings => ({ testMode: false, counters: [], items: [], paymentModes: [{ id: 1, label: 'Cash' }, { id: 2, label: 'Card' }], profileComplete: true, ...(settings === undefined ? {} : { settings }) });
+    for (const [settings, want] of [[{ defaultPaymentMode: 9 }, 1], [{ defaultPaymentMode: 'card' }, 1], [{ defaultPaymentMode: 5 }, 1], [{}, 1], [null, 1], [undefined, 1], [{ defaultPaymentMode: 2 }, 2]]) {
+        const p = page({ answers: { '/api/pos/setup': () => setup(settings) } });
+        await p.run('posLoadSetup()');
+        assert.strictEqual(p.run('POS.mode'), want, JSON.stringify(settings));
+    }
+});
+
+test('POS screen: a finished sale hands the next one the default way, and signing out forgets the settings', async () => {
+    const rec = recorder({ '/api/pos/sales': { result: { outcome: 'REJECTED', message: 'no' }, sale: { id: 's1', usin: '000001', totalBill: 116, state: 'REJECTED' } } });
+    const p = page({ answers: rec.answers });
+    p.run(withDefault(2));
+    p.run("posMode(1); POS.cart = [{ itemId: 'i1', qty: '1', price: '', disc: '' }]; posRenderCart()");
+    await p.run('posFinalize()');
+    assert.strictEqual(rec.bodies.find(b => b[0] === '/api/pos/sales')[1].paymentMode, 1, 'this sale was paid the way the cashier picked');
+    assert.deepStrictEqual([p.run('POS.mode'), p.run('POS.modePicked')], [2, false], 'the next one starts as the default');
+    p.run("POS.settings = { itemPct: '98012000' }; POS.receiptWidth = 58");
+    p.run('posReset()');
+    assert.deepStrictEqual([p.run('POS.settings'), p.run('POS.receiptWidth'), p.run('POS.mode'), p.run('POS.modePicked')], [null, 80, 1, false]);
+});
+
+const rcData = (look, sale = {}) => ({
+    business: { name: 'Test Restaurant', pntn: '1234567-8', address: 'MM Alam Road', phone: '', footer: '' }, branch: null, counter: { name: 'Till 1', posId: '900001' },
+    ...(look === undefined ? {} : { look }),
+    sale: { usin: '000001', fiscalNumber: 'X1', verifyUrl: 'https://example/x', invoiceType: 1, refUsin: null, paymentMode: 1, mock: false, env: 'PRODUCTION', at: '2026-10-19T08:00:00Z', cashier: 'ali',
+        buyer: { name: '', pntn: '', cnic: '', phone: '' }, totals: { quantity: 3, saleValue: 300, discount: 0, tax: 48, bill: 348 },
+        lines: [{ itemName: 'Tea', quantity: 3, unitPrice: 100, discount: 0, taxRate: 16, saleValue: 300, taxCharged: 48, totalAmount: 348 }], ...sale },
+});
+const shownReceipt = (p, rc) => decode(p.run(`posReceiptHtml(${JSON.stringify(rc)})`));
+
+test('POS screen: the receipt prints the owner\'s header line and the cashier\'s name only when asked to', () => {
+    const p = page();
+    const plain = shownReceipt(p, rcData({ header: 'Fine dining since 1998', width: 80, showCashier: true }));
+    assert.ok(plain.includes('Fine dining since 1998') && plain.includes('Cashier') && plain.includes('ali'));
+    assert.ok(plain.indexOf('Test Restaurant') < plain.indexOf('Fine dining since 1998') && plain.indexOf('Fine dining since 1998') < plain.indexOf('MM Alam Road'), 'the header is under the business name, above the address');
+    const quiet = shownReceipt(p, rcData({ header: '', width: 80, showCashier: false }));
+    assert.ok(!quiet.includes('Cashier') && !/>ali</.test(quiet), 'no cashier line');
+    assert.ok(quiet.includes('Counter') && quiet.includes('Till 1'), 'the rest of the receipt is the same');
+    assert.ok(!shownReceipt(p, rcData({ header: '', width: 80, showCashier: true }, { cashier: '' })).includes('Cashier'), 'an empty name is not printed as an empty line');
+    // an answer without the look (an old one): the paper as it always was
+    const old = shownReceipt(p, rcData(undefined));
+    assert.ok(old.includes('Cashier') && old.includes('ali'));
+    // text is text: a header cannot become markup
+    const html = p.run(`posReceiptHtml(${JSON.stringify(rcData({ header: '<img src=x onerror=alert(1)>', width: 80, showCashier: true }))})`);
+    assert.ok(!html.includes('<img src=x') && html.includes('&lt;img src=x'));
+});
+
+test('POS screen: the receipt window and the print use the paper the owner chose', async () => {
+    for (const [width, size, font] of [[58, 58, '10px'], [80, 80, ''], [70, 80, ''], [undefined, 80, '']]) {
+        const rc = rcData({ header: '', width, showCashier: true });
+        const p = page({ answers: { '/api/pos/sales/s1/receipt': JSON.parse(JSON.stringify(rc)) } });
+        p.run(SETUP);
+        await p.run("posShowReceipt('s1')");
+        const shown = p.run('POS.receiptWidth');
+        assert.strictEqual(shown, size === 58 ? 58 : 80, `width ${width}`);
+        assert.strictEqual(p.$('#posReceipt').style.width, `${shown}mm`);
+        assert.strictEqual(p.$('#posReceipt').style.maxWidth, `${shown}mm`, 'on paper it can be narrower than that (the page), never wider');
+        assert.strictEqual(p.$('#posReceipt').style.fontSize, font);
+        p.run('posPrintReceipt()');
+        // Chrome ignores "size: 80mm auto" (auto cannot go with a length), so the printer's own paper size is used: only the margin is set
+        assert.strictEqual(p.$('#pageStyle').textContent, '@page { margin: 3mm; }');
+        assert.strictEqual(p.log.printed, 1);
+    }
+});
+
+test('POS screen: a new item starts from the owner\'s defaults; an item being edited keeps its own', () => {
+    const p = page();
+    p.run(SETUP);
+    p.run("POS.items = [{ id: 'i1', code: 'A', barcode: null, name: 'Tea', category: 'Drinks', pctCode: '98013000', taxRate: 5, taxRateCard: null, unitPrice: 100, openPrice: false, active: true }]");
+    const field = (id, html = p.$('#piForm').innerHTML) => { const m = new RegExp(`id="${id}" value="([^"]*)"`).exec(html); return m ? decode(m[1]) : null; };
+    p.run('POS.settings = null; posItemForm()');
+    assert.deepStrictEqual(['fiPct', 'fiRate', 'fiRateCard', 'fiCat'].map(id => field(id)), ['', '', '', ''], 'no settings: a blank form, as before');
+    p.run("POS.settings = { itemPct: '98012000', itemTaxRate: 16, itemTaxRateCard: 8, itemCategory: 'Food & Drink' }; posItemForm()");
+    assert.deepStrictEqual(['fiPct', 'fiRate', 'fiRateCard', 'fiCat'].map(id => field(id)), ['9801.2000', '16', '8', 'Food & Drink']);
+    p.run("posItemForm(null, { barcode: '8964000123456', name: 'Scanned', category: 'Snacks' })");
+    assert.deepStrictEqual(['fiBarcode', 'fiName', 'fiCat', 'fiPct', 'fiRate'].map(id => field(id)), ['8964000123456', 'Scanned', 'Snacks', '9801.2000', '16'], 'what a scan knows wins; the rest is the default');
+    p.run("posItemForm('i1')");
+    assert.deepStrictEqual(['fiPct', 'fiRate', 'fiRateCard', 'fiCat'].map(id => field(id)), ['9801.3000', '5', '', 'Drinks'], 'its own values, not the defaults');
+    // a tax of nothing is a rate, not a blank
+    p.run("POS.settings = { itemPct: '', itemTaxRate: 0, itemTaxRateCard: 0, itemCategory: '' }; posItemForm()");
+    assert.deepStrictEqual(['fiPct', 'fiRate', 'fiRateCard'].map(id => field(id)), ['', '0', '0']);
+});
+
+test('POS screen: a quick rate fills the heading and the tax boxes, and says to check the schedule', () => {
+    const p = page();
+    p.run(SETUP);
+    p.run('POS.settings = null; POS.items = []; posItemForm()');
+    const html = p.$('#piForm').innerHTML;
+    for (const id of ['restaurant', 'hotel', 'hall', 'caterer', 'beauty']) assert.ok(html.includes(`<option value="${id}">`), `offers ${id}`);
+    assert.ok(decode(html).includes('9801.2000 · 16% (8% on card)'));
+    p.$('#fiPreset').value = 'restaurant';
+    p.run("posApplyRate('restaurant', 'fi')");
+    assert.deepStrictEqual(['#fiPct', '#fiRate', '#fiRateCard'].map(id => p.$(id).value), ['9801.2000', 16, 8]);
+    assert.strictEqual(p.$('#fiPreset').value, '', 'the list goes back to its title: the boxes are the truth now');
+    assert.match(p.$('#fiRateNote').textContent, /Filled in for restaurant, café, fast food: 9801\.2000 · 16% \(8% on card\)\. .*current schedule/);
+    p.run("posApplyRate('hall', 'fi')");
+    assert.deepStrictEqual(['#fiPct', '#fiRate', '#fiRateCard'].map(id => p.$(id).value), ['9801.3000', 8, ''], 'a flat rate empties the card box');
+    p.run("posApplyRate('nonsense', 'fi')");
+    assert.deepStrictEqual(['#fiPct', '#fiRate', '#fiRateCard'].map(id => p.$(id).value), ['9801.3000', 8, ''], 'an unknown name changes nothing');
+    // the same list works for the Settings boxes
+    p.run("posApplyRate('beauty', 'sd')");
+    assert.deepStrictEqual(['#sdPct', '#sdRate', '#sdRateCard'].map(id => p.$(id).value), ['9810.0000', 5, '']);
+});
+
+const DEFAULTS = { defaultPaymentMode: 2, receiptHeader: 'Fine <dining>', receiptWidth: 58, showCashier: false, itemPct: '98012000', itemTaxRate: 16, itemTaxRateCard: 8, itemCategory: 'Food' };
+
+test('POS screen: the Defaults card shows what is saved, and escapes it', () => {
+    const p = page();
+    p.run(`POS.setup = null; POS.settings = ${JSON.stringify(DEFAULTS)}`);
+    const html = p.run('posSettingsCard()');
+    assert.match(html, /<option value="2" selected>Card<\/option>/);
+    assert.match(html, /<option value="58" selected>58 mm roll<\/option>/);
+    assert.ok(!/id="sdCashier" type="checkbox" style="width:auto" checked/.test(html), 'the cashier box is not ticked');
+    assert.ok(html.includes('value="Fine &lt;dining&gt;"') && !html.includes('Fine <dining>'));
+    assert.ok(html.includes('id="sdPct" value="9801.2000"') && html.includes('id="sdRate" value="16"') && html.includes('id="sdRateCard" value="8"') && html.includes('id="sdCat" value="Food"'));
+    const fresh = p.run("POS.settings = { defaultPaymentMode: 1, receiptHeader: '', receiptWidth: 80, showCashier: true, itemPct: '', itemTaxRate: null, itemTaxRateCard: null, itemCategory: '' }; posSettingsCard()");
+    assert.match(fresh, /<option value="1" selected>Cash<\/option>/);
+    assert.match(fresh, /<option value="80" selected>80 mm roll<\/option>/);
+    assert.match(fresh, /id="sdCashier" type="checkbox" style="width:auto" checked/);
+    assert.ok(fresh.includes('id="sdRate" value=""') && fresh.includes('id="sdPct" value=""'));
+});
+
+test('POS screen: saving the defaults sends the boxes, shows what the server kept, and tells the sale screen', async () => {
+    let sent = null, answer = null;
+    const p = page({ answers: { '/api/pos/settings': (url, opts) => { sent = opts; if (answer instanceof Error) throw answer; return answer; } } });
+    p.run(withDefault(1));
+    p.run('POS.settings = { defaultPaymentMode: 1 }');
+    const fill = { '#sdMode': '2', '#sdWidth': '58', '#sdHeader': '  Fine   dining ', '#sdPct': '9801.2000', '#sdRate': '16', '#sdRateCard': '8', '#sdCat': ' Food ' };
+    for (const [id, v] of Object.entries(fill)) p.$(id).value = v;
+    p.$('#sdCashier').checked = false;
+    answer = { ...DEFAULTS, receiptHeader: 'Fine dining', itemCategory: 'Food' };
+    await p.run('posSaveSettings()');
+    assert.strictEqual(sent.method, 'PUT');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(sent.body)), { defaultPaymentMode: '2', receiptWidth: '58', showCashier: false, receiptHeader: '  Fine   dining ', itemPct: '9801.2000', itemTaxRate: '16', itemTaxRateCard: '8', itemCategory: ' Food ' });
+    assert.ok(p.log.toasts.includes('Defaults saved'));
+    assert.deepStrictEqual(['#sdHeader', '#sdCat', '#sdPct', '#sdRate', '#sdRateCard'].map(id => p.$(id).value), ['Fine dining', 'Food', '9801.2000', 16, 8], 'the boxes show what was kept');
+    assert.strictEqual(p.run('POS.settings.receiptWidth'), 58);
+    assert.strictEqual(p.run('POS.setup.settings.defaultPaymentMode'), 2, 'the cashier screen of this browser starts from it at once');
+    // the server says no: its words are shown, and nothing changes here
+    p.log.toasts.length = 0; answer = new Error('The receipt paper is 58 mm or 80 mm wide.');
+    p.run('POS.settings.receiptWidth = 58');
+    await p.run('posSaveSettings()');
+    assert.deepStrictEqual(p.log.toasts, ['The receipt paper is 58 mm or 80 mm wide.']);
+    assert.strictEqual(p.run('POS.settings.receiptWidth'), 58);
+});
+
+test('POS screen: the Items page and the Settings page ask for the defaults; a failed ask is not a failed page', async () => {
+    const calls = [];
+    const p = page({ answers: { '/api/pos/items': [], '/api/pos/settings': () => { calls.push('settings'); return { itemPct: '98012000', itemTaxRate: 16 }; } } });
+    p.run(SETUP);
+    await p.run('posEnterItems()');
+    assert.deepStrictEqual(calls, ['settings']);
+    assert.strictEqual(p.run('POS.settings.itemTaxRate'), 16);
+    // the settings cannot be read: the item form still opens, blank
+    const q = page({ answers: { '/api/pos/items': [], '/api/pos/settings': () => { throw new Error('offline'); } } });
+    q.run(SETUP);
+    await q.run('posEnterItems()');
+    assert.strictEqual(q.run('POS.settings'), null);
+    q.run('posItemForm()');
+    assert.ok(q.$('#piForm').innerHTML.includes('Add an item'));
+    assert.deepStrictEqual(q.log.toasts, [], 'no error is shown for it');
 });
