@@ -187,7 +187,7 @@ function posClosingHtml(c, { screen, paper } = {}) {
   const pay = c.byPayment.map(p => row(esc(p.label), money(p.netBill) + (p.returnBill ? ` <span style="font-weight:normal">(− ${money(p.returnBill)} returned)</span>` : ''))).join('');
   const rates = c.byTaxRate.map(p => row(`${esc(p.label)} on ${money(p.netValue)}`, money(p.netTax))).join('');
   const people = c.byCashier.length > 1 ? c.byCashier.map(p => row(esc(p.label), `${money(p.netBill)} <span style="font-weight:normal">(${p.sales} ${p.sales === 1 ? 'sale' : 'sales'})</span>`)).join('') : '';
-  const sheet = `<div style="${slip ? 'width:80mm;font-family:ui-monospace,Menlo,monospace;font-size:11px;' : 'font-size:13px;'}color:#000;background:#fff">
+  const sheet = `<div style="${slip ? 'width:100%;max-width:80mm;font-family:ui-monospace,Menlo,monospace;font-size:11px;' : 'font-size:13px;'}color:#000;background:#fff">
     ${test ? `<div style="border:2px solid #000;padding:2px;font-weight:bold;text-align:center;margin-bottom:6px">${test}</div>` : ''}
     <div style="text-align:center"><div style="font-weight:bold;font-size:${slip ? 13 : 16}px">${esc(c.business.name || 'Daily closing')}</div>${c.business.pntn ? `<div>PNTN / NTN: ${esc(c.business.pntn)}</div>` : ''}
       <div style="font-weight:bold;margin-top:4px">DAILY CLOSING</div><div>${esc(posLong(c.date))}</div><div>${who}</div></div>${rule}
@@ -212,7 +212,8 @@ function posClosingHtml(c, { screen, paper } = {}) {
 }
 function posClosingPrint(paper) {
   const c = posClosingOpen.data; if (!c) return;
-  posPrint(posClosingHtml(c, { paper }), paper === 'slip' ? '@page { size: 80mm auto; margin: 3mm; }' : '@page { size: A4; margin: 15mm; }');
+  // (a roll's page size is the printer's own: Chrome ignores "size: 80mm auto", and the slip is as wide as the roll but never wider than the page)
+  posPrint(posClosingHtml(c, { paper }), paper === 'slip' ? '@page { margin: 3mm; }' : '@page { size: A4; margin: 15mm; }');
 }
 const posClosingOpen = { data: null };
 

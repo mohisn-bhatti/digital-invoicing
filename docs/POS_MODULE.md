@@ -211,7 +211,8 @@ field that is not sent keeps its value; each change is in the activity trail):
   1 July 2026 (a test checks that each heading exists in the PCT table); the owner confirms them against PRA's current schedule.
 - **Printing:** Chrome ignores `@page { size: 80mm auto }` (a page size cannot mix `auto` with a length), so no page size is asked
   for: the printer's own paper is used, and the receipt is as wide as the chosen roll but never wider than the page, so nothing
-  is cut off at the edge. (The Digital Invoicing receipt still has that line.) Not yet tried on a real thermal printer.
+  is cut off at the edge; the day-end slip is printed the same way. (The Digital Invoicing receipt still has that line.) Not yet tried on
+  a real thermal printer.
 
 **Who can do what** (the SRS's three user classes, on the business's own roles):
 

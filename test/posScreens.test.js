@@ -500,7 +500,11 @@ test('POS screen: the closing sheet says what was sold, how it was paid and what
     assert.ok(paper.includes('Count the drawer and write it here') && paper.includes('Cashier') && paper.includes('Manager') && paper.includes('Printed'));
     assert.ok(!paper.includes('Print A4'));
     const slip = p.run(`posClosingHtml(${JSON.stringify(CLOSING)}, { paper: 'slip' })`);
-    assert.ok(slip.includes('width:80mm'));
+    assert.ok(slip.includes('max-width:80mm') && slip.includes('width:100%'), 'as wide as the roll, never wider than the page');
+    p.run('posClosingPrint(\'slip\')');
+    assert.strictEqual(p.$('#pageStyle').textContent, '@page { margin: 3mm; }', 'no page size is asked for: Chrome ignores "80mm auto"');
+    p.run('posClosingPrint(\'a4\')');
+    assert.strictEqual(p.$('#pageStyle').textContent, '@page { size: A4; margin: 15mm; }');
     assert.strictEqual(p.run('posClosingOpen.data.date'), '2026-10-19', 'what is showing is what the Print buttons print');
     // a quiet day, in the live figures: nothing to warn about
     const quiet = decode(p.run(`posClosingHtml(${JSON.stringify({ ...CLOSING, scope: 'LIVE', leftOut: 0, totals: { ...CLOSING.totals, sales: 0, returns: 0, bill: 0, returnBill: 0, netBill: 0, netTax: 0, saleValue: 0, tax: 0, discount: 0 }, firstSale: null, lastSale: null, returned: [], byPayment: [], byTaxRate: [], byCashier: [], cashExpected: 0, notFiscalized: { waiting: 0, refused: 0, unknown: 0, cancelled: 0 } })}, { screen: true })`));
