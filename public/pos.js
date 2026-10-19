@@ -130,6 +130,7 @@ function posPagesHtml() {
           <div class="flex gap-2 w-full sm:w-auto"><input id="piQ" type="search" placeholder="Search items…" oninput="posItemSearch(this.value)" class="flex-1 sm:!w-52" autocomplete="off">
             <button type="button" onclick="posItemForm()" class="bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ Add item</button></div>
         </div>
+        <p id="piPlanHint" class="text-xs mb-3"></p>
         <div id="piForm"></div>
         <div id="piCards" class="md:hidden space-y-2"></div>
         <div class="hidden md:block overflow-x-auto"><table class="w-full text-sm">
@@ -657,7 +658,7 @@ async function posCredit(id) {
 }
 
 /* ---------- items ---------- */
-async function posEnterItems() { posPollAlerts(); await posLoadItems(); }
+async function posEnterItems() { posPollAlerts(); await posLoadItems(); showPlanHint('piPlanHint', ['items']); }
 async function posLoadItems() {
   try { POS.items = await api('/api/pos/items' + (POS.itemQ ? '?q=' + encodeURIComponent(POS.itemQ) : '')); posRenderItems(); } catch (err) { toast(err.message); }
 }
@@ -717,7 +718,7 @@ async function posItemSave(id) {
   };
   try {
     await api(id ? `/api/pos/items/${id}` : '/api/pos/items', { method: id ? 'PUT' : 'POST', body });
-    toast('Item saved', true); $('#piForm').innerHTML = ''; await posLoadItems();
+    toast('Item saved', true); $('#piForm').innerHTML = ''; await posLoadItems(); showPlanHint('piPlanHint', ['items']); // (a place may have been taken or given back)
   } catch (err) { toast(err.message); }
 }
 
@@ -770,6 +771,7 @@ function posRenderSettings() {
         <label class="sm:col-span-3"><span>Receipt footer <span class="text-slate-400">(optional)</span></span><input id="sfFoot" value="${esc(p.receiptFooter)}" maxlength="200" placeholder="Thank you for dining with us"></label></div>
       <div class="mt-3">${posBtn('Save business details', 'posSaveProfile()', 'primary')}</div></div>
     <div class="bg-white rounded-xl shadow p-5 space-y-4"><div class="flex flex-wrap items-center justify-between gap-2"><h2 class="font-semibold">Branches and counters</h2>${posBtn('+ Add branch', 'posBranchForm()')}</div>
+      <p id="sfPlanHint" class="text-xs"></p>
       <div id="sfForm"></div>
       ${POS.branches.map(b => `<div class="border rounded-lg p-3 ${b.active ? '' : 'opacity-60'}">
         <div class="flex flex-wrap items-start justify-between gap-2"><div><div class="font-medium">${esc(b.name)}${b.active ? '' : ' (off)'}</div><div class="text-xs text-slate-500">${esc([b.address, b.city, b.phone].filter(Boolean).join(' · ') || 'no address yet')}</div></div>
@@ -791,6 +793,7 @@ function posRenderSettings() {
         <pre id="pEmail" class="mt-2 bg-slate-50 border rounded p-2 whitespace-pre-wrap break-words">${esc(posWhitelistEmail())}</pre>
         <button type="button" onclick="posCopyEmail()" class="mt-1 px-3 min-h-[2.5rem] rounded-lg border text-sm">Copy</button></details>
       <div class="text-xs text-slate-600">PRA support: <a class="underline text-emerald-700" href="mailto:eims@pra.punjab.gov.pk">eims@pra.punjab.gov.pk</a> (technical) · <a class="underline text-emerald-700" href="mailto:eSupport@pra.punjab.gov.pk">eSupport@pra.punjab.gov.pk</a> (general) · helpline 042-99205710 (eIMS). Quote the PNTN, the POS ID and a screenshot of the problem.</div></div></div>`;
+  showPlanHint('sfPlanHint', ['branches', 'terminals']);
 }
 // What PRA asks for in the whitelisting email (POS Component manual, 6.4.2)
 function posWhitelistEmail() {

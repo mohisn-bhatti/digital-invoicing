@@ -38,8 +38,8 @@ so the first page can take about a minute to load.
 | Menu | What it does |
 |---|---|
 | Dashboard | Go-live progress for the clients that use Digital Invoicing, this month's invoices and Point of Sale sales, invoices and POS sales that need attention, and every client whose **access period** is ending, in grace or over |
-| Clients | Add a client (business details, its first login, and how long it may use the application). The list shows each client's **integration date and a countdown of the days left**, and can be **filtered** (search, status, access period, product, FBR environment) and **sorted** (newest, name, integration date, days left, most active, latest invoice or sale). Open a client to manage it |
-| Client page (Manage) | Tabs, so only what applies shows: **Overview** (access period, modules), **Digital Invoicing** (only if the client has it: FBR settings in three groups, Business Nature / Sector → scenarios, go-live checklist, invoice settings), **Point of Sale** (only if the client has it: this month, what needs attention, counters and tokens, read-only), **Users** |
+| Clients | Add a client (business details, its first login, its **plan**, and how long it may use the application). The list shows each client's plan, **integration date and a countdown of the days left**, and can be **filtered** (search, status, access period, product, plan, FBR environment) and **sorted** (newest, name, integration date, days left, most active, latest invoice or sale). Open a client to manage it |
+| Client page (Manage) | Tabs, so only what applies shows: **Overview** (access period, plan & limits, modules), **Digital Invoicing** (only if the client has it: FBR settings in three groups, Business Nature / Sector → scenarios, go-live checklist, invoice settings), **Point of Sale** (only if the client has it: this month, what needs attention, counters and tokens, read-only), **Users** |
 | Workspace (inside a client) | "Enter" the client's account for 2 hours, e.g. to run sandbox scenarios on their behalf |
 | Reports | Annex-C (sales) CSV and Annex-H1 (stock statement) per client and month |
 | Activity | Audit log of every action. It can't be edited or deleted. CSV export |
@@ -58,10 +58,23 @@ with no end date has no time limit (all clients before this existed). Everything
 Sale. Both products have the **same prices**, and plans are **annual only, shown at 50% off** with the full price beside it:
 Starter Rs. 12,000 (full Rs. 24,000), Pro Rs. 30,000 (Rs. 60,000), Enterprise Rs. 90,000 (Rs. 180,000) a year; limits per plan
 (branches, terminals, products, users) and a feature table by plan. Everything lives in one file, `public/plans.js`: change a
-price or a feature there. A feature the product cannot do yet shows a **Soon** tag instead of a tick (change its status to
-`live` when it is built). The Get Started buttons open the contact form with the product and plan already chosen, and the choice
-is written at the top of the enquiry message you see under *Enquiries*. **The plan limits and the features per plan are what is
-sold; the application does not enforce them yet** (no plan is stored per client).
+price or a feature there. Every feature a plan includes is shown with a tick; one that does not apply to a product (for example the
+SDC/IMS set-up for PRA) is left out of that product's table. The Get Started buttons open the contact form with the product and plan
+already chosen, and the choice is written at the top of the enquiry message you see under *Enquiries*.
+
+**Plan and limits (enforced).** Each client can be given a plan when it is registered, or later under *Manage → Overview → Plan &
+limits*, which also shows what the client uses against each limit (full or over the limit shows in amber or red) and, before you
+save, what the chosen plan means for what the client already has. The numbers are the ones on the website, read from
+`public/plans.js`: **Starter** 1 branch, 2 terminals (counters), 1,000 products, 3 users; **Pro** 5, 10, 10,000, 15; **Enterprise**
+no limits. A client with **no plan has no limits** (every client from before plans existed). A limit is checked when something is
+**added or switched back on**: a user (a request waiting for your approval already takes a place, and enabling a disabled user takes
+it again), a Digital Invoicing product (one at a time, or a whole Excel import: a file that does not fit is refused as a whole), a
+Point of Sale branch, counter or item. What is switched off gives its place back (a closed branch, a decommissioned or switched-off
+counter, an item off sale, a disabled user). Digital Invoicing products and Point of Sale items are counted separately, each against
+the plan's number of products. **Moving a client to a smaller plan never removes anything:** it keeps what it has and can add
+nothing until it is back under. The refusal says which plan, the limit, and who to ask (the client is told to ask ETAX; you are
+told to change the plan under Manage). A client sees a one-line note ("Starter plan: 3 of 1,000 items used") on its Items page and
+the Point of Sale Settings page; you see one on the client's Users tab.
 
 ### Client (each NTN)
 | Menu | What it does |

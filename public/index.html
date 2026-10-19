@@ -185,7 +185,7 @@
       <noscript><p class="text-slate-600">Starter Rs. 12,000 a year, Pro Rs. 30,000 a year, Enterprise Rs. 90,000 a year (all annual plans, 50% off the full price). <a href="/contact" class="text-emerald-700 underline">Contact us</a> for details.</p></noscript>
     </div>
     <div id="planMatrix" class="mt-12"></div>
-    <p class="mt-4 text-center text-xs text-slate-500">Prices are in Pakistani rupees per year. A ✓ is available today; <span class="inline-block text-[10px] uppercase font-semibold bg-amber-100 text-amber-800 rounded px-1.5 py-0.5">Soon</span> means it is being built and comes with the plan when released.</p>
+    <p class="mt-4 text-center text-xs text-slate-500">Prices are in Pakistani rupees per year. A ✓ means the feature is included in that plan, and a – means it is not.</p>
   </div>
 </section>
 
@@ -286,7 +286,6 @@ try { new QRCode(document.getElementById('heroQr'), { text: '1234567DI1791300004
   const asked = new URLSearchParams(location.search).get('product');
   let product = Plans.product(asked) ? asked : 'fbr';
   const tabs = document.getElementById('productTabs'), grid = document.getElementById('planGrid'), matrix = document.getElementById('planMatrix');
-  const soon = '<span class="inline-block text-[10px] uppercase font-semibold bg-amber-100 text-amber-800 rounded px-1.5 py-0.5">Soon</span>';
 
   function render() {
     tabs.innerHTML = Plans.PRODUCTS.map(p => `<button type="button" role="tab" aria-selected="${p.id === product}" data-product="${p.id}" class="px-4 py-2 rounded-lg font-medium ${p.id === product ? 'bg-white text-emerald-800 shadow' : 'text-slate-600 hover:text-slate-900'}">${p.name}</button>`).join('');
@@ -311,7 +310,7 @@ try { new QRCode(document.getElementById('heroQr'), { text: '1234567DI1791300004
     grid.innerHTML = promo + cards;
 
     const rows = Plans.featuresFor(product), common = rows.filter(r => r.in.every(Boolean)), higher = rows.filter(r => !r.in.every(Boolean));
-    const cell = (r, i) => (!r.in[i] ? '<span class="text-slate-300">–</span>' : r.soon ? soon : '<span class="text-emerald-600 font-bold" aria-label="Included">✓</span>');
+    const cell = (r, i) => (!r.in[i] ? '<span class="text-slate-300">–</span>' : '<span class="text-emerald-600 font-bold" aria-label="Included">✓</span>');
     const body = (title, list) => list.length ? `<tr class="bg-slate-50"><td colspan="4" class="px-3 sm:px-5 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">${title}</td></tr>`
       + list.map(r => `<tr class="border-t"><td class="px-3 sm:px-5 py-2.5 text-slate-700">${r.label}</td>${[0, 1, 2].map(i => `<td class="px-1 sm:px-3 py-2.5 text-center">${cell(r, i)}</td>`).join('')}</tr>`).join('') : '';
     matrix.innerHTML = `<div class="rounded-2xl border bg-white overflow-hidden">

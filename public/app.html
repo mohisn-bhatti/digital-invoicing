@@ -240,10 +240,12 @@
       <label><span>Login email</span><input name="clientEmail" type="email" required></label>
       <label><span>Mobile number <span class="text-slate-400">(optional)</span></span><input name="mobile" type="tel" inputmode="tel" maxlength="16" autocomplete="off"></label>
       <label><span>Password</span><input name="clientPassword" type="password" minlength="8" required data-pwrules="quiet" autocomplete="new-password"></label>
+      <label><span>Plan</span><select name="plan" id="rcPlan"></select></label>
       <label class="sm:col-span-2"><span>Allowed to use the application for <span class="text-slate-400">(counted from today; you can change it later under Manage)</span></span>
         <div class="flex gap-2"><input name="accessCount" id="rcCount" type="number" min="1" max="120" step="1" value="1" inputmode="numeric" class="!w-24" aria-label="How many" disabled>
           <select name="accessUnit" id="rcUnit" aria-label="Months, years or no time limit"><option value="">No time limit</option><option value="YEAR">years</option><option value="MONTH">months</option></select></div></label>
       <p id="rcNote" class="sm:col-span-1 text-xs text-slate-500 pb-2"></p>
+      <p id="rcPlanNote" class="sm:col-span-3 text-xs text-slate-500 pb-2"></p>
       <button class="bg-emerald-700 text-white rounded py-2">Create</button>
     </form>
   </div>
@@ -258,11 +260,12 @@
       <div class="flex items-center gap-4 text-sm"><button type="button" id="cfReset" onclick="resetClientFilters()" class="hidden text-slate-600 underline">Clear filters</button>
         <button type="button" onclick="loadClients()" class="text-emerald-700 underline">Refresh</button></div>
     </div>
-    <div id="clientFilters" class="grid grid-cols-2 lg:grid-cols-7 gap-2 mb-4">
+    <div id="clientFilters" class="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-2 mb-4">
       <label class="col-span-2"><span>Search</span><input id="cfQ" type="search" placeholder="Company, login, mobile, NTN or sector" oninput="clientFilterChanged()" autocomplete="off"></label>
       <label><span>Status</span><select id="cfStatus" onchange="clientFilterChanged()"><option value="">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
       <label><span>Access period</span><select id="cfAccess" onchange="clientFilterChanged()"><option value="">All</option><option value="attention">Needs attention (ending, grace, over)</option><option value="running">Running</option><option value="ending">Ending within 30 days</option><option value="grace">In grace period</option><option value="expired">Expired</option><option value="unlimited">No time limit</option></select></label>
       <label><span>Product</span><select id="cfProduct" onchange="clientFilterChanged()"><option value="">All</option><option value="INVOICING">FBR Digital Invoicing</option><option value="POS">Point of Sale</option></select></label>
+      <label><span>Plan</span><select id="cfPlan" onchange="clientFilterChanged()"></select></label>
       <label><span>FBR environment</span><select id="cfEnv" onchange="clientFilterChanged()"><option value="">All</option><option value="SANDBOX">Sandbox</option><option value="PRODUCTION">Production</option></select></label>
       <label><span>Sort by</span><select id="cfSort" onchange="clientFilterChanged()"></select></label>
     </div>
@@ -287,7 +290,7 @@
   <div data-page="a-client" class="page hidden space-y-5">
   <!-- Setting up a client, in the order FBR takes them live: profile → token → sandbox scenarios → production → settings & users -->
   <div class="bg-white rounded-xl shadow p-5 flex flex-wrap items-center justify-between gap-3">
-    <h2 class="text-lg font-semibold">Set up: <span id="mpName"></span> <span id="mpStatus" class="ml-2 text-xs font-normal"></span> <span id="mpAccessChip" class="ml-1 text-xs font-normal"></span> <span id="mpObSummary" class="ml-2 text-xs font-normal"></span> <span id="settingsHint" class="ml-2 text-xs font-normal text-amber-700"></span></h2>
+    <h2 class="text-lg font-semibold">Set up: <span id="mpName"></span> <span id="mpStatus" class="ml-2 text-xs font-normal"></span> <span id="mpAccessChip" class="ml-1 text-xs font-normal"></span> <span id="mpPlanChip" class="ml-1 text-xs font-normal"></span> <span id="mpObSummary" class="ml-2 text-xs font-normal"></span> <span id="settingsHint" class="ml-2 text-xs font-normal text-amber-700"></span></h2>
     <div class="flex flex-wrap gap-2 text-sm">
       <button type="button" onclick="openWorkspace()" class="bg-indigo-700 text-white rounded px-3 py-1.5" title="Work inside this client's screen">Open workspace</button>
       <button type="button" id="mpBtnHistory" onclick="showClientHistory(S.manageId)" class="border rounded px-3 py-1.5">History</button>
@@ -317,6 +320,19 @@
       <button type="button" onclick="renewAccess()" class="border border-emerald-600 text-emerald-700 rounded px-4 py-2 font-medium hover:bg-emerald-50">Renew</button>
       <span class="text-xs text-slate-500 pb-2">Added to the last day, or to today if the period has already ended. A client switched off because its period ended becomes active again.</span>
     </div>
+  </section>
+  <section id="mpPlan" data-mp-tab="overview" class="step-card bg-white rounded-xl shadow">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="flex-1 min-w-[16rem]"><h3 class="font-semibold text-base">Plan &amp; limits</h3>
+        <p class="text-xs text-slate-500">How much this client may add: branches, terminals (counters), products and users, as on the website. A client with no plan, or on Enterprise, has no limits. Moving to a smaller plan never removes anything: the client keeps what it has, and adds nothing more until it is back under the limit.</p></div>
+      <div id="mpPlanStatus" class="text-sm text-right"></div>
+    </div>
+    <form id="planForm" class="flex flex-wrap items-end gap-3 mt-4">
+      <label><span>Plan</span><select id="mpPlanSel" name="plan" aria-label="Plan" class="min-w-[13rem]"></select></label>
+      <button class="bg-emerald-700 text-white rounded px-4 py-2">Save plan</button>
+      <p id="mpPlanNote" class="basis-full text-xs pb-1"></p>
+    </form>
+    <div id="mpPlanUsage" class="mt-3 grid grid-cols-2 lg:grid-cols-5 gap-2 text-sm"></div>
   </section>
   <nav id="mpStepper" data-mp-tab="di" class="stepper bg-white rounded-xl shadow hidden">
     <button type="button" class="stepper-item" data-go="mpS1"><span class="step-no">1</span><span><b>Client profile</b><small data-mp-text="1"></small></span></button>
@@ -413,6 +429,7 @@
   <section id="mpUsers" data-mp-tab="users" class="hidden">
   <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
     <h2 class="font-semibold">Users <span class="text-xs font-normal text-slate-500">— Owner: everything + users · Accountant: invoicing, debit notes, import, products, buyers · Cashier: create &amp; print invoices only</span></h2>
+    <p id="aPlanHint" class="text-xs"></p>
     <form id="aUserForm" class="grid sm:grid-cols-5 gap-2 items-end bg-slate-50 border rounded p-3">
       <label><span>Name</span><input name="name" maxlength="100"></label>
       <label><span>Email</span><input name="email" type="email" required autocomplete="off"></label>
@@ -831,6 +848,7 @@
         <h2 class="font-semibold">My items <span class="text-xs font-normal text-slate-500">— each item with its tax rule</span></h2>
         <button type="button" onclick="clearProductForm(); itemsTab('form')" class="bg-emerald-700 text-white rounded px-3 py-1.5 text-sm font-medium">＋ Add new item</button>
       </div>
+      <p id="itemsPlanHint" class="text-xs"></p>
       <div class="flex flex-wrap items-end gap-3 mb-2">
         <label><span>Show</span><select id="itemSource"><option value="">All items</option><option value="OFFICIAL">Official HS codes</option><option value="CUSTOMER" id="itemSourceOwn">Codes created by this client</option></select></label>
         <label><span>Search</span><input id="itemQ" placeholder="Name or HS code" autocomplete="off"></label>
@@ -1104,6 +1122,7 @@
 </div>
 
 <script src="/access.js"></script>
+<script src="/plans.js"></script>
 <script src="/clients-view.js"></script>
 <script src="/pos-calc.js"></script>
 <script src="/pos.js"></script>
@@ -1398,17 +1417,36 @@ async function loadClients() {
     renderClients();
   } catch (err) { toast(err.message); }
 }
+/* ---------- Plans: names, the pickers, and what a client's own pages say about its limits ---------- */
+const planName = id => (Plans.plan(id) || {}).name || id;
+// the options of a plan picker: the "nothing chosen" entry, Starter, Pro, Enterprise, and (for a filter) "no plan"
+function planOptions(blank, none) {
+  return `<option value="">${esc(blank)}</option>` + Plans.PLANS.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('') + (none ? `<option value="none">${esc(none)}</option>` : '');
+}
+// One line on a page about what the plan allows and how much is used: "Starter plan: 2 of 3 users used." Nothing for a client with no plan
+// (it has no limits). A hint is never worth an error, so when it cannot be fetched it shows nothing. clientId: the administrator's view of a client.
+async function planHint(kinds, clientId) {
+  try {
+    const h = Plans.hint(await api(clientId ? `/api/admin/clients/${clientId}/plan` : '/api/client/plan'), kinds, { admin: Boolean(clientId || S.adminSession) });
+    return h ? `<span class="${{ red: 'text-red-700', amber: 'text-amber-700', slate: 'text-slate-500' }[h.tone]}"><b>${esc(h.lead)}</b> ${esc(h.text)}</span>` : '';
+  } catch { return ''; }
+}
+async function showPlanHint(boxId, kinds, clientId) {
+  const html = await planHint(kinds, clientId), box = $('#' + boxId);
+  if (box) box.innerHTML = html;
+}
 // The Clients list: filtered and sorted as the administrator chose (ClientsView, public/clients-view.js)
-const CF_DEFAULT = { q: '', status: '', access: '', product: '', env: '', sort: 'newest' };
-const TONES = { slate: 'bg-slate-100 text-slate-700', emerald: 'bg-emerald-100 text-emerald-800', amber: 'bg-amber-100 text-amber-900', orange: 'bg-orange-100 text-orange-900', red: 'bg-red-100 text-red-800', sky: 'bg-sky-100 text-sky-800' };
+const CF_DEFAULT = { q: '', status: '', access: '', product: '', plan: '', env: '', sort: 'newest' };
+const TONES = { slate: 'bg-slate-100 text-slate-700', emerald: 'bg-emerald-100 text-emerald-800', amber: 'bg-amber-100 text-amber-900', orange: 'bg-orange-100 text-orange-900', red: 'bg-red-100 text-red-800', sky: 'bg-sky-100 text-sky-800', violet: 'bg-violet-100 text-violet-800' };
 const chip = (tone, text, extra = '') => `<span class="inline-block px-2 py-0.5 rounded ${TONES[tone]} ${extra}">${text}</span>`;
 function syncClientFilterBoxes() {
   const f = S.cf;
   if (!$('#cfSort').options.length) $('#cfSort').innerHTML = ClientsView.SORTS.map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('');
-  $('#cfQ').value = f.q; $('#cfStatus').value = f.status; $('#cfAccess').value = f.access; $('#cfProduct').value = f.product; $('#cfEnv').value = f.env; $('#cfSort').value = f.sort;
+  if (!$('#cfPlan').options.length) $('#cfPlan').innerHTML = planOptions('All', 'No plan');
+  $('#cfQ').value = f.q; $('#cfStatus').value = f.status; $('#cfAccess').value = f.access; $('#cfProduct').value = f.product; $('#cfPlan').value = f.plan; $('#cfEnv').value = f.env; $('#cfSort').value = f.sort;
 }
 function clientFilterChanged() {
-  S.cf = { q: $('#cfQ').value, status: $('#cfStatus').value, access: $('#cfAccess').value, product: $('#cfProduct').value, env: $('#cfEnv').value, sort: $('#cfSort').value };
+  S.cf = { q: $('#cfQ').value, status: $('#cfStatus').value, access: $('#cfAccess').value, product: $('#cfProduct').value, plan: $('#cfPlan').value, env: $('#cfEnv').value, sort: $('#cfSort').value };
   renderClients();
 }
 function resetClientFilters() { S.cf = { ...CF_DEFAULT }; syncClientFilterBoxes(); renderClients(); }
@@ -1432,7 +1470,7 @@ function renderClients() {
     const last = [di ? fmtDate(c.lastInvoiceAt) : '', pos ? `${di ? '<div class="text-slate-500">POS: ' : '<div>'}${c.pos.lastSaleAt ? fmtDate(c.pos.lastSaleAt) : '—'}</div>` : ''].join('');
     return `<tr class="border-b align-top">
       <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div>
-        <div class="mt-0.5 flex flex-wrap items-center gap-1">${di ? chip('sky', 'FBR', 'text-[10px] leading-4') : ''}${mods.includes('POS') ? chip('emerald', 'POS', 'text-[10px] leading-4') : ''}</div>
+        <div class="mt-0.5 flex flex-wrap items-center gap-1">${di ? chip('sky', 'FBR', 'text-[10px] leading-4') : ''}${mods.includes('POS') ? chip('emerald', 'POS', 'text-[10px] leading-4') : ''}${c.plan ? chip('violet', esc(planName(c.plan)), 'text-[10px] leading-4') : ''}</div>
         ${di ? `<div class="text-xs text-slate-500 mt-0.5">${c.sellerNtnCnic ? `NTN ${esc(c.sellerNtnCnic)}` : 'NTN —'} · ${esc((c.sectors || []).join(', ') || 'sector not set')}</div>` : ''}</td>
       <td class="text-xs"><div class="break-all">${esc(c.emails.join(', '))}</div>${c.mobile ? `<div class="font-mono text-slate-600 whitespace-nowrap mt-0.5">${esc(c.mobile)}</div>` : ''}</td>
       <td class="text-xs whitespace-nowrap">${chip(c.active ? 'emerald' : 'red', c.active ? 'Active' : 'Inactive')}${ended ? '<div class="text-slate-500 whitespace-normal">period ended</div>' : ''}
@@ -1563,6 +1601,7 @@ $('#pwForm').addEventListener('submit', async e => {
 /* ---------- Users (prefix c = owner in own account, a = admin in Manage client) ---------- */
 const usersBase = prefix => prefix === 'a' ? `/api/admin/clients/${S.manageId}/users` : '/api/client/users';
 async function loadUsers(prefix) {
+  if (prefix === 'a') showPlanHint('aPlanHint', ['users'], S.manageId); // (a client does not manage its own users: the administrator does, under Manage)
   try {
     const list = await api(usersBase(prefix));
     $(`#${prefix}UserRows`).innerHTML = list.map(u => `<tr class="border-b last:border-0 align-top">
@@ -2060,13 +2099,21 @@ function syncRegisterAccess() {
   } catch (err) { note.className = 'sm:col-span-1 text-xs text-red-700 pb-2'; note.textContent = err.message; }
 }
 $('#rcUnit').addEventListener('change', syncRegisterAccess); $('#rcCount').addEventListener('input', syncRegisterAccess); syncRegisterAccess();
+// the plan box: what the chosen plan allows (a client with no plan has no limits)
+function syncRegisterPlan() {
+  const sel = $('#rcPlan');
+  if (!sel.options.length) sel.innerHTML = planOptions('No plan (no limits)');
+  const plan = Plans.plan(sel.value);
+  $('#rcPlanNote').textContent = plan ? `${plan.name}: ${Plans.limitsSentence(plan)}. You can change the plan later under Manage.` : 'No plan: this client can add as much as it likes. You can choose a plan later under Manage.';
+}
+$('#rcPlan').addEventListener('change', syncRegisterPlan); syncRegisterPlan();
 $('#clientForm').addEventListener('submit', async e => {
   e.preventDefault();
   try {
     const body = Object.fromEntries(new FormData(e.target));
     if (!body.accessUnit) delete body.accessCount; // no time limit
     await api('/api/admin/clients', { method: 'POST', body });
-    e.target.reset(); syncRegisterAccess(); toast('Client created', true); loadClients();
+    e.target.reset(); syncRegisterAccess(); syncRegisterPlan(); toast('Client created', true); loadClients();
   } catch (err) { toast(err.message); }
 });
 
@@ -2214,9 +2261,55 @@ function mpRefresh(s) {
   for (const id of ['#mpBtnHistory', '#mpBtnAnnex', '#mpObSummary', '#settingsHint']) $(id).classList.toggle('hidden', !di);
   const lab = ClientsView.accessLabel(s);
   $('#mpAccessChip').innerHTML = chip(lab.tone, esc(lab.text));
+  $('#mpPlanChip').innerHTML = s.plan ? chip('violet', `${esc(planName(s.plan))} plan`) : '';
   fillAccess(s);
+  fillPlan(s);
   mpShowTab(S.mpTab || 'overview');
 }
+// The plan card: the picker, and what the client uses against each limit (the saved plan's limits, from the server)
+function fillPlan(s) {
+  const sel = $('#mpPlanSel');
+  if (!sel.options.length) sel.innerHTML = planOptions('No plan (no limits)');
+  sel.value = s.plan || '';
+  S.mpUsage = null; renderPlanUsage();
+  loadPlanUsage();
+}
+async function loadPlanUsage() {
+  const id = S.manageId;
+  try {
+    const u = await api(`/api/admin/clients/${id}/plan`);
+    if (S.manageId !== id) return; // another client was opened meanwhile
+    S.mpUsage = u; renderPlanUsage();
+  } catch (err) { $('#mpPlanUsage').innerHTML = `<span class="col-span-full text-xs text-red-700">${esc(err.message)}</span>`; }
+}
+function renderPlanUsage() {
+  const u = S.mpUsage, n = x => Number(x).toLocaleString('en-US');
+  $('#mpPlanStatus').innerHTML = u && u.plan ? chip('violet', `${esc(u.plan.name)} plan`) : chip('slate', 'No plan: no limits');
+  const TILE = { over: ['border-red-300 bg-red-50', 'text-red-700', 'bg-red-500'], full: ['border-amber-300 bg-amber-50', 'text-amber-700', 'bg-amber-500'], ok: ['', '', 'bg-emerald-500'], none: ['', '', ''] };
+  $('#mpPlanUsage').innerHTML = u ? u.rows.map(r => {
+    const st = Plans.standing(r.used, r.limit), [box, ink, bar] = TILE[st.state];
+    return `<div class="border rounded-lg p-3 ${box}"><div class="text-xs text-slate-500">${esc(r.label)}</div>
+      <div class="text-lg font-semibold ${ink}">${n(r.used)}<span class="text-sm font-normal text-slate-500"> of ${r.limit === null ? 'unlimited' : n(r.limit)}</span></div>
+      ${st.state === 'none' ? '' : `<div class="h-1.5 rounded bg-slate-200 mt-1 overflow-hidden"><div class="h-full ${bar}" style="width:${st.pct}%"></div></div>`}
+      <div class="text-xs mt-1 ${ink || 'text-slate-500'}">${st.caption}</div></div>`;
+  }).join('') : '<span class="col-span-full text-xs text-slate-500">Loading…</span>';
+  syncPlanNote();
+}
+// What the plan in the picker means for this client, before it is saved: its limits, and anything the client already has above them
+function syncPlanNote() {
+  const note = $('#mpPlanNote'), d = Plans.planNote(Plans.plan($('#mpPlanSel').value), S.mpUsage && S.mpUsage.rows);
+  note.className = `basis-full text-xs pb-1 ${d.warn ? 'text-amber-700' : 'text-slate-600'}`;
+  note.textContent = d.text;
+}
+$('#mpPlanSel').addEventListener('change', syncPlanNote);
+$('#planForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    S.managed = await api(`/api/admin/clients/${S.manageId}/plan`, { method: 'PUT', body: { plan: $('#mpPlanSel').value } });
+    fillSettings(S.managed); loadClients();
+    toast(S.managed.plan ? `${planName(S.managed.plan)} plan saved` : 'Plan removed: no limits', true);
+  } catch (err) { toast(err.message); }
+});
 function fillAccess(s) {
   const f = $('#accessForm'), lab = ClientsView.accessLabel(s), a = s.access || {};
   f.integratedAt.value = Access.dayOf(s.integratedAt || new Date());
@@ -3442,7 +3535,7 @@ async function loadSaved() {
   try {
     const [products, buyers] = await Promise.all([api('/api/products'), api('/api/buyers')]);
     S.saved = { products, buyers };
-    if (S.role !== 'SUPER_ADMIN') fillCustomerList();
+    if (S.role !== 'SUPER_ADMIN') { fillCustomerList(); if (S.page === 'c-products') showPlanHint('itemsPlanHint', ['products']); }
     renderItems();
     renderBuyers();
   } catch (err) { toast(err.message); }

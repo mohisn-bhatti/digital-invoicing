@@ -27,13 +27,15 @@
         attention: ['ENDING', 'GRACE', 'EXPIRED'], // anything that needs the administrator's eye
     };
 
-    // f: { q, status: active|inactive, access: unlimited|running|ending|grace|expired|attention, product: INVOICING|POS, env: SANDBOX|PRODUCTION }
+    // f: { q, status: active|inactive, access: unlimited|running|ending|grace|expired|attention, product: INVOICING|POS, env: SANDBOX|PRODUCTION,
+    //      plan: starter|pro|enterprise|none }
     function matches(c, f) {
         if (!f) return true;
         if (f.status === 'active' && !c.active) return false;
         if (f.status === 'inactive' && c.active) return false;
         if (f.access && !(ACCESS_FILTERS[f.access] || []).includes(((c.access && c.access.status) || 'UNLIMITED'))) return false;
         if (f.product && !has(c, f.product)) return false;
+        if (f.plan && (c.plan || 'none') !== f.plan) return false; // "none" = a client with no plan (and so no limits)
         if (f.env && !(has(c, 'INVOICING') && c.fbrEnv === f.env)) return false; // the environment is a Digital Invoicing setting
         const words = String(f.q || '').toLowerCase().split(/\s+/).filter(Boolean);
         if (words.length) {

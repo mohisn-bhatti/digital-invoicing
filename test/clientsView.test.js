@@ -62,6 +62,19 @@ test('the list can be filtered by status, access period, product and environment
     assert.deepStrictEqual(names(V.filterClients(rows, { status: 'active', access: 'attention', product: 'INVOICING' })), ['Alpha Cold Storage'], 'filters combine');
 });
 
+test('the list can be filtered by plan, and a client with no plan is its own choice', () => {
+    n = 0;
+    const rows = [client('Zeta Traders', { plan: 'starter' }), client('Alpha Cold Storage', { plan: 'pro' }), client('Mango Cafe', { plan: 'pro', modules: ['POS'] }), client('Beta Hotel', { plan: 'enterprise' }), client('Old Mill'), client('Plain Co', { plan: null })];
+    const plan = p => names(V.filterClients(rows, { plan: p }));
+    assert.deepStrictEqual(plan('starter'), ['Zeta Traders']);
+    assert.deepStrictEqual(plan('pro'), ['Alpha Cold Storage', 'Mango Cafe']);
+    assert.deepStrictEqual(plan('enterprise'), ['Beta Hotel']);
+    assert.deepStrictEqual(plan('none'), ['Old Mill', 'Plain Co'], 'no plan: a row without the field (an older client) or with null');
+    assert.deepStrictEqual(plan(''), names(rows), 'no choice: everyone');
+    assert.deepStrictEqual(names(V.filterClients(rows, { plan: 'pro', product: 'POS' })), ['Mango Cafe'], 'combines with the other filters');
+    assert.deepStrictEqual(plan('platinum'), [], 'a plan nobody is on matches nobody');
+});
+
 test('the list can be searched by company, login, mobile, NTN and sector', () => {
     const rows = LIST();
     const find = q => names(V.filterClients(rows, { q }));

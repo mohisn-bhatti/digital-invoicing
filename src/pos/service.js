@@ -36,7 +36,9 @@ const lineFields = l => ({ itemId: l.itemId, itemCode: l.itemCode, itemName: l.i
 // a whole number from the query string, kept inside limits (anything else gives the default)
 const whole = (v, dflt, min, max) => { const n = Math.trunc(Number(v)); return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : dflt; };
 
-function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker, now = () => new Date() }) {
+function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker, now = () => new Date(), limits = { assertRoom: async () => {} } }) {
+    const userOf = ctx => ctx.req && ctx.req.user;
+    const room = (ctx, kind) => limits.assertRoom(ctx.tenantId, kind, { user: userOf(ctx) }); // the plan's number of branches, counters and items
     const emailOf = ctx => (ctx.req && ctx.req.user && ctx.req.user.email) || ctx.email || 'user';
     const note = (text, max = 300) => String(text === undefined || text === null ? '' : text).trim().slice(0, max);
     const taken = (e, what) => {
@@ -85,6 +87,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     }
     async function createBranch(ctx, body) {
         const d = V.cleanBranch(body);
+        await room(ctx, 'branches');
         try {
             const b = await prisma.posBranch.create({ data: { tenantId: ctx.tenantId, ...d } });
             await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.branch.create', entityType: 'PosBranch', entityId: b.id, summary: `Branch "${b.name}" added` });
@@ -96,6 +99,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         if (!b) throw new PosError(404, 'Branch not found.');
         const d = V.cleanBranch({ ...b, ...body });
         const active = body.active === undefined ? b.active : body.active === true || body.active === 'true';
+        if (active && !b.active) await room(ctx, 'branches'); // opening a branch again takes its place back
         try {
             await prisma.posBranch.update({ where: { id }, data: { ...d, active } });
             await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.branch.update', entityType: 'PosBranch', entityId: id, summary: `Branch "${d.name}" changed${active === b.active ? '' : active ? ' (switched on)' : ' (switched off)'}` });
@@ -111,6 +115,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         if (!branch) throw new PosError(400, 'Choose the branch this counter belongs to.');
         const d = V.cleanCounter(body);
         const token = body.token ? V.cleanToken(body.token) : null;
+        await room(ctx, 'terminals');
         try {
             const c = await prisma.posCounter.create({ data: { tenantId: ctx.tenantId, branchId: branch.id, ...d, tokenEnc: token ? encrypt(token) : null, tokenSetAt: token ? now() : null } });
             await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.counter.create', entityType: 'PosCounter', entityId: c.id, summary: `Counter "${c.name}" added (POS ID ${c.posId}, ${c.env.toLowerCase()})${token ? ', token saved' : ''}` });
@@ -121,6 +126,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const c = await findCounter(ctx, id);
         const d = V.cleanCounter({ name: c.name, posId: c.posId, env: c.env, ...body });
         const active = body.active === undefined ? c.active : body.active === true || body.active === 'true';
+        if (active && !c.active) await room(ctx, 'terminals'); // switching a counter on again takes its place back
         const moved = d.posId !== c.posId || d.env !== c.env;
         if (moved && (await prisma.posSale.count({ where: { counterId: id, state: { in: PENDING } } }))) {
             throw new PosError(409, 'This counter has sales waiting for PRA. Finish or resolve them before changing its POS ID or environment.');
@@ -163,6 +169,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     }
     async function createItem(ctx, body) {
         const d = V.cleanItem(body);
+        if (d.active) await room(ctx, 'items');
         if (!d.code) d.code = await nextItemCode(ctx.tenantId);
         try {
             const i = await prisma.posItem.create({ data: { tenantId: ctx.tenantId, ...d } });
@@ -174,6 +181,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const i = await prisma.posItem.findFirst({ where: { id, tenantId: ctx.tenantId } });
         if (!i) throw new PosError(404, 'Item not found.');
         const d = V.cleanItem({ ...itemView(i), ...body, code: i.code }); // the code never changes: it is on past sales
+        if (d.active && !i.active) await room(ctx, 'items'); // putting an item back on sale takes its place back
         try {
             const u = await prisma.posItem.update({ where: { id }, data: { ...d, code: i.code } });
             const was = itemView(i), now_ = itemView(u);

@@ -95,6 +95,7 @@ model Tenant {
   accessCount        Int?      // how many of them
   accessEndsAt       DateTime? // the last day of access
   inactiveReason     String?   // why active is false: ADMIN (switched off by hand) or EXPIRED (the period ended)
+  plan               String?   // starter, pro or enterprise (public/plans.js): sets the limits on branches, terminals, products and users (src/limits.js). No plan = no limits (every client from before plans existed)
   users              User[]
   invoices           Invoice[]
   products           Product[]

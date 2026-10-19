@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last updated: 2026-10-19 (Point of Sale reviewed and finished in test mode)_ · summary: [GUIDE.md](GUIDE.md)
+_Last updated: 2026-10-19 (Point of Sale finished in test mode; access periods, plans and limits)_ · summary: [GUIDE.md](GUIDE.md)
 
 ## Done
 **Phase 1: filing invoices with FBR**
@@ -55,14 +55,18 @@ _Last updated: 2026-10-19 (Point of Sale reviewed and finished in test mode)_ ·
 
 **Website pricing (done 2026-10-19)**
 - Pricing section on the landing page: Starter / Pro / Enterprise, annual only at 50% off, the same prices for FBR Digital Invoicing
-  and PRA Point of Sale, feature table by plan with "Soon" tags for what is not built; PRA features added; plan chosen on the
-  site is carried into the contact form (data in `public/plans.js`)
+  and PRA Point of Sale, feature table by plan (every feature a plan includes is shown with a tick); PRA features added; plan
+  chosen on the site is carried into the contact form (data in `public/plans.js`)
 - Change-password dialog: one new password (with the eye to see it), no "repeat" box
 
 **Admin console (done 2026-10-19)**
 - Access period per client: integration date, months or years allowed, countdown, grace (3 days monthly, 7 days yearly),
   automatic switch-off, renew; shown in the Clients list and on the dashboard
-- Clients list: filters (search, status, access period, product, FBR environment) and sorting
+- Plan per client (Starter / Pro / Enterprise, or none), chosen when registering or under Manage → Overview, shown in the Clients
+  list with a filter. **The plan's limits are enforced**: branches, terminals (counters), products and users are checked when
+  something is added or switched back on, with a clear message, a usage panel for the administrator and one-line notes for the
+  client; lowering a plan never removes anything; no plan = no limits (`src/limits.js`, `public/plans.js`)
+- Clients list: filters (search, status, access period, product, plan, FBR environment) and sorting
 - Manage client in tabs (Overview · Digital Invoicing · Point of Sale · Users); a client without Digital Invoicing never sees FBR
   settings, and the dashboard counts FBR figures for FBR clients only
 
@@ -105,6 +109,8 @@ _Last updated: 2026-10-19 (Point of Sale reviewed and finished in test mode)_ ·
 - ✅ Render test deploy is live at https://digital-invoicing.onrender.com (FBR_MOCK on) and uses the Supabase database.
 - ✅ Supabase final push done: 13 migrations, HS codes loaded, test data cleaned out.
 - An Oracle Cloud Always Free VM proxy for the static IP (docs/static-ip-proxy.md). The user needs to create the Oracle account.
+- Deploying the `pos-module` branch: apply its migrations (`0038`–`0043`) to Supabase first (`npm run supabase:deploy`), then
+  deploy the new code (the login query reads the new columns). Not done yet; only when we decide to.
 - Vercel and a domain: later. Render serves everything for now.
 - Backups: the scripts are ready but **not scheduled**. Turn them on before the first real client (docs/backups.md).
 - Remove the brother's GitHub account from this Mac when it's no longer needed (`gh auth logout -u mohisn-bhatti`).

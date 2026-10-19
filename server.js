@@ -70,6 +70,8 @@ app.use(express.static('public'));
 class HttpError extends Error {
     constructor(status, message) { super(message); this.status = status; }
 }
+// What a client's plan allows (branches, terminals, products, users): checked when something is added (src/limits.js)
+const limits = require('./src/limits').createLimits({ prisma, HttpError });
 
 function todayPKT() {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
@@ -124,7 +126,7 @@ function publicTenant(t) {
         companyName: t.companyName,
         mobile: t.mobile, active: t.active, inactiveReason: t.inactiveReason,
         // how long the client may use the application (src/subscription.js)
-        integratedAt: t.integratedAt, accessUnit: t.accessUnit, accessCount: t.accessCount, accessEndsAt: t.accessEndsAt, access: sub.access(t),
+        integratedAt: t.integratedAt, accessUnit: t.accessUnit, accessCount: t.accessCount, accessEndsAt: t.accessEndsAt, access: sub.access(t), plan: t.plan,
         sellerNtnCnic: t.sellerNtnCnic, sellerNtn: t.sellerNtn, sellerCnic: t.sellerCnic,
         sellerBusinessName: t.sellerBusinessName,
         sellerProvince: t.sellerProvince,
@@ -558,6 +560,8 @@ app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), as
     const email = String(clientEmail).toLowerCase().trim();
     checkNewPassword(clientPassword, email);
     if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
+    const plan = req.body?.plan ? String(req.body.plan) : null;
+    if (plan !== null && !PLAN_IDS.includes(plan)) throw new HttpError(400, 'Choose Starter, Pro, Enterprise, or no plan.');
     // optionally, how long the client may use the application (no period given = no time limit); checked before anything is created
     let period = {};
     if (req.body?.accessUnit) {
@@ -568,11 +572,12 @@ app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), as
         data: {
             companyName: String(companyName).trim(),
             mobile,
+            plan,
             ...period,
             users: { create: { email, password: await bcrypt.hash(String(clientPassword), 10), role: 'CLIENT_USER', tenantRole: 'OWNER', mustChangePassword: true } },
         },
     });
-    await audit(req, { tenantId: tenant.id, action: 'admin.client_create', entityType: 'Tenant', entityId: tenant.id, summary: `Client "${tenant.companyName}" created with login ${email}${mobile ? `, mobile ${mobile}` : ''}; access: ${accessText(tenant)}` });
+    await audit(req, { tenantId: tenant.id, action: 'admin.client_create', entityType: 'Tenant', entityId: tenant.id, summary: `Client "${tenant.companyName}" created with login ${email}${mobile ? `, mobile ${mobile}` : ''}; plan: ${plan || 'none'}; access: ${accessText(tenant)}` });
     res.json({ success: true, tenantId: tenant.id });
 });
 
@@ -591,6 +596,7 @@ async function addTenantUser(req, tenantId, b) {
     if (!TENANT_ROLES.includes(b.tenantRole)) throw new HttpError(400, 'Choose a role: Owner, Accountant or Cashier.');
     const pw = checkNewPassword(b.password, email);
     if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
+    await limits.assertRoom(tenantId, 'users', { user: req.user }); // the plan's number of users (a waiting request takes a place too)
     // an owner's new user waits for the administrator; the administrator's own additions are live at once
     const request = req.user.role !== 'SUPER_ADMIN';
     const u = await prisma.user.create({ data: {
@@ -620,6 +626,7 @@ async function updateTenantUser(req, tenantId, id, b) {
         data.tenantRole = b.tenantRole;
     }
     if (b.active !== undefined) data.active = Boolean(b.active);
+    if (data.active === true && !u.active && !u.pendingApproval) await limits.assertRoom(tenantId, 'users', { user: req.user }); // enabling a user takes a place again
     // Correcting a mistyped login email: administrator only (owners can never change it, even by calling the API)
     if (b.email !== undefined && String(b.email).toLowerCase().trim() !== u.email) {
         if (req.user.role !== 'SUPER_ADMIN') throw new HttpError(403, 'Only the administrator can change a login email.');
@@ -875,6 +882,27 @@ async function changeAccess(req, res, compute, verb) {
 }
 app.put('/api/admin/clients/:id/access', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => changeAccess(req, res, before => sub.setPeriod(req.body, before), 'set'));
 app.post('/api/admin/clients/:id/access/renew', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => changeAccess(req, res, before => sub.renew(req.body, before), 'renewed'));
+// The plan a client is on, and what it uses against each limit (for the Manage screen, and the client's own pages)
+const PLAN_IDS = ['starter', 'pro', 'enterprise'];
+app.get('/api/admin/clients/:id/plan', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const t = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+    if (!t) throw new HttpError(404, 'Client not found.');
+    res.json(await limits.usage(t.id, tenantModules(t)));
+});
+app.put('/api/admin/clients/:id/plan', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const before = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+    if (!before) throw new HttpError(404, 'Client not found.');
+    const plan = req.body?.plan === undefined || req.body.plan === null || req.body.plan === '' ? null : String(req.body.plan);
+    if (plan !== null && !PLAN_IDS.includes(plan)) throw new HttpError(400, 'Choose Starter, Pro, Enterprise, or no plan.');
+    const t = await prisma.tenant.update({ where: { id: before.id }, data: { plan } });
+    const name = p => (p ? p[0].toUpperCase() + p.slice(1) : 'no plan');
+    if (before.plan !== plan) await audit(req, { tenantId: t.id, action: 'client.plan', entityType: 'Tenant', entityId: t.id, summary: `Plan changed: ${name(before.plan)} → ${name(plan)}`, details: { Plan: [name(before.plan), name(plan)] } });
+    res.json(publicTenant(t));
+});
+app.get('/api/client/plan', authenticateToken, requireTenant, async (req, res) => {
+    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId }, select: { modules: true } });
+    res.json(await limits.usage(req.user.tenantId, tenantModules(t)));
+});
 // The Point of Sale side of a client, read-only, for the Manage screen (counters, this month, what needs attention)
 app.get('/api/admin/clients/:id/pos-summary', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
     const t = await prisma.tenant.findUnique({ where: { id: req.params.id }, select: { id: true } });
@@ -2108,6 +2136,7 @@ app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT,
     try {
         let p;
         const before = await prisma.product.findFirst({ where: b.id ? { id: String(b.id), tenantId } : { tenantId, name: d.name } });
+        if (!before) await limits.assertRoom(tenantId, 'products', { user: req.user }); // a new item: the plan's number of products
         if (b.id) {
             const { count } = await prisma.product.updateMany({ where: { id: String(b.id), tenantId }, data: d });
             if (!count) throw new HttpError(404, 'Item not found.');
@@ -2152,6 +2181,7 @@ async function checkItemImport(tenantId, body) {
 app.post('/api/products/import/check', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const r = await checkItemImport(req.user.tenantId, req.body);
     const updates = r.ready.filter(e => e.existing).map(({ row, item, existing, fills, conflicts }) => ({ row, name: item.name, existing, fills, conflicts }));
+    if (!r.errors.length && r.ready.length > updates.length) await limits.assertRoom(req.user.tenantId, 'products', { adding: r.ready.length - updates.length, user: req.user }); // the file must fit the plan
     res.json({ errors: r.errors, warnings: r.warnings, ready: r.ready.length - updates.length, updates });
 });
 app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
@@ -2206,6 +2236,7 @@ app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_
         }
     }
     if (problems.length) return res.status(400).json({ error: 'Some choices don\'t make a valid item — choose again.', errors: problems, warnings: r.warnings });
+    if (products.length) await limits.assertRoom(tenantId, 'products', { adding: products.length, user: req.user });
     try {
         // one transaction: every new item and its first tax rule, every update and its new tax rule entry, or nothing
         await prisma.$transaction([prisma.product.createMany({ data: products }), ...updates, prisma.productTaxRule.createMany({ data: rules })]);
@@ -2421,7 +2452,7 @@ app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNT
     const { registerPosRoutes } = require('./src/pos/routes');
     // After this many failed calls in a row the counter's sales are paused for a short rest (SRS: new sales are blocked while PRA is unreachable)
     const breaker = createBreaker({ threshold: Number(process.env.POS_BREAKER_FAILS) || 1, coolDownMs: (Number(process.env.POS_BREAKER_REST_SECONDS) || 15) * 1000 });
-    const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker });
+    const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker, limits });
     posAdmin.service = posService;
     registerPosRoutes(app, { service: posService, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
 }
