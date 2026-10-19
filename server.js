@@ -52,7 +52,7 @@ app.use((req, res, next) => {
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'DENY',
         'Referrer-Policy': 'same-origin',
-        'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+        'Permissions-Policy': 'camera=(self), microphone=(), geolocation=()', // the camera is for this site only: the Point of Sale scans barcodes and QR codes with it
     });
     if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     next();

@@ -142,5 +142,14 @@ not digits, a manual PRA number longer than 30, non-numeric payment modes, contr
 
 ## 6. The TechnoTrading reference
 
-Taken as inspiration: the overall shape of a working POS (items, a sale screen, returns, receipts, per-user privileges). Deliberately
-not included, as the SRS puts them out of scope: purchases and vendors, cash and bank accounting, stock, payroll.
+Taken as inspiration: the overall shape of a working POS (items, a sale screen, returns, receipts, per-user privileges). Phase 2
+added the parts of its main menu that belong to a fiscal POS:
+
+| TechnoTrading main menu | Here |
+|---|---|
+| Profiles (customers) | **Customers**: saved buyers, found on the sale screen (vendors are not built) |
+| Default Settings | **Settings → Defaults and receipt**: how a sale starts, paper, header, cashier on or off, what a new item starts with |
+| Reports | **Reports**: daily closing, sales analysis, tax summary, filters everywhere; scanning and QR labels besides |
+| Receive Cash, Purchase Invoice, Pay Cash to Vendor | **Not built** (the accounts side: the SRS leaves it out; the owner decides) |
+
+Deliberately not included, as the SRS puts them out of scope: purchases and vendors, cash and bank accounting, stock, payroll.

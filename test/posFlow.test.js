@@ -348,7 +348,7 @@ run('POS flow: one business cannot see or change another\'s sales, items or coun
 });
 
 run('POS flow: items keep their code, reject duplicates, and the PCT search finds the service headings', async () => {
-    await rejects(svc.createItem(ctx, { code: 'ITM0001', name: 'Another', pctCode: '98012000', taxRate: 16 }), 409, /item code/);
+    await rejects(svc.createItem(ctx, { code: 'ITM0001', name: 'Another', pctCode: '98012000', taxRate: 16 }), 409, /already the code or barcode of "Lunch buffet"/);
     const u = await svc.updateItem(ctx, items.drink.id, { name: 'Cola', pctCode: '98012000', taxRate: 16, unitPrice: 130, code: 'CHANGED' });
     assert.strictEqual(u.code, 'ITM0002', 'the code is on past sales and never changes');
     assert.strictEqual(u.unitPrice, 130);
@@ -489,7 +489,7 @@ run('POS flow: the sales report adds up, and the CSV export is safe to open in a
     assert.ok(!/(^|,)=HYPERLINK/m.test(out.csv));
     assert.match(out.filename, /^pos-sales-start-to-today\.csv$/);
     const detail = await svc.salesCsv(ctx, { detail: 'lines', from: '2020-01-01', to: '2099-12-31' });
-    assert.match(detail.csv.split('\r\n')[0], /Item code,Item,PCT code,Quantity,Unit price/);
+    assert.match(detail.csv.split('\r\n')[0], /Item code,Item,Category,PCT code,Quantity,Unit price/);
     assert.ok(detail.rows >= 10 && detail.csv.split('\r\n').length > detail.rows, 'a row for each line');
     assert.strictEqual((await svc.salesCsv(ctx, { state: 'FISCALIZED' })).csv.trim().split('\r\n').length - 1, await prisma.posSale.count({ where: { tenantId, state: 'FISCALIZED' } }), 'a status filter works (the export holds every environment)');
     assert.deepStrictEqual((await svc.salesCsv(ctxOther, {})).csv.trim().split('\r\n').length, 1, 'another business exports only a header');

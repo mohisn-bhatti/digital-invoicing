@@ -32,6 +32,7 @@ const prisma = new PrismaClient();
 
 async function wipe(tenantId) {
     await prisma.posSale.deleteMany({ where: { tenantId } }); // lines, events and attempts go with them
+    await prisma.posCustomer.deleteMany({ where: { tenantId } }); // (after the sales: a sale holds on to its customer)
     await prisma.posCounter.deleteMany({ where: { tenantId } });
     await prisma.posBranch.deleteMany({ where: { tenantId } });
     await prisma.posItem.deleteMany({ where: { tenantId } });

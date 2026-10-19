@@ -48,6 +48,14 @@ function cleanBuyer(b) {
     return { name, pntn, cnic, phone };
 }
 
+// A saved customer: the buyer's details, in PRA's formats, plus an address and a note. The name is required.
+function cleanCustomer(c) {
+    c = isObject(c) ? c : {};
+    const b = cleanBuyer(c);
+    if (!b.name) throw new PosValidationError('Enter the customer name.');
+    return { ...b, address: text(c.address, 250, 'Address'), notes: text(c.notes, 300, 'Notes'), active: c.active === undefined ? true : c.active === true || c.active === 'true' };
+}
+
 // PCT / HS code of the service (Second Schedule): PRA wants 8 characters, no dot (9801.2000 → 98012000)
 function cleanPct(v) {
     const d = digitsOf(v);
@@ -61,9 +69,12 @@ function cleanItem(i) {
     if (code && !/^[A-Za-z0-9._\-\/]+$/.test(code)) throw new PosValidationError('Item code can use letters, numbers and . _ - / only.');
     const name = text(i.name, 150, 'Item name');
     if (!name) throw new PosValidationError('Enter the item name.');
+    const barcode = text(i.barcode, 50, 'Barcode');
+    if (barcode && !/^[A-Za-z0-9._\-\/]+$/.test(barcode)) throw new PosValidationError('A barcode can use letters, numbers and . _ - / only.');
     const hasCard = i.taxRateCard !== undefined && i.taxRateCard !== null && String(i.taxRateCard).trim() !== '';
     return {
         code, name,
+        barcode: barcode || null, // nothing typed = no barcode (the code is what is scanned)
         category: text(i.category, 60, 'Category'),
         pctCode: cleanPct(i.pctCode),
         taxRate: num(i.taxRate, 'Tax rate', { max: 100 }),
@@ -93,6 +104,39 @@ function cleanProfile(p) {
     };
 }
 
+// What the account owner sets once for the whole business: how a new sale starts, how the receipt looks, and what a new item starts
+// with (a convenience for the item form: an item is still checked in full when it is saved). A field that is not sent keeps its stored
+// value (`current`), so one thing can be changed without knowing the rest.
+const RECEIPT_WIDTHS = [58, 80]; // millimetres: the two common thermal rolls
+const flag = (v, what) => {
+    if (v === true || v === 'true') return true;
+    if (v === false || v === 'false') return false;
+    throw new PosValidationError(`${what} must be yes or no.`);
+};
+const optionalRate = (v, what) => (v === null || String(v).trim() === '' ? null : num(v, what, { max: 100 }));
+function cleanSettings(s, current = {}) {
+    s = isObject(s) ? s : {};
+    const pick = (key, clean) => (s[key] === undefined ? current[key] : clean(s[key]));
+    return {
+        defaultPaymentMode: pick('defaultPaymentMode', v => {
+            const n = typeof v === 'number' || (typeof v === 'string' && /^\s*\d{1,2}\s*$/.test(v)) ? Number(v) : NaN;
+            if (!Number.isInteger(n) || n < 1 || n > 6) throw new PosValidationError('Choose how a new sale starts: cash, card, gift voucher, loyalty card, mixed or cheque.');
+            return n;
+        }),
+        receiptHeader: pick('receiptHeader', v => text(v, 120, 'Receipt header')),
+        receiptWidth: pick('receiptWidth', v => {
+            const n = typeof v === 'number' || (typeof v === 'string' && /^\s*\d{2}\s*$/.test(v)) ? Number(v) : NaN;
+            if (!RECEIPT_WIDTHS.includes(n)) throw new PosValidationError(`The receipt paper is ${RECEIPT_WIDTHS.join(' mm or ')} mm wide.`);
+            return n;
+        }),
+        showCashier: pick('showCashier', v => flag(v, 'Showing the cashier on the receipt')),
+        itemPct: pick('itemPct', v => (String(v === undefined || v === null ? '' : v).trim() === '' ? '' : cleanPct(v))),
+        itemTaxRate: pick('itemTaxRate', v => optionalRate(v, 'The sales tax for new items')),
+        itemTaxRateCard: pick('itemTaxRateCard', v => optionalRate(v, 'The sales tax on card payments for new items')),
+        itemCategory: pick('itemCategory', v => text(v, 60, 'Category')),
+    };
+}
+
 function cleanBranch(b) {
     b = isObject(b) ? b : {};
     const name = text(b.name, 80, 'Branch name');
@@ -118,4 +162,4 @@ function cleanToken(v) {
     return t;
 }
 
-module.exports = { PosValidationError, cleanBuyer, cleanPct, cleanItem, cleanPaymentMode, cleanProfile, cleanBranch, cleanCounter, cleanToken };
+module.exports = { PosValidationError, RECEIPT_WIDTHS, cleanBuyer, cleanCustomer, cleanPct, cleanItem, cleanPaymentMode, cleanProfile, cleanSettings, cleanBranch, cleanCounter, cleanToken };

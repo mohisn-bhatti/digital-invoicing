@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last updated: 2026-10-19 (Point of Sale finished in test mode; access periods, plans and limits)_ · summary: [GUIDE.md](GUIDE.md)
+_Last updated: 2026-10-19 (Point of Sale phase 2 built on branch `pos-phase2`, not deployed; access periods, plans and limits)_ · summary: [GUIDE.md](GUIDE.md)
 
 ## Done
 **Phase 1: filing invoices with FBR**
@@ -70,6 +70,17 @@ _Last updated: 2026-10-19 (Point of Sale finished in test mode; access periods, 
 - Manage client in tabs (Overview · Digital Invoicing · Point of Sale · Users); a client without Digital Invoicing never sees FBR
   settings, and the dashboard counts FBR figures for FBR clients only
 
+**Point of Sale, phase 2 (built 2026-10-19 on branch `pos-phase2`, tested locally, not pushed or deployed)**
+- Saved customers (Customers menu, found on the sale screen); a sale keeps its own copy of the buyer's details
+- Scanning: item barcodes, a barcode scanner or the camera adds an item with the price and tax rate it is set to; a receipt's QR
+  opens the sale; QR labels to print; the server answers `GET /api/pos/lookup`
+- Reports with filters: daily closing (day-end sheet, a cashier sees only their own), sales analysis by twelve groupings, tax
+  summary; filters on the sales list; spreadsheets; Pakistan calendar days; every report row opens the invoices behind it
+- Defaults and receipt settings (how a sale starts, 58 or 80 mm paper, header, cashier on or off, what a new item starts with) and
+  a quick-rate list for the usual kinds of business
+- Migrations `0044` and `0045` only add; to go live they need the safe production procedure (fingerprint, rehearsal, no seed), and
+  the category backfill of `0044` run once more after the new code is live (see POS_MODULE.md, "Putting phase 2 on production")
+
 ## Waiting on others
 - **PRAL / IRIS:** sandbox token, assigned scenarios, IP whitelisting. Then run every scenario, then get the production token.
 - **CA answers** (list sent 2026-10-06):
@@ -104,6 +115,10 @@ _Last updated: 2026-10-19 (Point of Sale finished in test mode; access periods, 
 
 ## Saved for later (needed before going live)
 1. **Products import.** Upload products from Excel/CSV.
+2. **The accounts side of a trading POS:** Receive Cash, Purchase Invoice, Pay Cash to Vendor (vendors, purchases, payments, a cash
+   book). Not in the SRS: the owner decides; the CA's answers on credit sales and withholding are needed first.
+3. **The Digital Invoicing 80 mm receipt:** its print page size `80mm auto` is ignored by Chrome (the POS receipt no longer asks for
+   one). Sizing the page to the receipt needs a thermal printer to try.
 
 ## Before go-live (deployment)
 - ✅ Render test deploy is live at https://digital-invoicing.onrender.com (FBR_MOCK on) and uses the Supabase database.
@@ -120,7 +135,8 @@ _Last updated: 2026-10-19 (Point of Sale finished in test mode; access periods, 
 ## Later phases
 - **Point of Sale (PRA)** (a second product; a client with more than one picks at login): a cashier screen for restaurants,
   banquet halls and other Punjab service businesses, every sale sent to PRA's eIMS. Built, independently reviewed and tested in
-  test mode on branch `pos-module` (sales, credit notes, reports and CSV, receipts, roles, the PRA-unreachable rules); still to do:
+  test mode on branch `pos-module` (sales, credit notes, reports and CSV, receipts, roles, the PRA-unreachable rules; on production
+  since 2026-10-19), with phase 2 (customers, scanning, reports, defaults) on `pos-phase2`; still to do:
   a run against PRA's sandbox and PRA's answers (discount reading, product catalogue, mixed payments), an outage procedure, going
   live. See [POS_MODULE.md](POS_MODULE.md) and [POS_COMPLIANCE.md](POS_COMPLIANCE.md).
 - **Stock:** CSV import of purchases; refund (Annex-H) specifics for exporters, once the CA confirms who needs them.

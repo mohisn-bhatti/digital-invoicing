@@ -4,22 +4,37 @@
    PAGE_ENTER, NAV, renderNav, syncModules) until a function runs. The money maths is /pos-calc.js (PosCalc), the same file the
    server uses, so the preview always matches what is sent. */
 
+// The filters of the Sales & Receipts list, none chosen. Dates: null = not chosen yet (today), '' = all dates. The last nine have no box on
+// the page: they come from a report row (or the customers page) and show as chips that can be taken away one by one.
+const posBlankSales = (over = {}) => ({
+  from: null, to: null, state: '', q: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '',
+  customerId: '', customerName: '', itemCode: '', itemName: '', category: '', taxRate: '', branchId: '', branchName: '', env: '', ...over,
+});
+
 const POS = {
-  setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, buyer: { name: '', pntn: '', cnic: '', phone: '' },
-  cat: '', q: '', busy: false, result: null, detail: null,
-  sales: { from: null, to: null, state: '', q: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null, pctTimer: null, // dates: null = not chosen yet (today), '' = all dates
+  setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, modePicked: false, buyer: { name: '', pntn: '', cnic: '', phone: '' }, customer: null, saveCustomer: false,
+  cat: '', q: '', busy: false, result: null, detail: null, settings: null, receiptWidth: 80, cashiers: null,
+  sales: posBlankSales(), reportKey: null, items: [], itemQ: '', branches: [], profile: null, pctTimer: null,
   ref: null, refSig: null, creditRef: null, alerts: null, alertTimer: null, tick: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false, watching: false,
 };
+// Pages that the other Point of Sale scripts add (customers, reports, accounts ...): each pushes { id, html(), enter() } and gets its
+// place in the shell and its page-enter hook, so nothing here has to know about them.
+const POS_PAGES = [];
+// What each of those scripts forgets when the login, the module or the workspace changes (posReset runs them all)
+const POS_RESETS = [];
 // Whatever the last login, module or workspace left behind (cart, buyer, windows, timers) must not show up in the next one
 function posReset() {
   clearInterval(POS.alertTimer); clearInterval(POS.tick); clearTimeout(POS.pctTimer);
   Object.assign(POS, {
-    setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, buyer: posBlankBuyer(), cat: '', q: '', busy: false, result: null, detail: null,
-    sales: { from: null, to: null, state: '', q: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null,
+    setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, modePicked: false, buyer: posBlankBuyer(), customer: null, saveCustomer: false, cat: '', q: '', busy: false, result: null, detail: null, settings: null, receiptWidth: 80, cashiers: null,
+    sales: posBlankSales(), reportKey: null, items: [], itemQ: '', branches: [], profile: null,
     ref: null, refSig: null, creditRef: null, alerts: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false,
   });
   posCloseModal(); posCloseReceipt();
+  POS_RESETS.forEach(f => f());
 }
+// a viewfinder: the corners of a frame and a scan line (the Scan buttons)
+const POS_ICON_SCAN = '<svg viewBox="0 0 24 24" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></svg>';
 const POS_STATES = {
   AWAITING_FISCALIZATION: ['Waiting for PRA', 'bg-amber-100 text-amber-800'],
   FISCALIZED: ['Fiscalized', 'bg-emerald-100 text-emerald-800'],
@@ -52,7 +67,9 @@ async function initPos() {
   host.querySelectorAll('[data-page^="p-"]').forEach(el => el.remove());
   host.insertAdjacentHTML('beforeend', posPagesHtml());
   posEnsureModals();
-  Object.assign(PAGE_ENTER, { 'p-dashboard': posEnterDashboard, 'p-sale': posEnterSale, 'p-sales': posEnterSales, 'p-items': posEnterItems, 'p-settings': posEnterSettings });
+  Object.assign(PAGE_ENTER, { 'p-dashboard': posEnterDashboard, 'p-sale': posEnterSale, 'p-sales': posEnterSales, 'p-items': posEnterItems, 'p-settings': posEnterSettings },
+    Object.fromEntries(POS_PAGES.map(x => [x.id, x.enter])));
+  posInstallScanner(); // the barcode scanner works anywhere on the sale screen
   clearInterval(POS.alertTimer); POS.alertTimer = setInterval(posPollAlerts, 60000);
   if (!POS.watching) { POS.watching = true; document.addEventListener('visibilitychange', () => { if (!document.hidden) posPollAlerts(); }); } // catch up when the tab comes back
   posPollAlerts();
@@ -69,7 +86,10 @@ function posPagesHtml() {
         <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-start">
           <section class="min-w-0 md:col-span-3 space-y-3">
             <div class="bg-white rounded-xl shadow p-3 space-y-2">
-              <input id="pSearch" type="search" placeholder="Search items, or scan a barcode…" autocomplete="off" oninput="posSearch(this.value)" onkeydown="posSearchKey(event)" class="!text-base">
+              <div class="flex gap-2">
+                <input id="pSearch" type="search" placeholder="Search or scan a barcode…" autocomplete="off" oninput="posSearch(this.value)" onkeydown="posSearchKey(event)" class="!text-base flex-1 min-w-0">
+                <button type="button" onclick="posScanForSale()" class="shrink-0 px-3 min-h-[2.75rem] rounded-lg border bg-white hover:border-emerald-600 text-sm font-medium inline-flex items-center gap-1.5" aria-label="Scan a barcode or QR code with the camera">${POS_ICON_SCAN}<span>Scan</span></button></div>
+              <div id="pScanNote" aria-live="polite"></div>
               <div id="pCats" class="flex flex-wrap gap-1.5"></div>
             </div>
             <div id="pGrid" class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2"></div>
@@ -83,17 +103,19 @@ function posPagesHtml() {
               <div id="pTotals"></div>
               <div><div class="text-xs text-slate-600 mb-1">Paid by <span class="text-slate-400">(card, mobile wallet or QR: choose Card)</span></div><div id="pPay" class="grid grid-cols-3 gap-2"></div></div>
               <details id="pBuyerBox" class="text-sm"><summary id="pBuyerSum" class="cursor-pointer text-slate-600 py-2">Buyer details (optional)</summary>
+                <div id="pCustomer" class="mt-2"></div>
                 <div class="grid grid-cols-2 gap-2 mt-2">
                   <label class="col-span-2"><span>Name</span><input id="pbName" maxlength="150" oninput="posBuyer('name', this.value)" autocomplete="off"></label>
                   <label><span>PNTN</span><input id="pbPntn" maxlength="9" placeholder="1234567-8" oninput="posBuyer('pntn', this.value)" autocomplete="off"></label>
                   <label><span>CNIC</span><input id="pbCnic" maxlength="15" placeholder="13 digits" oninput="posBuyer('cnic', this.value)" inputmode="numeric" autocomplete="off"></label>
                   <label class="col-span-2"><span>Phone</span><input id="pbPhone" maxlength="20" oninput="posBuyer('phone', this.value)" inputmode="tel" autocomplete="off"></label>
-                </div></details>
+                </div>
+                <div id="pCustomerSave" class="mt-2"></div></details>
               <div class="flex gap-2">
                 <button type="button" onclick="posClear()" class="px-4 min-h-[3rem] rounded-lg border">Clear</button>
                 <button id="pGo" type="button" onclick="posFinalize()" class="flex-1 px-4 min-h-[3rem] rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-base font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Finalize &amp; send to PRA</button>
               </div>
-              <p class="text-xs text-slate-500">The receipt prints once PRA gives the fiscal invoice number.</p>
+              <p class="text-xs text-slate-500">The receipt prints once PRA gives the fiscal invoice number. <button type="button" onclick="posClosingModal()" class="underline text-emerald-700">Day-end sheet</button></p>
               <div id="pResult"></div>
             </div>
           </aside>
@@ -114,7 +136,17 @@ function posPagesHtml() {
             <button type="button" onclick="posSalesToday()" class="flex-1 sm:flex-none px-3 min-h-[2.5rem] rounded border text-sm">Today</button>
             <button type="button" onclick="posLoadSales()" class="flex-1 sm:flex-none px-3 min-h-[2.5rem] rounded border text-sm">Refresh</button></div>
           <label class="col-span-2 sm:flex-1 sm:min-w-[12rem]"><span>Search</span><input id="psQ" type="search" placeholder="Invoice no., PRA no. or buyer" oninput="posSalesSearch()" autocomplete="off"></label>
+          <div class="flex items-end"><button type="button" onclick="posScanForSales()" class="flex-1 sm:flex-none px-3 min-h-[2.5rem] rounded border text-sm inline-flex items-center justify-center gap-1.5 whitespace-nowrap">${POS_ICON_SCAN}<span>Scan receipt</span></button></div>
+          <div id="psCust" class="col-span-2 sm:basis-full"></div>
         </div>
+        <details id="psMore" class="mb-3 text-sm"><summary class="cursor-pointer text-emerald-700 py-1 min-h-[2rem]">More filters <span id="psMoreCount" class="text-xs text-slate-500"></span></summary>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+            <label><span>Counter</span><select id="psCounter" onchange="posSalesFilter()"></select></label>
+            <label><span>Paid by</span><select id="psPay" onchange="posSalesFilter()"></select></label>
+            <label><span>Show</span><select id="psType" onchange="posSalesFilter()"><option value="">Sales and returns</option><option value="sale">Sales only</option><option value="return">Returns only</option></select></label>
+            <label id="psCashierWrap" class="hidden"><span>Cashier</span><select id="psCashier" onchange="posSalesFilter()"></select></label>
+            <label><span>Bill from (Rs)</span><input id="psMin" inputmode="decimal" placeholder="any" onchange="posSalesFilter()"></label>
+            <label><span>Bill up to (Rs)</span><input id="psMax" inputmode="decimal" placeholder="any" onchange="posSalesFilter()"></label></div></details>
         ${canManage() ? `<div id="psReport" class="mb-3"></div>
         <div class="flex flex-wrap gap-2 mb-3">${posBtn('Download CSV', 'posDownloadCsv()')}${posBtn('Download CSV with items', "posDownloadCsv('lines')")}</div>` : ''}
         <div id="psNote" class="text-xs text-slate-500 mb-2"></div>
@@ -127,7 +159,9 @@ function posPagesHtml() {
       <div class="bg-white rounded-xl shadow p-4">
         <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
           <h2 class="font-semibold">Items</h2>
-          <div class="flex gap-2 w-full sm:w-auto"><input id="piQ" type="search" placeholder="Search items…" oninput="posItemSearch(this.value)" class="flex-1 sm:!w-52" autocomplete="off">
+          <div class="flex flex-wrap gap-2 w-full sm:w-auto"><input id="piQ" type="search" placeholder="Search items…" oninput="posItemSearch(this.value)" class="flex-1 min-w-[9rem] sm:!w-52" autocomplete="off">
+            <button type="button" onclick="posScanForItems()" class="border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap inline-flex items-center gap-1.5">${POS_ICON_SCAN}<span>Scan</span></button>
+            <button type="button" onclick="posLabelsDialog()" class="border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">Print labels</button>
             <button type="button" onclick="posItemForm()" class="bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ Add item</button></div>
         </div>
         <p id="piPlanHint" class="text-xs mb-3"></p>
@@ -138,6 +172,7 @@ function posPagesHtml() {
           <tbody id="piRows"></tbody></table></div>
       </div>`),
     page('p-settings', '<div id="pSettings"></div>'),
+    ...POS_PAGES.map(x => page(x.id, x.html())),
   ].join('');
 }
 
@@ -184,6 +219,13 @@ async function posLoadSetup() {
     POS.counterId = (POS.setup.counters.find(c => c.id === last) || POS.setup.counters[0] || {}).id || null;
   }
   POS.cart = POS.cart.filter(c => POS.itemsById.has(c.itemId));
+  // a sale starts as the owner chose in Settings, until the cashier picks a way; a sale already being made is left alone
+  if (!POS.modePicked && !POS.cart.length && POS.mode !== posDefaultMode()) { POS.mode = posDefaultMode(); if ($('#pPay')) posRenderPay(); }
+}
+// How a new sale starts: the owner's choice in Settings (cash until chosen), when it is one of the ways this screen offers
+function posDefaultMode() {
+  const s = POS.setup, m = s && s.settings && s.settings.defaultPaymentMode;
+  return s && s.paymentModes && s.paymentModes.some(x => x.id === m) ? m : 1;
 }
 async function posEnterSale() {
   posPollAlerts();
@@ -191,7 +233,7 @@ async function posEnterSale() {
   posRenderSale();
   clearInterval(POS.tick); POS.tick = setInterval(posTick, 1000);
 }
-function posRenderSale() { posRenderBanner(); posRenderCounters(); posRenderCats(); posRenderGrid(); posRenderCart(); posRenderPay(); posRenderResult(); }
+function posRenderSale() { posRenderBanner(); posRenderCounters(); posRenderCats(); posRenderGrid(); posRenderCart(); posRenderPay(); posRenderResult(); posRenderCustomer(); }
 const posCounter = () => (POS.setup ? POS.setup.counters.find(c => c.id === POS.counterId) : null);
 
 // How much of the connection's rest is left (the server told us at breakerAt)
@@ -224,6 +266,7 @@ function posPickCounter(id) {
   POS.counterId = id;
   try { localStorage.setItem('posCounter', id); } catch { /* per-browser convenience only */ }
   posRenderBanner(); posRenderGo();
+  const on = document.activeElement; if (on && on.id === 'pCounter') on.blur(); // the list must not keep the keyboard: the next thing typed is a scan, not a choice of counter
 }
 function posRenderCats() {
   const cats = [...new Set(POS.setup.items.map(i => i.category || '__none'))].sort();
@@ -232,18 +275,19 @@ function posRenderCats() {
 }
 function posCategory(v) { POS.cat = v; posRenderCats(); posRenderGrid(); }
 function posSearch(v) { POS.q = v.trim().toLowerCase(); posRenderGrid(); }
-// A barcode scanner types the code and presses Enter: an exact code, or the only match, goes into the sale
+// A barcode scanner types the code and presses Enter: a barcode or code exactly (an item, or the number on a receipt), or the only match
 function posSearchKey(e) {
   if (e.key !== 'Enter') return;
   e.preventDefault();
-  const q = e.target.value.trim().toLowerCase(); if (!q) return;
-  const exact = POS.setup.items.filter(i => i.code.toLowerCase() === q);
-  const hits = exact.length === 1 ? exact : POS.setup.items.filter(i => (i.name + ' ' + i.code + ' ' + i.category).toLowerCase().includes(q));
-  if (hits.length === 1) { posAdd(hits[0].id); e.target.value = ''; POS.q = ''; posRenderGrid(); }
+  const typed = e.target.value.trim(), q = typed.toLowerCase(); if (!q) return;
+  if (PosScan.findItem(POS.setup.items, typed)) { posScanSale(typed); e.target.value = ''; POS.q = ''; posRenderGrid(); return; }
+  const hits = POS.setup.items.filter(i => (i.name + ' ' + i.code + ' ' + (i.barcode || '') + ' ' + i.category).toLowerCase().includes(q));
+  if (hits.length === 1) { posAdd(hits[0].id); posScanNote(hits[0]); e.target.value = ''; POS.q = ''; posRenderGrid(); }
+  else if (!hits.length && PosScan.parse(typed).invoice) { posScanSale(typed); e.target.value = ''; POS.q = ''; posRenderGrid(); } // a receipt's address pasted in
   else toast(hits.length ? 'More than one item matches: tap the one you want.' : 'No item matches.');
 }
 function posRenderGrid() {
-  const list = POS.setup.items.filter(i => (!POS.cat || (i.category || '__none') === POS.cat) && (!POS.q || (i.name + ' ' + i.code + ' ' + i.category).toLowerCase().includes(POS.q)));
+  const list = POS.setup.items.filter(i => (!POS.cat || (i.category || '__none') === POS.cat) && (!POS.q || (i.name + ' ' + i.code + ' ' + (i.barcode || '') + ' ' + i.category).toLowerCase().includes(POS.q)));
   $('#pGrid').innerHTML = list.map(i => `<button type="button" onclick="posAdd('${i.id}')" class="text-left bg-white border rounded-xl p-3 min-h-[5rem] shadow-sm hover:border-emerald-600 active:bg-emerald-50">
     <div class="font-medium leading-tight">${esc(i.name)}</div><div class="text-xs text-slate-500 mt-1">${i.openPrice ? 'Enter the price' : money(i.unitPrice)}</div></button>`).join('')
     || `<p class="col-span-full text-sm text-slate-500 p-3">${POS.setup.items.length ? 'No item matches.' : ''}</p>`;
@@ -260,17 +304,18 @@ function posSetQty(i, v) { POS.cart[i].qty = String(v).trim(); posRenderCart(); 
 function posSetPrice(i, v) { POS.cart[i].price = String(v).trim(); posRenderCart(); }
 function posSetDisc(i, v) { POS.cart[i].disc = String(v).trim(); posRenderCart(); }
 function posRemove(i) { POS.cart.splice(i, 1); posRenderCart(); }
-function posMode(id) { POS.mode = id; posRenderPay(); posRenderCart(); }
-function posBuyer(k, v) { POS.buyer[k] = v; posRenderCart(); }
+function posMode(id) { POS.mode = id; POS.modePicked = true; posRenderPay(); posRenderCart(); }
+function posBuyer(k, v) { POS.buyer[k] = v; if (k === 'name') posRenderCustomerSave(); posRenderCart(); }
 function posBuyerLabel(need) {
   const sum = $('#pBuyerSum'), box = $('#pBuyerBox');
   if (sum) sum.textContent = need ? 'Buyer details (required for this sale)' : 'Buyer details (optional)';
   if (need && box) box.open = true;
 }
 function posClear() {
-  POS.cart = []; POS.buyer = posBlankBuyer(); POS.mode = 1; POS.result = null;
+  POS.cart = []; POS.buyer = posBlankBuyer(); POS.mode = posDefaultMode(); POS.modePicked = false; POS.result = null; POS.customer = null; POS.saveCustomer = false;
   POS.ref = POS.refSig = null; POS.lost = false; // the next sale is a new sale, even if it looks the same
   for (const [id, k] of [['pbName', 'name'], ['pbPntn', 'pntn'], ['pbCnic', 'cnic'], ['pbPhone', 'phone']]) $('#' + id).value = POS.buyer[k];
+  posRenderCustomer();
   posRenderPay(); posRenderCart(); posRenderResult();
 }
 function posRenderPay() {
@@ -355,11 +400,19 @@ async function posFinalize() {
   if (POS.busy) return;
   const pv = posPreview();
   if (!pv.ok || !POS.counterId || pv.needBuyer) return;
+  POS.busy = true; posRenderGo(); // (a second press while the customer is being saved must not start a second sale)
+  // "Save this buyer as a customer" is ticked: the customer is saved first and the sale then points at it. The sale never waits on this
+  // side job: if the customer cannot be saved (that PNTN already belongs to someone), the sale is made with the details as typed.
+  if (!POS.customer && POS.saveCustomer && POS.buyer.name.trim()) {
+    try { POS.customer = await api('/api/pos/customers', { method: 'POST', body: POS.buyer }); posRenderCustomer(); toast(`Saved as customer ${POS.customer.code}`, true); }
+    catch (err) { POS.saveCustomer = false; posRenderCustomer(); toast(`Not saved as a customer: ${err.message} The sale is made with the details typed.`); }
+  }
   const lines = POS.cart.map(c => {
     const item = POS.itemsById.get(c.itemId), d = String(c.disc || '').trim();
     return { itemId: c.itemId, quantity: c.qty, unitPrice: item.openPrice ? c.price : undefined, ...(d.endsWith('%') ? { discountPercent: d.slice(0, -1).trim() } : d ? { discount: d } : {}) };
   });
   const body = { counterId: POS.counterId, paymentMode: POS.mode, buyer: POS.buyer, lines };
+  if (POS.customer) body.customerId = POS.customer.id; // the customer's own details are the ones that go on the sale
   // the same cart pressed again is the same sale: if an answer was lost, nothing is made twice
   const sig = JSON.stringify(body);
   if (POS.refSig !== sig) { POS.ref = newRequestId(); POS.refSig = sig; }
@@ -372,9 +425,10 @@ async function posFinalize() {
     const r = await Promise.race([api('/api/pos/sales', { method: 'POST', body }), watchdog]);
     clearTimeout(timer);
     POS.ref = POS.refSig = null;
-    POS.cart = []; POS.buyer = posBlankBuyer(); POS.mode = 1; POS.busy = false;
+    POS.cart = []; POS.buyer = posBlankBuyer(); POS.mode = posDefaultMode(); POS.modePicked = false; POS.busy = false; POS.customer = null; POS.saveCustomer = false;
     for (const id of ['pbName', 'pbPntn', 'pbCnic', 'pbPhone']) $('#' + id).value = '';
     POS.result = r.result.outcome === 'FISCALIZED' ? null : r;
+    posRenderCustomer();
     posRenderPay(); posRenderCart(); posRenderResult();
     if (r.result.outcome === 'FISCALIZED') { toast(r.result.duplicate ? `Sale ${r.sale.usin} had already been made: nothing was sent twice` : `Sale ${r.sale.usin} fiscalized`, true); await posShowReceipt(r.sale.id); }
     posAfterSend(r.result);
@@ -422,7 +476,10 @@ async function posShowReceipt(id) {
   try {
     const rc = await api(`/api/pos/sales/${id}/receipt`);
     posEnsureModals();
-    $('#posReceipt').innerHTML = posReceiptHtml(rc);
+    const look = posReceiptLook(rc), box = $('#posReceipt');
+    POS.receiptWidth = look.width; // the paper the owner chose in Settings: the preview and the print both use it
+    box.style.width = box.style.maxWidth = look.width + 'mm'; box.style.fontSize = look.width === 58 ? '10px' : ''; // (on paper the page's own width can make it narrower: see app.html)
+    box.innerHTML = posReceiptHtml(rc);
     $('#posReceiptModal').classList.remove('hidden');
     document.body.classList.add('print-pos'); // while this receipt is open, printing means this receipt (see the print rules in app.html)
     // the QR is drawn by a library from a CDN: if it cannot load, the address is printed instead so the receipt still carries it
@@ -431,8 +488,13 @@ async function posShowReceipt(id) {
     if (!drawn) { $('#posQrText').classList.remove('hidden'); toast('The QR code could not be drawn. The verification address is printed instead.'); }
   } catch (err) { toast(err.message); }
 }
+// What the owner chose for the paper (Settings): its width, a line under the business name, whether the cashier's name is printed
+const posReceiptLook = rc => {
+  const look = { header: '', showCashier: true, ...(rc && rc.look) };
+  return { ...look, width: look.width === 58 ? 58 : 80 }; // two rolls exist: anything else is the usual one
+};
 function posReceiptHtml(rc) {
-  const s = rc.sale, b = rc.business, credit = s.invoiceType === 3, rule = '<div style="border-top:1px dashed #000;margin:4px 0"></div>';
+  const s = rc.sale, b = rc.business, look = posReceiptLook(rc), credit = s.invoiceType === 3, rule = '<div style="border-top:1px dashed #000;margin:4px 0"></div>';
   // label left, amount right; a long label wraps and, if still too wide, the amount drops to the next line (80 mm paper)
   const row = (l, r, bold) => `<div style="display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:8px;${bold ? 'font-weight:bold;' : ''}"><span style="min-width:0;overflow-wrap:anywhere">${l}</span><span style="text-align:right;min-width:0;margin-left:auto;overflow-wrap:anywhere">${r}</span></div>`;
   const test = s.mock ? 'TEST MODE: NOT A FISCAL INVOICE' : s.env === 'SANDBOX' ? 'PRA SANDBOX TEST: NOT A REAL INVOICE' : '';
@@ -440,13 +502,14 @@ function posReceiptHtml(rc) {
   return `<div style="text-align:center">
       ${test ? `<div style="border:2px solid #000;padding:2px;font-weight:bold;margin-bottom:4px">${test}</div>` : ''}
       <div style="font-weight:bold;font-size:13px">${esc(b.name)}</div>
+      ${look.header ? `<div>${esc(look.header)}</div>` : ''}
       ${rc.branch ? `<div>${esc(rc.branch.name)}${rc.branch.address ? ', ' + esc(rc.branch.address) : ''}</div>` : ''}
       ${b.address ? `<div>${esc(b.address)}</div>` : ''}${b.phone ? `<div>Tel: ${esc(b.phone)}</div>` : ''}
       <div>PNTN / NTN: ${esc(b.pntn || '—')}</div></div>${rule}
     <div style="text-align:center;font-weight:bold;font-size:12px">${credit ? 'CREDIT NOTE' : 'TAX INVOICE'}</div>
     ${credit ? `<div style="text-align:center">Returns invoice ${esc(s.refUsin || '')}</div>` : ''}
     ${row('PRA invoice no.', `<b style="word-break:break-all">${esc(s.fiscalNumber)}</b>`)}${row('Invoice no. (USIN)', esc(s.usin))}
-    ${row('Date', esc(posWhen(s.at)))}${row('Counter', `${esc(rc.counter.name)} (POS ${esc(rc.counter.posId)})`)}${row('Cashier', esc(s.cashier || ''))}
+    ${row('Date', esc(posWhen(s.at)))}${row('Counter', `${esc(rc.counter.name)} (POS ${esc(rc.counter.posId)})`)}${look.showCashier && s.cashier ? row('Cashier', esc(s.cashier)) : ''}
     ${buyer.length ? `<div>Buyer: ${buyer.map(esc).join(' · ')}</div>` : ''}${rule}
     ${s.lines.map(l => `<div style="margin-bottom:3px"><div style="font-weight:bold">${esc(l.itemName)}</div>
       ${row(`${l.quantity} × ${money(l.unitPrice)}${l.discount ? ` − disc ${money(l.discount)}` : ''}`, money(l.saleValue))}
@@ -461,7 +524,24 @@ function posReceiptHtml(rc) {
 function posPrintReceipt() {
   let st = document.getElementById('pageStyle');
   if (!st) { st = document.createElement('style'); st.id = 'pageStyle'; document.head.appendChild(st); }
-  st.textContent = '@page { size: 80mm auto; margin: 3mm; }';
+  // The paper size is the printer's own (a roll of 58 or 80 mm): Chrome ignores "size: 80mm auto", so none is asked for. The receipt is as wide
+  // as the chosen roll and never wider than the page, so nothing is cut off at the edge.
+  st.textContent = '@page { margin: 3mm; }';
+  window.print();
+}
+// Prints something other than a receipt (QR labels, a report): it goes into a print-only area and the rest of the page is hidden for
+// the print (see body.print-area in app.html). draw(area) runs once the html is in place (to draw QR codes, say).
+function posPrint(html, pageCss, draw) {
+  let area = document.getElementById('posPrintArea');
+  if (!area) { area = document.createElement('div'); area.id = 'posPrintArea'; document.body.appendChild(area); }
+  area.innerHTML = html;
+  if (draw) draw(area);
+  let st = document.getElementById('pageStyle');
+  if (!st) { st = document.createElement('style'); st.id = 'pageStyle'; document.head.appendChild(st); }
+  st.textContent = pageCss || '@page { size: A4; margin: 10mm; }';
+  document.body.classList.add('print-area');
+  const done = () => { document.body.classList.remove('print-area'); area.innerHTML = ''; window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
   window.print();
 }
 function posCloseReceipt() {
@@ -473,22 +553,82 @@ function posCloseReceipt() {
 async function posEnterSales() {
   posPollAlerts();
   if (POS.sales.from === null) POS.sales.from = POS.sales.to = pkDate(); // first visit: today. Empty dates mean all dates (the alert links ask for that).
-  $('#psFrom').value = POS.sales.from; $('#psTo').value = POS.sales.to; $('#psState').value = POS.sales.state; $('#psQ').value = POS.sales.q;
+  $('#psFrom').value = POS.sales.from; $('#psTo').value = POS.sales.to; $('#psState').value = POS.sales.state; $('#psQ').value = POS.sales.q; posRenderSalesChips();
   if (!POS.setup) { try { await posLoadSetup(); } catch { /* the list still loads */ } }
+  await posFillSalesFilters();
   await posLoadSales();
+}
+// The "More filters" boxes: the counters and payment types are known to everyone at the counter; who made the sales only to a manager
+async function posFillSalesFilters() {
+  const o = (v, t, cur) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(t)}</option>`, f = POS.sales;
+  const counters = POS.setup ? POS.setup.counters : [], modes = POS.setup ? POS.setup.paymentModes : [];
+  // (a counter that is switched off is not in the list, but a report row can point at it: it is shown rather than hidden behind "All counters")
+  $('#psCounter').innerHTML = o('', 'All counters', f.counterId) + counters.map(c => o(c.id, `${c.branch} · ${c.name}`, f.counterId)).join('') + (f.counterId && !counters.some(c => c.id === f.counterId) ? o(f.counterId, 'A counter that is switched off', f.counterId) : '');
+  $('#psPay').innerHTML = o('', 'Any way', f.paymentMode) + modes.map(m => o(m.id, m.label, f.paymentMode)).join('');
+  $('#psType').value = f.invoiceType; $('#psMin').value = f.minAmount; $('#psMax').value = f.maxAmount;
+  if (canManage()) {
+    if (!POS.cashiers) { try { POS.cashiers = (await api('/api/pos/reports/options')).cashiers; } catch { POS.cashiers = []; } }
+    $('#psCashier').innerHTML = o('', 'Everyone', f.cashier) + POS.cashiers.map(c => o(c.email, c.name, f.cashier)).join('');
+    $('#psCashierWrap').classList.remove('hidden');
+  }
+  posCountSalesFilters();
+}
+// how many of the "More filters" are in use, so a closed box still says so
+function posCountSalesFilters() {
+  const f = POS.sales, n = ['counterId', 'cashier', 'paymentMode', 'invoiceType', 'minAmount', 'maxAmount'].filter(k => f[k]).length;
+  const el = $('#psMoreCount'); if (el) el.textContent = n ? `(${n} in use)` : '';
 }
 function posSalesFilter() {
   const was = POS.sales;
-  POS.sales = { from: $('#psFrom').value, to: $('#psTo').value, state: $('#psState').value, q: $('#psQ').value.trim() };
-  posLoadSales(POS.sales.from !== was.from || POS.sales.to !== was.to); // the totals only change when the dates do
+  // a receipt's address (what its QR holds) typed or scanned into the search box means its invoice number
+  POS.sales = {
+    ...was, // (what has no box here, the chips, stays)
+    from: $('#psFrom').value, to: $('#psTo').value, state: $('#psState').value, q: PosScan.parse($('#psQ').value).invoice || $('#psQ').value.trim(),
+    counterId: $('#psCounter').value, cashier: $('#psCashier').value || '', paymentMode: $('#psPay').value, invoiceType: $('#psType').value, minAmount: $('#psMin').value.trim(), maxAmount: $('#psMax').value.trim(),
+  };
+  posCountSalesFilters();
+  posLoadSales(posSalesTotalsKey() !== POS.reportKey); // the totals change with the dates and the filters, not with the search or the status
+}
+// What the totals above the list depend on (everything but the word searched for and the status)
+const posSalesTotalsKey = () => JSON.stringify(['from', 'to', 'customerId', 'counterId', 'cashier', 'paymentMode', 'invoiceType', 'minAmount', 'maxAmount', 'itemCode', 'category', 'taxRate', 'branchId', 'env'].map(k => POS.sales[k] || ''));
+// The filters as the query string the server takes
+function posSalesQuery(extra = {}, skip = []) {
+  const q = new URLSearchParams();
+  for (const k of ['from', 'to', 'state', 'q', 'customerId', 'counterId', 'cashier', 'paymentMode', 'invoiceType', 'minAmount', 'maxAmount', 'itemCode', 'category', 'taxRate', 'branchId', 'env']) if (POS.sales[k] && !skip.includes(k)) q.set(k, POS.sales[k]);
+  for (const [k, v] of Object.entries(extra)) q.set(k, v);
+  return q;
 }
 let posSalesTimer = null;
 function posSalesSearch() { clearTimeout(posSalesTimer); posSalesTimer = setTimeout(posSalesFilter, 350); }
-function posSalesToday() { POS.sales = { from: pkDate(), to: pkDate(), state: '', q: '' }; posEnterSales(); }
+function posSalesToday() { POS.sales = posBlankSales({ from: pkDate(), to: pkDate() }); posEnterSales(); }
+// narrow the list to one customer (from the customers page), or take that back
+function posSalesCustomer(id, name) { POS.sales = posBlankSales({ from: '', to: '', customerId: id || '', customerName: name || '' }); if (S.page === 'p-sales') posEnterSales(); else go('p-sales'); }
+// The filters that have no box on this page, as chips: [key, what, which]. Each can be taken away on its own.
+function posSalesChips() {
+  const f = POS.sales, out = [];
+  if (f.customerId) out.push(['customerId', 'Customer', f.customerId === 'none' ? 'No saved customer' : f.customerName || 'selected']);
+  if (f.itemCode) out.push(['itemCode', 'Item', f.itemName || f.itemCode]);
+  if (f.category) out.push(['category', 'Category', f.category === '__none' ? 'No category' : f.category]);
+  if (f.taxRate !== '') out.push(['taxRate', 'Tax rate', `${Number(f.taxRate)}%`]);
+  if (f.branchId) out.push(['branchId', 'Branch', f.branchName || 'selected']);
+  if (f.env) out.push(['env', 'Showing', f.env === 'SANDBOX' ? 'test sales only' : 'real sales only']);
+  return out;
+}
+function posRenderSalesChips() {
+  const el = $('#psCust'); if (!el) return;
+  const chips = posSalesChips();
+  el.innerHTML = chips.length ? `<div class="flex flex-wrap gap-2">${chips.map(([key, what, which]) => `<span data-chip="${key}" class="inline-flex items-center gap-2 text-sm bg-emerald-50 border border-emerald-200 rounded-full pl-3 pr-1 py-0.5">${what}: <b>${esc(which)}</b><button type="button" onclick="posSalesDrop('${key}')" class="w-8 h-8 text-slate-500 hover:text-red-600 text-lg leading-none" aria-label="Stop filtering by ${esc(what.toLowerCase())}">×</button></span>`).join('')}</div>` : '';
+}
+// Take one of those filters away (the names that went with it go too), and show the list and its totals again
+function posSalesDrop(key) {
+  const names = { customerId: ['customerName'], itemCode: ['itemName'], branchId: ['branchName'] }[key] || [];
+  POS.sales = { ...POS.sales, [key]: '', ...Object.fromEntries(names.map(n => [n, ''])) };
+  posRenderSalesChips(); posLoadSales(true);
+}
 async function posLoadReport() {
   const el = $('#psReport'); if (!el) return;
   try {
-    const f = POS.sales, r = await api('/api/pos/report?' + new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}) }));
+    const r = await api('/api/pos/report?' + posSalesQuery({}, ['state', 'q']));
     const tile = (t, big, sub) => `<div class="border rounded-lg p-3"><div class="text-xs text-slate-500">${t}</div><div class="text-lg font-semibold break-words">${big}</div><div class="text-xs text-slate-500">${sub || ''}</div></div>`;
     const nf = r.notFiscalized, pending = nf.waiting + nf.refused + nf.unknown;
     el.innerHTML = `<div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
@@ -500,23 +640,25 @@ async function posLoadReport() {
       ${r.items.length ? `<details class="text-xs mt-2"><summary class="cursor-pointer text-slate-600">By item</summary><table class="w-full mt-1"><tbody>${r.items.map(i => `<tr class="border-t"><td class="py-1">${esc(i.itemName)}</td><td class="text-right">${i.quantity}</td><td class="text-right">${money(i.bill)}</td></tr>`).join('')}</tbody></table></details>` : ''}`;
   } catch { el.innerHTML = ''; }
 }
-// The sales of the chosen dates as a spreadsheet. The request needs the login, so it is fetched and saved from here.
-async function posDownloadCsv(detail) {
-  const f = POS.sales;
+// A spreadsheet from the server. The request needs the login, so it is fetched and saved from here.
+async function posDownloadFile(url, fallbackName) {
   try {
-    const res = await fetch('/api/pos/export/sales?' + new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}), ...(f.state ? { state: f.state } : {}), ...(detail ? { detail } : {}) }), { headers: { Authorization: 'Bearer ' + S.token } });
+    const res = await fetch(url, { headers: { Authorization: 'Bearer ' + S.token } });
     if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || 'The download failed.');
     const blob = await res.blob(), m = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: m ? m[1] : 'pos-sales.csv' });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: m ? m[1] : fallbackName });
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
     toast('Downloaded', true);
   } catch (err) { toast(err.message); }
 }
+// The sales of the chosen dates as a spreadsheet
+function posDownloadCsv(detail) {
+  return posDownloadFile('/api/pos/export/sales?' + posSalesQuery(detail ? { detail } : {}), 'pos-sales.csv');
+}
 async function posLoadSales(refreshReport = true) {
-  if (refreshReport || POS.reportKey === null) { POS.reportKey = POS.sales.from + '|' + POS.sales.to; posLoadReport(); }
+  if (refreshReport || POS.reportKey === null) { POS.reportKey = posSalesTotalsKey(); posLoadReport(); }
   try {
-    const f = POS.sales, qs = new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}), ...(f.state ? { state: f.state } : {}), ...(f.q ? { q: f.q } : {}), limit: '200' });
-    const r = await api('/api/pos/sales?' + qs);
+    const r = await api('/api/pos/sales?' + posSalesQuery({ limit: '200' }));
     $('#psNote').textContent = r.total > r.sales.length ? `Showing the latest ${r.sales.length} of ${r.total}. Narrow the dates or search to see the rest.` : `${r.total} ${r.total === 1 ? 'sale' : 'sales'}`;
     const tags = s => `${s.invoiceType === 3 ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-slate-200">Credit note</span>' : ''}${s.mock ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">test</span>' : s.env === 'SANDBOX' ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">sandbox</span>' : ''}`;
     $('#psRows').innerHTML = r.sales.map(s => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onclick="posOpenSale('${s.id}')">
@@ -658,7 +800,13 @@ async function posCredit(id) {
 }
 
 /* ---------- items ---------- */
-async function posEnterItems() { posPollAlerts(); await posLoadItems(); showPlanHint('piPlanHint', ['items']); }
+async function posEnterItems() {
+  posPollAlerts();
+  // what a new item starts with (Settings) is read each time, so the owner's change shows at once; without it the form simply starts blank
+  const defaults = api('/api/pos/settings').then(r => { POS.settings = r; }, () => { POS.settings = null; });
+  await posLoadItems(); await defaults;
+  showPlanHint('piPlanHint', ['items']);
+}
 async function posLoadItems() {
   try { POS.items = await api('/api/pos/items' + (POS.itemQ ? '?q=' + encodeURIComponent(POS.itemQ) : '')); posRenderItems(); } catch (err) { toast(err.message); }
 }
@@ -667,53 +815,70 @@ function posItemSearch(v) { POS.itemQ = v.trim(); clearTimeout(posItemTimer); po
 function posRenderItems() {
   const pct = i => i.pctCode.slice(0, 4) + '.' + i.pctCode.slice(4);
   $('#piRows').innerHTML = POS.items.map(i => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer ${i.active ? '' : 'opacity-50'}" onclick="posItemForm('${i.id}')">
-    <td class="py-2 font-mono text-xs">${esc(i.code)}</td><td class="font-medium">${esc(i.name)}${i.openPrice ? ' <span class="text-xs text-slate-500">(price typed on each sale)</span>' : ''}${i.active ? '' : ' <span class="text-xs">(switched off)</span>'}</td>
+    <td class="py-2 font-mono text-xs">${esc(i.code)}${i.barcode ? `<div class="text-slate-400">${esc(i.barcode)}</div>` : ''}</td><td class="font-medium">${esc(i.name)}${i.openPrice ? ' <span class="text-xs text-slate-500">(price typed on each sale)</span>' : ''}${i.active ? '' : ' <span class="text-xs">(switched off)</span>'}</td>
     <td>${esc(i.category)}</td><td class="font-mono text-xs">${esc(pct(i))}</td><td class="text-right">${i.taxRate}</td><td class="text-right">${i.taxRateCard === null ? '<span class="text-slate-400">same</span>' : i.taxRateCard}</td>
     <td class="text-right">${i.openPrice ? '—' : money(i.unitPrice)}</td><td class="text-right text-emerald-700 text-xs">Edit</td></tr>`).join('') || '<tr><td colspan="8" class="py-6 text-center text-slate-500">No items yet. Add the services you sell.</td></tr>';
   $('#piCards').innerHTML = POS.items.map(i => `<button type="button" onclick="posItemForm('${i.id}')" class="w-full text-left border rounded-lg p-3 hover:bg-slate-50 ${i.active ? '' : 'opacity-50'}">
     <div class="flex items-start justify-between gap-3"><div class="font-medium break-words min-w-0">${esc(i.name)}</div><div class="font-semibold whitespace-nowrap">${i.openPrice ? 'price on sale' : money(i.unitPrice)}</div></div>
-    <div class="text-xs text-slate-500 mt-0.5">${esc(i.code)}${i.category ? ' · ' + esc(i.category) : ''} · PCT ${esc(pct(i))}</div>
+    <div class="text-xs text-slate-500 mt-0.5">${esc(i.code)}${i.barcode ? ' · ' + esc(i.barcode) : ''}${i.category ? ' · ' + esc(i.category) : ''} · PCT ${esc(pct(i))}</div>
     <div class="text-xs mt-1">Tax ${i.taxRate}%${i.taxRateCard === null ? '' : ` · on card ${i.taxRateCard}%`}${i.openPrice ? ' · price typed on each sale' : ''}${i.active ? '' : ' · switched off'}</div></button>`).join('') || '<p class="py-6 text-center text-sm text-slate-500">No items yet. Add the services you sell.</p>';
 }
-function posItemForm(id) {
-  const i = id ? POS.items.find(x => x.id === id) : { code: '', name: '', category: '', pctCode: '', taxRate: '', taxRateCard: null, unitPrice: '', openPrice: false, active: true };
+// prefill: what a scan of an unknown barcode already knows (the form for a new item opens with it filled in)
+function posItemForm(id, prefill) {
+  const d = POS.settings || {}; // what the owner chose for a new item (Settings); an existing item keeps its own
+  const i = id ? POS.items.find(x => x.id === id) : { code: '', barcode: '', name: '', category: d.itemCategory || '', pctCode: d.itemPct || '', taxRate: d.itemTaxRate ?? '', taxRateCard: d.itemTaxRateCard ?? null, unitPrice: '', openPrice: false, active: true, ...(prefill || {}) };
   const cats = [...new Set(POS.items.map(x => x.category).filter(Boolean))];
   $('#piForm').innerHTML = `<div class="border rounded-lg p-4 mb-4 bg-slate-50 space-y-3">
     <div class="font-medium">${id ? `Edit ${esc(i.name)} <span class="text-xs text-slate-500">(code ${esc(i.code)} stays the same)</span>` : 'Add an item'}</div>
-    <div class="grid sm:grid-cols-4 gap-3">
+    <div class="grid sm:grid-cols-4 gap-3 items-end">
       <label class="sm:col-span-2"><span>Name (printed on the receipt)</span><input id="fiName" value="${esc(i.name)}" maxlength="150" autocomplete="off"></label>
-      <label><span>Code / barcode ${id ? '' : '<span class="text-slate-400">(blank = automatic)</span>'}</span><input id="fiCode" value="${esc(i.code)}" maxlength="50" ${id ? 'disabled' : ''} autocomplete="off"></label>
+      <label><span>Item code (PRA gets this) ${id ? '' : '<span class="text-slate-400">(blank = automatic)</span>'}</span><input id="fiCode" value="${esc(i.code)}" maxlength="50" ${id ? 'disabled' : ''} autocomplete="off"></label>
+      <label><span>Barcode <span class="text-slate-400">(optional: what the scanner reads)</span></span><div class="flex gap-1"><input id="fiBarcode" value="${esc(i.barcode || '')}" maxlength="50" autocomplete="off" class="min-w-0">
+        <button type="button" onclick="posScanIntoField('fiBarcode')" class="shrink-0 px-2.5 rounded-lg border bg-white hover:border-emerald-600" aria-label="Scan the barcode with the camera">${POS_ICON_SCAN}</button></div></label>
+      <label class="sm:col-span-2"><span>Quick rate <span class="text-slate-400">(fills in the heading and the tax boxes below)</span></span>${posRateSelect('fi')}</label>
       <label><span>Category</span><input id="fiCat" value="${esc(i.category)}" maxlength="60" list="fiCats" autocomplete="off"><datalist id="fiCats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
       <label><span>Price before tax</span><input id="fiPrice" value="${i.unitPrice === '' ? '' : esc(i.unitPrice)}" inputmode="decimal" ${i.openPrice ? 'disabled' : ''}></label>
-      <label><span>PCT code (8 digits)</span><input id="fiPct" value="${esc(i.pctCode ? i.pctCode.slice(0, 4) + '.' + i.pctCode.slice(4) : '')}" placeholder="9801.2000" oninput="posPctSearch(this.value)" autocomplete="off"></label>
+      <label><span>PCT code (8 digits)</span><input id="fiPct" value="${esc(i.pctCode ? i.pctCode.slice(0, 4) + '.' + i.pctCode.slice(4) : '')}" placeholder="9801.2000" oninput="posPctSearch(this.value, 'fi')" autocomplete="off"></label>
       <label><span>Sales tax %</span><input id="fiRate" value="${esc(i.taxRate)}" inputmode="decimal"></label>
       <label><span>Sales tax % when paid by card <span class="text-slate-400">(optional)</span></span><input id="fiRateCard" value="${i.taxRateCard === null ? '' : esc(i.taxRateCard)}" inputmode="decimal" placeholder="same as above"></label>
       <div class="flex flex-col justify-end gap-1 text-sm">
         <label class="flex items-center gap-2"><input id="fiOpen" type="checkbox" style="width:auto" ${i.openPrice ? 'checked' : ''} onchange="$('#fiPrice').disabled = this.checked"> The cashier types the price on each sale</label>
         <label class="flex items-center gap-2"><input id="fiActive" type="checkbox" style="width:auto" ${i.active ? 'checked' : ''}> On sale (untick to hide it from the cashier)</label></div></div>
-    <div id="fiPctHits" class="text-sm"></div>
+    <div id="fiPctHits" class="text-sm"></div><div id="fiRateNote" class="text-xs text-emerald-800"></div>
     <div class="text-xs text-slate-600 space-y-1">
-      <div>Services (PRA's Second Schedule): <a href="#" class="underline text-emerald-700" onclick="event.preventDefault(); posPctSearch('9801')">hotels, restaurants, marriage halls, lawns, clubs, caterers (9801)</a>. Type a word such as <i>restaurant</i> to search.</div>
+      <div>Services (PRA's Second Schedule): <a href="#" class="underline text-emerald-700" onclick="event.preventDefault(); posPctSearch('9801', 'fi')">hotels, restaurants, marriage halls, lawns, clubs, caterers (9801)</a>. Type a word such as <i>restaurant</i> to search.</div>
       <div>Rates in the Second Schedule from 1 July 2026: restaurants and hotels <b>16%</b>, or <b>8%</b> when the customer pays by card, mobile wallet or QR (put 8 in the card box); marriage halls, lawns, caterers and event management 8%; beauty parlours 5%. Rates change with each Finance Act, so check the current schedule or ask your accountant. <a class="underline text-emerald-700" href="https://pra.punjab.gov.pk/Downloads/THE-PUNJAB-SALES-TAX-ON-SERVICES-ACT-2012-17th-Edition-2026-2027.pdf" target="_blank" rel="noopener">PRA Act and schedule (17th edition, 2026-27)</a></div></div>
     <div class="flex gap-2"><button type="button" onclick="posItemSave('${id || ''}')" class="bg-emerald-700 text-white rounded px-4 py-2 text-sm">Save item</button>
       <button type="button" onclick="$('#piForm').innerHTML = ''" class="border rounded px-4 py-2 text-sm">Close</button></div></div>`;
   $('#piForm').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
-function posPctSearch(v) {
+// The heading search under a PCT box: p is the prefix of that form's boxes ('fi' = the item form, 'sd' = Settings)
+function posPctSearch(v, p = 'fi') {
   clearTimeout(POS.pctTimer);
   POS.pctTimer = setTimeout(async () => {
-    const box = $('#fiPctHits'); if (!box) return;
+    const box = $('#' + p + 'PctHits'); if (!box) return;
     if (String(v).trim().length < 2) { box.innerHTML = ''; return; }
     try {
       const rows = await api('/api/pos/pct?q=' + encodeURIComponent(v));
-      box.innerHTML = rows.length ? `<div class="border rounded-lg bg-white divide-y max-h-56 overflow-y-auto">${rows.map(r => `<button type="button" class="block w-full text-left px-3 py-1.5 hover:bg-emerald-50" onclick="posPctPick('${r.code}')"><span class="font-mono">${esc(r.code)}</span> <span class="text-slate-600">${esc(r.description)}</span></button>`).join('')}</div>` : '<span class="text-slate-500">No service heading matches.</span>';
+      box.innerHTML = rows.length ? `<div class="border rounded-lg bg-white divide-y max-h-56 overflow-y-auto">${rows.map(r => `<button type="button" class="block w-full text-left px-3 py-1.5 hover:bg-emerald-50" onclick="posPctPick('${r.code}', '${p}')"><span class="font-mono">${esc(r.code)}</span> <span class="text-slate-600">${esc(r.description)}</span></button>`).join('')}</div>` : '<span class="text-slate-500">No service heading matches.</span>';
     } catch { /* the code can still be typed */ }
   }, 250);
 }
-function posPctPick(code) { $('#fiPct').value = code; $('#fiPctHits').innerHTML = ''; }
+function posPctPick(code, p = 'fi') { $('#' + p + 'Pct').value = code; $('#' + p + 'PctHits').innerHTML = ''; }
+// The "quick rate" box: suggestions for the usual kinds of business (public/pos-rates.js). They fill the three boxes; the owner or manager
+// still confirms them against the current schedule, and the item or the setting is checked when it is saved.
+const posRateSelect = p => `<select id="${p}Preset" onchange="posApplyRate(this.value, '${p}')"><option value="">Choose a kind of business…</option>${PosRates.PRESETS.map(r => `<option value="${r.id}">${esc(r.label)}: ${esc(PosRates.describe(r))}</option>`).join('')}</select>`;
+function posApplyRate(id, p) {
+  const r = PosRates.find(id); if (!r) return;
+  $('#' + p + 'Pct').value = r.pct; $('#' + p + 'Rate').value = r.rate; $('#' + p + 'RateCard').value = r.card === null ? '' : r.card;
+  $('#' + p + 'Preset').value = ''; // the boxes can be changed by hand now: the list goes back to its title
+  const note = $('#' + p + 'RateNote');
+  if (note) note.textContent = `Filled in for ${r.label.toLowerCase()}: ${PosRates.describe(r)}. Rates change with each Finance Act: check them against the current schedule.`;
+  const hits = $('#' + p + 'PctHits'); if (hits) hits.innerHTML = '';
+}
 async function posItemSave(id) {
   const body = {
-    name: $('#fiName').value, ...(id ? {} : { code: $('#fiCode').value }), category: $('#fiCat').value, pctCode: $('#fiPct').value, taxRate: $('#fiRate').value, taxRateCard: $('#fiRateCard').value,
+    name: $('#fiName').value, ...(id ? {} : { code: $('#fiCode').value }), barcode: $('#fiBarcode').value, category: $('#fiCat').value, pctCode: $('#fiPct').value, taxRate: $('#fiRate').value, taxRateCard: $('#fiRateCard').value,
     unitPrice: $('#fiPrice').value, openPrice: $('#fiOpen').checked, active: $('#fiActive').checked,
   };
   try {
@@ -748,13 +913,13 @@ function posRenderDash(o) {
             <div class="text-xs text-slate-500">Token ${c.hasToken ? 'saved' : '<span class="text-red-700">missing</span>'}${c.pending ? ` · <span class="text-amber-700">${c.pending} waiting for PRA</span>` : ''}</div></div>
           <div class="text-sm">${c.breaker.open ? `<span class="text-amber-700">connection resting (${Math.ceil(c.breaker.retryInMs / 1000)} s)</span>` : c.breaker.fails ? `<span class="text-amber-700">${c.breaker.fails} failed in a row</span>` : '<span class="text-emerald-700">connection ok</span>'}</div></div>`).join('') || '<div class="border-t py-4 text-center text-slate-500 text-sm">No counter yet. The account owner adds one in Settings.</div>'}</div></div></div>`;
 }
-function posShowState(state) { POS.sales = { from: '', to: '', state, q: '' }; go('p-sales'); }
+function posShowState(state) { POS.sales = posBlankSales({ from: '', to: '', state }); go('p-sales'); }
 
 /* ---------- settings (account owner) ---------- */
 async function posEnterSettings() {
   posPollAlerts();
   try {
-    [POS.profile, POS.branches] = await Promise.all([api('/api/pos/profile'), api('/api/pos/branches')]);
+    [POS.profile, POS.branches, POS.settings] = await Promise.all([api('/api/pos/profile'), api('/api/pos/branches'), api('/api/pos/settings')]);
     posRenderSettings();
     api('/api/pos/egress-ip').then(r => { POS.ip = r.ip; const mail = $('#pEmail'); if (mail) mail.textContent = posWhitelistEmail(); const el = $('#pIp'); if (el) el.innerHTML = `<b class="font-mono">${esc(r.ip)}</b>${r.viaProxy ? ' (through the static-IP proxy)' : ' <span class="text-amber-700">(no static-IP proxy: this address can change)</span>'}`; }).catch(() => { const el = $('#pIp'); if (el) el.textContent = 'could not be checked'; });
   } catch (err) { toast(err.message); }
@@ -770,6 +935,7 @@ function posRenderSettings() {
         <label><span>Phone</span><input id="sfPhone" value="${esc(p.phone)}" maxlength="30"></label>
         <label class="sm:col-span-3"><span>Receipt footer <span class="text-slate-400">(optional)</span></span><input id="sfFoot" value="${esc(p.receiptFooter)}" maxlength="200" placeholder="Thank you for dining with us"></label></div>
       <div class="mt-3">${posBtn('Save business details', 'posSaveProfile()', 'primary')}</div></div>
+    ${posSettingsCard()}
     <div class="bg-white rounded-xl shadow p-5 space-y-4"><div class="flex flex-wrap items-center justify-between gap-2"><h2 class="font-semibold">Branches and counters</h2>${posBtn('+ Add branch', 'posBranchForm()')}</div>
       <p id="sfPlanHint" class="text-xs"></p>
       <div id="sfForm"></div>
@@ -794,6 +960,40 @@ function posRenderSettings() {
         <button type="button" onclick="posCopyEmail()" class="mt-1 px-3 min-h-[2.5rem] rounded-lg border text-sm">Copy</button></details>
       <div class="text-xs text-slate-600">PRA support: <a class="underline text-emerald-700" href="mailto:eims@pra.punjab.gov.pk">eims@pra.punjab.gov.pk</a> (technical) · <a class="underline text-emerald-700" href="mailto:eSupport@pra.punjab.gov.pk">eSupport@pra.punjab.gov.pk</a> (general) · helpline 042-99205710 (eIMS). Quote the PNTN, the POS ID and a screenshot of the problem.</div></div></div>`;
   showPlanHint('sfPlanHint', ['branches', 'terminals']);
+}
+// How a new sale starts, how the receipt looks, and what a new item starts with (one place, set once for the whole business)
+function posSettingsCard() {
+  const d = POS.settings, modes = (POS.setup && POS.setup.paymentModes) || PosCalc.PAYMENT_MODES;
+  return `<div class="bg-white rounded-xl shadow p-5"><h2 class="font-semibold">Defaults and receipt <span class="text-xs font-normal text-slate-500">what a new sale, the paper and a new item start with</span></h2>
+    <div class="grid sm:grid-cols-3 gap-3 mt-3">
+      <label><span>A new sale starts as</span><select id="sdMode">${modes.map(m => `<option value="${m.id}" ${m.id === d.defaultPaymentMode ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select></label>
+      <label><span>Receipt paper</span><select id="sdWidth">${[80, 58].map(w => `<option value="${w}" ${w === d.receiptWidth ? 'selected' : ''}>${w} mm roll</option>`).join('')}</select></label>
+      <label class="flex items-end gap-2 text-sm pb-2"><input id="sdCashier" type="checkbox" style="width:auto" ${d.showCashier ? 'checked' : ''}> Print the cashier's name on the receipt</label>
+      <label class="sm:col-span-3"><span>Receipt header <span class="text-slate-400">(optional: a line under the business name)</span></span><input id="sdHeader" value="${esc(d.receiptHeader)}" maxlength="120" placeholder="Fine dining since 1998"></label></div>
+    <h3 class="font-medium text-sm mt-4">A new item starts with</h3>
+    <p class="text-xs text-slate-500">Saves typing when most of your items have the same heading and tax. Every item can still be different.</p>
+    <div class="grid sm:grid-cols-4 gap-3 mt-2 items-end">
+      <label class="sm:col-span-2"><span>Quick rate</span>${posRateSelect('sd')}</label>
+      <label><span>PCT code</span><input id="sdPct" value="${esc(d.itemPct ? d.itemPct.slice(0, 4) + '.' + d.itemPct.slice(4) : '')}" placeholder="9801.2000" oninput="posPctSearch(this.value, 'sd')" autocomplete="off"></label>
+      <label><span>Category</span><input id="sdCat" value="${esc(d.itemCategory)}" maxlength="60" autocomplete="off"></label>
+      <label><span>Sales tax %</span><input id="sdRate" value="${d.itemTaxRate === null ? '' : esc(d.itemTaxRate)}" inputmode="decimal"></label>
+      <label><span>Sales tax % when paid by card <span class="text-slate-400">(optional)</span></span><input id="sdRateCard" value="${d.itemTaxRateCard === null ? '' : esc(d.itemTaxRateCard)}" inputmode="decimal" placeholder="same as above"></label></div>
+    <div id="sdPctHits" class="text-sm mt-2"></div><div id="sdRateNote" class="text-xs text-emerald-800 mt-1"></div>
+    <div class="mt-3">${posBtn('Save defaults', 'posSaveSettings()', 'primary')}</div></div>`;
+}
+async function posSaveSettings() {
+  const body = {
+    defaultPaymentMode: $('#sdMode').value, receiptWidth: $('#sdWidth').value, showCashier: $('#sdCashier').checked, receiptHeader: $('#sdHeader').value,
+    itemPct: $('#sdPct').value, itemTaxRate: $('#sdRate').value, itemTaxRateCard: $('#sdRateCard').value, itemCategory: $('#sdCat').value,
+  };
+  try {
+    POS.settings = await api('/api/pos/settings', { method: 'PUT', body });
+    toast('Defaults saved', true);
+    const d = POS.settings; // show what was kept: the heading with its dot, the header tidied
+    $('#sdPct').value = d.itemPct ? d.itemPct.slice(0, 4) + '.' + d.itemPct.slice(4) : ''; $('#sdHeader').value = d.receiptHeader; $('#sdCat').value = d.itemCategory;
+    $('#sdRate').value = d.itemTaxRate === null ? '' : d.itemTaxRate; $('#sdRateCard').value = d.itemTaxRateCard === null ? '' : d.itemTaxRateCard;
+    if (POS.setup) POS.setup.settings = d; // the cashier screen of this browser starts from it at once (others pick it up on their next load)
+  } catch (err) { toast(err.message); }
 }
 // What PRA asks for in the whitelisting email (POS Component manual, 6.4.2)
 function posWhitelistEmail() {

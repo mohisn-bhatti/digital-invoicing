@@ -1,7 +1,8 @@
 # Point of Sale (PRA) module
 
-_Branch `pos-module` · started 2026-10-19 · updated 2026-10-19 · status: built, independently reviewed and tested in test mode;
-**not yet run against PRA's sandbox**_ · requirement-by-requirement check: [POS_COMPLIANCE.md](POS_COMPLIANCE.md)
+_Branch `pos-module` (on production since 2026-10-19) and, after it, `pos-phase2` (customers, scanning and QR labels, reports and
+filters, defaults: built and tested here, **not pushed or deployed**) · updated 2026-10-19 · status: built, independently reviewed
+and tested in test mode; **not yet run against PRA's sandbox**_ · requirement-by-requirement check: [POS_COMPLIANCE.md](POS_COMPLIANCE.md)
 
 A second product on the same platform, next to FBR Digital Invoicing. It is a cashier screen for restaurants, banquet halls,
 hotels and other Punjab service businesses: **every sale is sent to PRA (Punjab Revenue Authority)** and the receipt is printed
@@ -141,18 +142,95 @@ AWAITING_FISCALIZATION ─► FISCALIZED          only when PRA answers Code "10
   hold everything, with the environment in each row.
 - Sales are never deleted. Every change of state, every call to PRA and every administrative action is recorded.
 
+### Customers (saved buyers) — phase 2
+
+A customer is a saved buyer: a name (required), PNTN and/or CNIC and phone in PRA's formats, an address, a note, and a code
+(`CUS0001`, never changed). On the sale screen the cashier finds one by name, phone, CNIC or PNTN and the buyer boxes fill and lock;
+*Save these details as a customer* saves a typed buyer first (if that PNTN already belongs to someone, the sale still goes ahead with
+the details as typed). **A sale keeps its own copy of the buyer's details** (what was printed and sent to PRA never changes when the
+customer is edited later) plus a link to the customer for the history; a credit note keeps the link. One PNTN or CNIC is one
+customer: a second is refused with the first one's name, even when two people add it at the same moment (the check and the write are
+taken in turn per business). Everyone can find and add a customer, but only managers see what a customer has spent, open the history
+(sales, returns, last sale), edit, switch off and download the list.
+
+### Scanning, barcodes and QR labels — phase 2
+
+Nothing has to be added by hand: a scan brings the item with **the price and tax rate it is set to**, and the screen says so
+("Tea: 100.00 · tax 16% (8% when paid by card) · 2 in this sale").
+- Each item has a **code** (what PRA gets) and an optional **barcode**. *A scan must lead to one item*: a code or barcode cannot be
+  the code or barcode of another item, capitals ignored (checked when an item is saved).
+- **A barcode scanner** (USB or Bluetooth, the kind that types) works anywhere on the sale screen: two or more keys at scanner speed
+  (70 ms or less between them) ending in Enter is a scan; slow typing, a single key, and typing into a box are not. A scan never
+  changes the counter list if that has the keyboard (letters do not "type to pick" there), and its Enter never presses a button. Scanning the same item again adds one
+  more; an open-price item asks for the price. A code nobody knows is said so; on the **Items** page the same scan opens that item
+  for changing, or starts a new item with the code as its barcode (the usual way to add a product that has one).
+- **The camera** of a phone or tablet does the same through the *Scan* buttons (sale screen, Items, Sales & Receipts, the barcode box
+  of the item form). A code held in front of the camera is **one** scan: it has to be out of sight for about a second to count again.
+  The camera needs a secure connection (https, or localhost) and the camera allowed for the site; the server sends
+  `Permissions-Policy: camera=(self)`. Chrome's own reader is used when there is one, otherwise html5-qrcode from a CDN.
+- **A receipt's QR** (PRA's verification address), a sale's own number (USIN) or PRA's invoice number finds the sale: *Scan receipt* in
+  Sales & Receipts opens it, to look at it or to return something. On the sale screen it says which sale it is; it never goes in the cart.
+- **QR labels:** Items → *Print labels* prints a sheet (item name, price and a QR holding the code), up to 20 copies of an item.
+- `GET /api/pos/lookup?code=` does the same lookup for any client: the item, then the sale.
+
+### Reports and filters — phase 2
+
+One engine ([src/pos/reports.js](../src/pos/reports.js)) applies one set of filters (dates, status, counter, branch, cashier, how it was
+paid, sale or return, customer, item, category, tax rate, bill size, and a word for the invoice number, the PRA number or the buyer)
+the same way to the sales list, its spreadsheet, the totals and every report. **Reports** (manager, owner) has three tabs:
+- **Daily closing**, the day-end sheet: sales, returns, discount, tax, net, the cash expected in the drawer, by payment way, tax rate,
+  cashier and counter, the first and last invoice, the returns made that day, and what was not fiscalized. It prints on A4 or on a
+  roll, with places to count and sign. A cashier opens it from the sale screen (*Day-end sheet*) but the server only ever gives them
+  **their own** sales.
+- **Sales analysis** by day, month, day of the week, hour, item, category, cashier, counter, branch, payment way, tax rate or
+  customer, with each group's share, returns taken off, a spreadsheet and a print.
+- **Tax summary**: value and sales tax by rate with returns taken off, for the monthly return.
+- **Invoices behind a figure:** every row of the analysis (by day, month, item, category, cashier, counter, branch, payment way, tax rate
+  or customer; not the hour or the weekday of a sale, which the list cannot be narrowed by) and of the tax summary has an *Invoices ›*
+  link. It opens Sales & Receipts with the report's own filters, that row's group, *Fiscalized* and the kind of sale (test or real) the
+  figures cover, so the list holds exactly the invoices the row counted. The filters the page has no box for show as chips (item,
+  category, tax rate, branch, test or real) that can be taken away one at a time; the totals and the spreadsheet above the list follow.
+  A test checks, for every grouping and seven sets of filters, that the list's invoices are the row's invoices (and, for rows that add
+  up whole invoices, that they add up to the row's net total).
+The reports use **Pakistan calendar days**, cover test or real sales only (see above), count at the line level (an invoice with two
+items is one invoice), allow 400 days at most in one report, and add money exactly (a year of 150,000 sales answers in under a
+second). Each spreadsheet is noted in the activity trail, and text Excel could read as a formula is defused.
+
+### Defaults and the receipt — phase 2
+
+*Settings → Defaults and receipt* (owner; `GET/PUT /api/pos/settings`: everyone at the business reads, only the owner changes; a
+field that is not sent keeps its value; each change is in the activity trail):
+- **A new sale starts as** cash, card, gift voucher, loyalty card, mixed or cheque. A cashier's own pick wins, and a sale being made
+  is never changed under them.
+- **Receipt paper:** a 58 mm or 80 mm roll; a **header line** under the business name; whether the **cashier's name** is printed (when
+  it is not, the name is not in what the receipt is built from either).
+- **A new item starts with** a PCT heading, a tax rate, a card rate and a category. This only fills the item form (and the form for
+  an item found by a scan): everything is still checked when the item is saved, and an item already saved keeps its own values.
+  The **quick rate** list (restaurant, hotel, marriage hall and lawn, caterer, beauty parlour: [public/pos-rates.js](../public/pos-rates.js))
+  fills the heading and the rates in the item form and in Settings. They are **suggestions** from the Second Schedule as of
+  1 July 2026 (a test checks that each heading exists in the PCT table); the owner confirms them against PRA's current schedule.
+- **Printing:** Chrome ignores `@page { size: 80mm auto }` (a page size cannot mix `auto` with a length), so no page size is asked
+  for: the printer's own paper is used, and the receipt is as wide as the chosen roll but never wider than the page, so nothing
+  is cut off at the edge; the day-end slip is printed the same way. (The Digital Invoicing receipt still has that line.) Not yet tried on
+  a real thermal printer.
+
 **Who can do what** (the SRS's three user classes, on the business's own roles):
 
 | | Cashier | Manager (accountant role) | Administrator (owner role) |
 |---|---|---|---|
 | Make a sale, send again, correct the buyer, reprint, see sales | ✅ | ✅ | ✅ |
-| Items, credit notes, cancel, record a manual PRA check, dashboard, totals, CSV | | ✅ | ✅ |
-| Business details, branches, counters, PRA tokens, decommission | | | ✅ |
+| Find and add a customer, scan (barcode scanner or camera), the day-end sheet (a cashier's own sales only), filters on the sales list | ✅ | ✅ | ✅ |
+| Items and labels, credit notes, cancel, record a manual PRA check, dashboard, totals, CSV | | ✅ | ✅ |
+| Customers: history, edit, spreadsheet. Reports: daily closing (everyone's), sales analysis, tax summary | | ✅ | ✅ |
+| Business details, branches, counters, PRA tokens, decommission, defaults and receipt | | | ✅ |
 
 **Where the code is:** [src/pos/](../src/pos/) (`payload` PRA's JSON, `pra` the connection, `service` the rules, `routes` the API,
 `states`, `breaker`, `validate`; `calc.js` only re-exports the money maths), [public/pos-calc.js](../public/pos-calc.js) (the money
 maths, the same file for the server and the browser, so the cashier's preview always equals what is sent),
-[public/pos.js](../public/pos.js) (the screens), tables `Pos*` in [schema.prisma](../prisma/schema.prisma), migrations `0038`–`0041`.
+[public/pos.js](../public/pos.js) (the screens; `pos-camera.js`, `pos-customers.js` and `pos-reports.js` are the phase 2 screens, and
+`pos-scan.js` reads what a scanner hands over, the same file on the server and in the browser), [src/pos/reports.js](../src/pos/reports.js),
+tables `Pos*` in [schema.prisma](../prisma/schema.prisma), migrations `0038`–`0041`, and for phase 2 `0044` (customers, barcodes, the
+line's category) and `0045` (settings). Both only add; they have not been applied to the production database.
 Settings (env): `PRA_MOCK`, `PRA_PROXY_URL`, `POS_PRA_TIMEOUT_MS`, `POS_BREAKER_FAILS`, `POS_BREAKER_REST_SECONDS` (see `.env.example`).
 
 ## 5. Decisions made (please confirm)
@@ -175,6 +253,15 @@ Settings (env): `PRA_MOCK`, `PRA_PROXY_URL`, `POS_PRA_TIMEOUT_MS`, `POS_BREAKER_
 9. Credit notes have no time limit against the sale. (The Adjustment of Tax Rules, rule 8, asks for a credit note within 90 days of
    the tax period in which the correction is needed, which a note made when the goods come back meets.)
 10. Figures and reports show test and real sales separately (see above).
+11. *Phase 2:* a scan must lead to one item (a code or barcode cannot belong to two items); a sale keeps its own copy of the buyer's
+    details (the customer link is only for the history); reports count Pakistan calendar days.
+12. *Phase 2:* the quick rates are suggestions the owner confirms, never decided by the module, and a new item's defaults only fill the form.
+13. *Phase 2:* printing asks for no page size (the printer's own is used), because Chrome ignores `size: 80mm auto`.
+14. *Phase 2:* codes, barcodes, cashier logins and search words are matched as typed: `_` and `%` are not wildcards (Prisma's
+    case-insensitive match is `ILIKE`, which treats them as such; [src/pos/like.js](../src/pos/like.js) escapes them, and a test fails if
+    Prisma ever does it itself). An item saved before the "one code, one item" rule (Cola next to COLA) stays editable: only a barcode that
+    changes is checked.
+15. *Phase 2:* a NUL character anywhere in a request to the Point of Sale is a plain 400 (404 for an id), not a server error.
 
 ## 6. Not built yet / still open
 
@@ -192,8 +279,21 @@ Settings (env): `PRA_MOCK`, `PRA_PROXY_URL`, `POS_PRA_TIMEOUT_MS`, `POS_BREAKER_
   invoices from September 2024).
 - The MAC and IP fields PRA asks for when a counter is registered: what a cloud server should enter.
 
+**Putting phase 2 on production** follows the safe procedure used for the first push (read-only fingerprint of every table, a rehearsal
+on a copy at production's schema state with the old and the new code, `node scripts/supabase-deploy.js --no-seed`, then merge and push).
+Migrations `0044` and `0045` only add (new table, new columns that are nullable or have a default, and one `UPDATE` that fills only the
+new `PosSaleLine.category`), so the old code keeps working while they are applied. **One step comes after the new code is live**: run the
+backfill once more, because lines the old code wrote between the migration and the deploy have an empty category and would show as
+"No category":
+`UPDATE "PosSaleLine" l SET "category" = i."category" FROM "PosItem" i WHERE l."itemId" = i."id" AND l."category" = '';`
+(it only ever fills empty ones, so it is safe to repeat).
+
 **Going live** needs `PRA_MOCK=false`, the production POS ID and token, and PRA to whitelist the server's IP (the static-IP proxy,
 see [static-ip-proxy.md](static-ip-proxy.md); the proxy must allow `ims.pral.com.pk`).
+
+**Not built (the accounts side of a trading POS):** Receive Cash, Purchase Invoice and Pay Cash to Vendor (vendors, purchases, payments
+and receipts, a cash book). The SRS leaves accounting out; if the owner wants it, a thin optional *Accounts* section can be added
+(it needs the CA's answers on credit sales and on withholding before it is built).
 
 **Not built:** service charge and tips (the SRS says their tax treatment must be configurable; the Act's restaurant rules put service
 charge and hall rental in the taxable value, so they belong on the invoice as items, and tips off it); a screen for debit notes
@@ -201,8 +301,9 @@ charge and hall rental in the taxable value, so they belong on the invoice as it
 from a phone (the receipt prints through the browser to an 80 mm printer); a retention policy for sales and the audit trail (the SRS
 says "multi-year, set from the law": nothing is deleted today); a screen to key in invoices issued by hand during an outage.
 
-**Checked in a real browser, not on a real tablet or printer.** The screens were checked at phone, tablet and laptop widths, and
-the receipt's print layout in Chrome's print mode.
+**Checked in a real browser, not on a real tablet, camera phone or printer.** The screens were checked at phone, tablet and laptop
+widths, and the receipt's print layout in Chrome's print mode on 58 mm and 80 mm pages (and on a sheet). Scanning was checked with a
+fake camera that shows real QR codes and Code 128 barcodes, and with a keyboard-style scanner simulated by fast typing.
 
 ## 7. Try it locally
 
@@ -217,4 +318,6 @@ the receipt's print layout in Chrome's print mode.
 
 Tests: `npm test` runs the maths, the validation tables, PRA's reply handling, the states and the breaker, the cashier screens'
 own logic (the real `pos.js` in a sandbox), and the whole sale life against the local database (it makes its own business and
-removes it, and only runs against a database on this computer).
+removes it, and only runs against a database on this computer). `npm test` limits each test process to a few database connections
+([test-helpers/poolLimit.js](../test-helpers/poolLimit.js)) and runs eight files at a time: left alone, Prisma opens up to twice the number
+of CPUs plus one per process and a whole run overflows the local database's 100 connections ("too many clients already").

@@ -2,9 +2,12 @@
 // encryption key are shared with it.
 //
 // Who may do what (the SRS's three user classes, mapped to the business's own roles):
-//   Cashier        (CASHIER)     make sales, send again, correct the buyer, reprint receipts, see sales
-//   Manager        (ACCOUNTANT)  also items, returns (credit notes), cancel, record the result of a manual PRA check
-//   Administrator  (OWNER)       also the business profile, branches, counters, PRA tokens, decommissioning
+//   Cashier        (CASHIER)     make sales, send again, correct the buyer, reprint receipts, see sales; scan, find and add a customer,
+//                                the day-end sheet (their own sales only), read the defaults
+//   Manager        (ACCOUNTANT)  also items, returns (credit notes), cancel, record the result of a manual PRA check, customers' history,
+//                                reports and spreadsheets
+//   Administrator  (OWNER)       also the business profile, the defaults and the look of the receipt, branches, counters, PRA tokens,
+//                                decommissioning
 const { PosError } = require('./service');
 const { PosCalcError } = require('./calc');
 const { PosValidationError } = require('./validate');
@@ -22,6 +25,23 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
         if (!tenantModules(t).includes('POS')) throw new HttpError(403, 'Point of Sale is not switched on for this business.');
         next();
     };
+    // A NUL character cannot be stored in the database and would come back as a server error: said in plain words instead, wherever it is
+    // (an id in the address, a word in the search box, any field of the body). Written without recursion so a deeply nested body is no trick.
+    const problemWith = root => {
+        const todo = [root]; let seen = 0;
+        while (todo.length) {
+            const v = todo.pop();
+            if (++seen > 20000) return 'That request is too big.'; // (every value counts: a sale has a few hundred at the very most)
+            if (typeof v === 'string') { if (v.includes('\u0000')) return 'That contains a character that cannot be saved.'; }
+            else if (v && typeof v === 'object') {
+                for (const [k, x] of Object.entries(v)) { if (k.includes('\u0000')) return 'That contains a character that cannot be saved.'; todo.push(x); }
+            }
+        }
+        return null;
+    };
+    app.use('/api/pos', (req, res, next) => { const bad = problemWith([req.query, req.body]); if (bad) throw new HttpError(400, bad); next(); });
+    app.param('id', (req, res, next, id) => { if (req.path.startsWith('/api/pos/') && String(id).includes('\u0000')) throw new HttpError(404, 'Not found.'); next(); });
+
     const base = [authenticateToken, requireTenant, requirePos];
     const manager = [...base, requireTenantRole('OWNER', 'ACCOUNTANT')];
     const owner = [...base, requireTenantRole('OWNER')];
@@ -37,6 +57,9 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
     app.get('/api/pos/egress-ip', ...owner, wrap(() => pra.egressIp()));
     app.get('/api/pos/profile', ...base, wrap(req => service.getProfile(req.user.tenantId)));
     app.put('/api/pos/profile', ...owner, wrap(req => service.saveProfile(ctxOf(req), req.body || {})));
+    // Defaults and the look of the receipt: everyone reads them (the cashier screen and the item form start from them), the owner sets them
+    app.get('/api/pos/settings', ...base, wrap(req => service.getSettings(req.user.tenantId)));
+    app.put('/api/pos/settings', ...owner, wrap(req => service.saveSettings(ctxOf(req), req.body || {})));
 
     app.get('/api/pos/branches', ...manager, wrap(req => service.listBranches(req.user.tenantId)));
     app.post('/api/pos/branches', ...owner, wrap(async req => { await service.createBranch(ctxOf(req), req.body || {}); return service.listBranches(req.user.tenantId); }));
@@ -51,8 +74,34 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
     app.put('/api/pos/items/:id', ...manager, wrap(req => service.updateItem(ctxOf(req), req.params.id, req.body || {})));
     app.get('/api/pos/pct', ...manager, wrap(req => service.searchPct(req.query.q)));
 
+    // What a scan or a typed code is: an item (with its price and tax rate) and/or a sale
+    app.get('/api/pos/lookup', ...base, wrap(req => service.lookup(ctxOf(req), req.query.code)));
+
+    // Saved customers: everyone can find one and add one at the counter; changing one, the history and the spreadsheet are for managers
+    app.get('/api/pos/customers', ...base, wrap(req => service.listCustomers(ctxOf(req), req.query, { withStats: req.user.tenantRole === 'OWNER' || req.user.tenantRole === 'ACCOUNTANT' })));
+    app.post('/api/pos/customers', ...base, wrap(req => service.createCustomer(ctxOf(req), req.body || {})));
+    app.get('/api/pos/customers/:id', ...manager, wrap(req => service.customerDetail(ctxOf(req), req.params.id)));
+    app.put('/api/pos/customers/:id', ...manager, wrap(req => service.updateCustomer(ctxOf(req), req.params.id, req.body || {})));
+    app.get('/api/pos/export/customers', ...manager, async (req, res) => {
+        try {
+            const { filename, csv } = await service.customersCsv(ctxOf(req), req.query);
+            res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' }).send('\uFEFF' + csv);
+        } catch (e) { throw translate(e); }
+    });
+
     app.post('/api/pos/sales', ...base, wrap(req => service.createSale(ctxOf(req), req.body || {})));
     app.get('/api/pos/report', ...manager, wrap(req => service.salesReport(ctxOf(req), req.query)));
+    // Reports (managers): figures by day, hour, item, category, cashier, counter, branch, payment, tax rate or customer, narrowed by the filters;
+    // the closing sheet of a day is also for a cashier, but only for their own sales
+    app.get('/api/pos/reports/options', ...manager, wrap(req => service.reportOptions(ctxOf(req))));
+    app.get('/api/pos/reports/by/:groupBy', ...manager, wrap(req => service.reportBy(ctxOf(req), req.params.groupBy, req.query)));
+    app.get('/api/pos/reports/closing', ...base, wrap(req => service.reportClosing(ctxOf(req), req.user.tenantRole === 'CASHIER' ? { ...req.query, cashier: req.user.email, counterId: req.query.counterId } : req.query)));
+    app.get('/api/pos/export/report/:groupBy', ...manager, async (req, res) => {
+        try {
+            const { filename, csv } = await service.reportCsv(ctxOf(req), req.params.groupBy, req.query);
+            res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' }).send('\uFEFF' + csv);
+        } catch (e) { throw translate(e); }
+    });
     app.get('/api/pos/export/sales', ...manager, async (req, res) => {
         try {
             const { filename, csv } = await service.salesCsv(ctxOf(req), req.query);

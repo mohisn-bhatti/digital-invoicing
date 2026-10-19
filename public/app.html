@@ -108,6 +108,7 @@
   #receipt .qr img, #receipt .qr canvas { width: 1in !important; height: 1in !important; }
   #posReceipt { width: 80mm; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #000; }
   #posReceipt .posqr img, #posReceipt .posqr canvas { width: 1in !important; height: 1in !important; }
+  #posPrintArea { display: none; } /* QR labels and reports are put here to be printed (pos.js: posPrint) */
   #invoiceA4 { width: 190mm; font-family: Arial, Helvetica, sans-serif; font-size: 10.5px; color: #000; background: #fff; }
   #invoiceA4 table { border-collapse: collapse; width: 100%; }
   #invoiceA4 th, #invoiceA4 td { border: 1px solid #555; padding: 4px 5px; vertical-align: top; }
@@ -133,8 +134,12 @@
   @media print {
     /* Only the receipt pop-up prints, as normal page flow: a fixed, scrolling pop-up would print as one page and
        cut off long invoices after page 1 */
-    body > *:not(#receiptModal):not(#posReceiptModal) { display: none !important; }
+    body > *:not(#receiptModal):not(#posReceiptModal):not(#posPrintArea) { display: none !important; }
     html, body { background: #fff !important; }
+    /* a label sheet or a report (body.print-area) prints on its own: no receipt window takes part, and the area is only there for it */
+    body.print-area #receiptModal, body.print-area #posReceiptModal { display: none !important; }
+    body.print-area #posPrintArea { display: block !important; position: absolute; left: 0; top: 0; width: 100%; }
+    body.print-area #posPrintArea, body.print-area #posPrintArea * { visibility: visible; }
     /* only the receipt that is open takes part: body.print-pos is set while the Point of Sale receipt is open (pos.js); the other
        receipt window, and whatever is left in it from earlier, is not laid out at all */
     body.print-pos #receiptModal, body:not(.print-pos) #posReceiptModal { display: none !important; }
@@ -148,7 +153,7 @@
     body.print-a4:not(.print-pos) #invoiceA4, body.print-a4:not(.print-pos) #invoiceA4 * { visibility: visible; }
     body.print-a4:not(.print-pos) #invoiceA4 { position: absolute; left: 0; top: 0; }
     body.print-pos #posReceipt, body.print-pos #posReceipt * { visibility: visible; }
-    body.print-pos #posReceipt { position: absolute; left: 0; top: 0; }
+    body.print-pos #posReceipt { position: absolute; left: 0; top: 0; width: 100% !important; } /* its own max-width (the roll chosen in Settings) still applies */
     body.print-a4 #invoiceA4 thead { display: table-header-group; } /* repeat the item header on every page */
     body.print-a4 #invoiceA4 tr { break-inside: avoid; }
   }
@@ -1125,7 +1130,13 @@
 <script src="/plans.js"></script>
 <script src="/clients-view.js"></script>
 <script src="/pos-calc.js"></script>
+<script src="/pos-scan.js"></script>
+<script src="/pos-rates.js"></script>
+<script src="/pos-drill.js"></script>
 <script src="/pos.js"></script>
+<script src="/pos-camera.js"></script>
+<script src="/pos-customers.js"></script>
+<script src="/pos-reports.js"></script>
 <script>
 const S = { token: null, role: null, company: '', meta: null, settings: null, lists: {} };
 try { Object.assign(S, JSON.parse(localStorage.getItem('fbrSession') || '{}')); } catch {}
@@ -1203,6 +1214,8 @@ const NAV = {
     { id: 'p-sale', label: 'New Sale', icon: 'plus', crumb: 'Sales' },
     { id: 'p-sales', label: 'Sales & Receipts', icon: 'list', crumb: 'Sales' },
     { id: 'p-items', label: 'Items', icon: 'box', crumb: 'Catalogue', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'p-customers', label: 'Customers', icon: 'users', crumb: 'Catalogue', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'p-reports', label: 'Reports', icon: 'chart', crumb: 'Reports', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'p-settings', label: 'Settings', icon: 'cog', crumb: 'Settings', roles: ['OWNER'] },
   ],
   admin: [
