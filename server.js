@@ -23,6 +23,7 @@ const stock = require('./src/stock');
 const { createAudit } = require('./src/audit');
 const { BUSINESS_ACTIVITIES, SECTORS } = require('./src/activityScenarios');
 const { MODULES, tenantModules, cleanModules } = require('./src/modules');
+const sub = require('./src/subscription');
 const { SCENARIOS, PROVINCES, UOMS, RATES } = require('./src/scenarios');
 
 for (const k of ['DATABASE_URL', 'JWT_SECRET', 'ENCRYPTION_KEY']) {
@@ -121,7 +122,9 @@ function publicTenant(t) {
     return {
         id: t.id,
         companyName: t.companyName,
-        mobile: t.mobile, active: t.active,
+        mobile: t.mobile, active: t.active, inactiveReason: t.inactiveReason,
+        // how long the client may use the application (src/subscription.js)
+        integratedAt: t.integratedAt, accessUnit: t.accessUnit, accessCount: t.accessCount, accessEndsAt: t.accessEndsAt, access: sub.access(t),
         sellerNtnCnic: t.sellerNtnCnic, sellerNtn: t.sellerNtn, sellerCnic: t.sellerCnic,
         sellerBusinessName: t.sellerBusinessName,
         sellerProvince: t.sellerProvince,
@@ -252,7 +255,8 @@ app.post('/api/auth/login', async (req, res) => {
     }
     if (user.pendingApproval) throw new HttpError(403, 'This user is waiting for the administrator\'s approval. You will be able to log in once it is approved.');
     if (!user.active) throw new HttpError(403, 'This account has been disabled. Contact your account owner or administrator.');
-    if (user.tenant && user.tenant.active === false) throw new HttpError(403, 'This business account is inactive. Contact ETAX to reactivate it.');
+    const blocked = user.tenant ? sub.blockedMessage(user.tenant) : null; // switched off, or the access period (and grace) is over
+    if (blocked) throw new HttpError(403, blocked);
     const fresh = await prisma.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() }, include: { tenant: true } });
     await audit({ ip: req.ip, user }, { action: 'auth.login', summary: 'Logged in' });
     res.json(loginPayload(fresh));
@@ -305,6 +309,7 @@ app.get('/api/meta', authenticateToken, (req, res) => {
 });
 
 // ---------- Super admin (minimal: list + create tenants) ----------
+const posAdmin = { service: null }; // set where the Point of Sale is built (below): the admin screens read its figures
 app.get('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
     const tenants = await prisma.tenant.findMany({
         orderBy: { createdAt: 'desc' },
@@ -312,7 +317,7 @@ app.get('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), asy
     });
     const month = todayPKT().slice(0, 7);
     const out = await Promise.all(tenants.map(async t => {
-        const [ob, monthAgg, last, attention] = await Promise.all([
+        const [ob, monthAgg, last, attention, pos] = await Promise.all([
             onboarding.checklist(prisma, t),
             prisma.invoice.aggregate({
                 where: { tenantId: t.id, status: 'SUBMITTED', fbrEnv: t.fbrEnv, invoiceDate: { startsWith: month } },
@@ -320,9 +325,11 @@ app.get('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), asy
             }),
             prisma.invoice.findFirst({ where: { tenantId: t.id }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
             prisma.invoice.count({ where: { tenantId: t.id, status: { in: ['FAILED', 'UNCERTAIN'] } } }),
+            tenantModules(t).includes('POS') && posAdmin.service ? posAdmin.service.adminFigures(t.id) : null, // Point of Sale: this month's sales and what needs attention
         ]);
         return {
             ...publicTenant(t),
+            pos,
             emails: t.users.map(u => u.email),
             invoiceCount: t._count.invoices,
             createdAt: t.createdAt,
@@ -551,15 +558,21 @@ app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), as
     const email = String(clientEmail).toLowerCase().trim();
     checkNewPassword(clientPassword, email);
     if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
+    // optionally, how long the client may use the application (no period given = no time limit); checked before anything is created
+    let period = {};
+    if (req.body?.accessUnit) {
+        try { period = sub.setPeriod({ unit: req.body.accessUnit, count: req.body.accessCount }, {}); } catch (e) { if (e instanceof sub.AccessError) throw new HttpError(400, e.message); throw e; }
+    }
 
     const tenant = await prisma.tenant.create({
         data: {
             companyName: String(companyName).trim(),
             mobile,
+            ...period,
             users: { create: { email, password: await bcrypt.hash(String(clientPassword), 10), role: 'CLIENT_USER', tenantRole: 'OWNER', mustChangePassword: true } },
         },
     });
-    await audit(req, { tenantId: tenant.id, action: 'admin.client_create', entityType: 'Tenant', entityId: tenant.id, summary: `Client "${tenant.companyName}" created with login ${email}${mobile ? `, mobile ${mobile}` : ''}` });
+    await audit(req, { tenantId: tenant.id, action: 'admin.client_create', entityType: 'Tenant', entityId: tenant.id, summary: `Client "${tenant.companyName}" created with login ${email}${mobile ? `, mobile ${mobile}` : ''}; access: ${accessText(tenant)}` });
     res.json({ success: true, tenantId: tenant.id });
 });
 
@@ -810,6 +823,10 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
     }
 
     const before = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
+    if (data.active === true && !before.active && sub.access(before).status === 'EXPIRED') {
+        throw new HttpError(400, 'This client\'s access period has ended. Renew it first (Manage → Overview → Access period): renewing makes it active again.');
+    }
+    if ('active' in data) data.inactiveReason = data.active ? null : 'ADMIN'; // switched off by hand, or on again
     // a new token starts a new 5-year period, unless the admin typed a different issue date
     const sameDay = (a, c) => a && c && new Date(a).toISOString().slice(0, 10) === new Date(c).toISOString().slice(0, 10);
     if (b.fbrToken && (!data.tokenIssuedAt || sameDay(data.tokenIssuedAt, before.tokenIssuedAt))) data.tokenIssuedAt = new Date();
@@ -833,6 +850,36 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
     // New token: refresh the HS code list from FBR in the background
     if (b.fbrToken) hs.syncFromFbr(prisma, String(b.fbrToken).trim()).catch(err => console.error('HS sync failed:', err.message));
     res.json(publicTenant(t));
+});
+
+// ---------- How long a client may use the application (src/subscription.js) ----------
+const accessText = t => (t.accessEndsAt ? `${t.accessCount} ${String(t.accessUnit || '').toLowerCase()}${t.accessCount === 1 ? '' : 's'}, ends ${sub.dayOf(t.accessEndsAt)}` : 'no time limit');
+async function changeAccess(req, res, compute, verb) {
+    const tenantId = req.params.id;
+    const before = await prisma.tenant.findUnique({ where: { id: tenantId } });
+    if (!before) throw new HttpError(404, 'Client not found.');
+    let data;
+    try { data = compute(before); } catch (e) { if (e instanceof sub.AccessError) throw new HttpError(400, e.message); throw e; }
+    const status = sub.access({ ...before, ...data }).status;
+    // the client's state follows the new dates: a lapsed one is switched off, and one the period had switched off comes back
+    if (status === 'EXPIRED' && before.active) Object.assign(data, { active: false, inactiveReason: 'EXPIRED' });
+    else if (status !== 'EXPIRED' && !before.active && before.inactiveReason === 'EXPIRED') Object.assign(data, { active: true, inactiveReason: null });
+    const t = await prisma.tenant.update({ where: { id: tenantId }, data });
+    const day = d => sub.dayOf(d);
+    await audit(req, {
+        tenantId, action: 'client.access', entityType: 'Tenant', entityId: tenantId,
+        summary: `Access period ${verb}: ${accessText(before)} → ${accessText(t)}${before.active !== t.active ? (t.active ? '; client made active' : '; client made inactive (period over)') : ''}`,
+        details: { 'Integration date': [day(before.integratedAt), day(t.integratedAt)], 'Access period': [accessText(before), accessText(t)] },
+    });
+    res.json(publicTenant(t));
+}
+app.put('/api/admin/clients/:id/access', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => changeAccess(req, res, before => sub.setPeriod(req.body, before), 'set'));
+app.post('/api/admin/clients/:id/access/renew', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => changeAccess(req, res, before => sub.renew(req.body, before), 'renewed'));
+// The Point of Sale side of a client, read-only, for the Manage screen (counters, this month, what needs attention)
+app.get('/api/admin/clients/:id/pos-summary', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const t = await prisma.tenant.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!t) throw new HttpError(404, 'Client not found.');
+    res.json(await posAdmin.service.adminSummary(t.id));
 });
 
 // FBR reference lists (provinces, uom, ...) via the tenant's token, with static fallbacks
@@ -2375,6 +2422,7 @@ app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNT
     // After this many failed calls in a row the counter's sales are paused for a short rest (SRS: new sales are blocked while PRA is unreachable)
     const breaker = createBreaker({ threshold: Number(process.env.POS_BREAKER_FAILS) || 1, coolDownMs: (Number(process.env.POS_BREAKER_REST_SECONDS) || 15) * 1000 });
     const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker });
+    posAdmin.service = posService;
     registerPosRoutes(app, { service: posService, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
 }
 
@@ -2389,6 +2437,14 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// Clients whose access period (and grace) is over are made inactive by themselves: when the server starts and every ten minutes.
+// The login and every request check too, so nothing depends on this having run.
+const runExpiry = () => sub.expireDueClients({ prisma, audit })
+    .then(ids => { if (ids.length) console.log(`Access period over: ${ids.length} client(s) made inactive`); })
+    .catch(err => console.error('access-period check failed:', err.message));
+runExpiry();
+setInterval(runExpiry, 10 * 60 * 1000).unref();
+
 app.listen(PORT, () => {
     console.log(`FBR billing app on http://localhost:${PORT}${process.env.FBR_MOCK === 'true' ? '  (FBR_MOCK on — nothing is sent to FBR)' : ''}`);
 });

@@ -53,6 +53,13 @@ _Last updated: 2026-10-19 (Point of Sale reviewed and finished in test mode)_ ·
 - Amount boxes start empty (no 0 to delete); whole-number quantity for counted units (pieces, dozen, …), decimals for KG etc.
 - Suggestion-list boxes (UOM, rate, SRO) always show their arrow
 
+**Admin console (done 2026-10-19)**
+- Access period per client: integration date, months or years allowed, countdown, grace (3 days monthly, 7 days yearly),
+  automatic switch-off, renew; shown in the Clients list and on the dashboard
+- Clients list: filters (search, status, access period, product, FBR environment) and sorting
+- Manage client in tabs (Overview · Digital Invoicing · Point of Sale · Users); a client without Digital Invoicing never sees FBR
+  settings, and the dashboard counts FBR figures for FBR clients only
+
 ## Waiting on others
 - **PRAL / IRIS:** sandbox token, assigned scenarios, IP whitelisting. Then run every scenario, then get the production token.
 - **CA answers** (list sent 2026-10-06):

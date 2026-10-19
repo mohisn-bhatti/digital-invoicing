@@ -42,6 +42,7 @@
   .stepper::before { content: ''; position: absolute; left: -1.5rem; right: -1.5rem; top: -.8rem; height: .8rem; background: #f1f5f9; } /* cover the gap under the header */
   #itemsFormView .stepper { grid-template-columns: repeat(4, minmax(0, 1fr)) auto; }
   #mpStepper { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  [data-mp-tab].hidden { display: none !important; } /* Manage client: only the open tab shows */
   /* shutter: slides open from left to right, and closes back to the left */
   /* same colours as the left menu: dark navy, light text, white/10 hover, emerald accent */
   #guidePanel.guide-box { background: #0f172a; border-color: rgba(255, 255, 255, .1); color: #e2e8f0; }
@@ -71,6 +72,14 @@
   .step-state { font-size: .75rem; border-radius: 9999px; padding: .15rem .6rem; white-space: nowrap; }
   .step-state.ok { background: #d1fae5; color: #065f46; }
   .step-state.miss { background: #fef3c7; color: #92400e; }
+  /* phones: the set-up step bar is two columns (not sticky), a step's heading and its "Missing: …" chip wrap instead of squeezing the text */
+  @media (max-width: 640px) {
+    #mpStepper { grid-template-columns: repeat(2, minmax(0, 1fr)); position: static; }
+    #mpStepper::before { display: none; }
+    .step-head { flex-wrap: wrap; }
+    .step-head > .flex-1 { flex: 1 1 10rem; min-width: 0; }
+    .step-state { white-space: normal; }
+  }
   .guide-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: .6rem; padding: .75rem 1rem; }
   .review-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .75rem; }
   .review-grid > div { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: .6rem; padding: .7rem .85rem; font-size: .85rem; }
@@ -217,7 +226,7 @@
 <!-- Super admin pages -->
 <section id="adminView" class="hidden">
   <div data-page="a-dashboard" class="page hidden space-y-6">
-  <div id="adStats" class="grid grid-cols-2 lg:grid-cols-6 gap-4"></div>
+  <div id="adStats" class="grid grid-cols-2 lg:grid-cols-4 gap-4"></div>
   <div class="bg-white rounded-xl shadow p-5">
     <h2 class="font-semibold mb-3">Needs your attention</h2>
     <div id="adAttention" class="text-sm"></div>
@@ -226,11 +235,15 @@
   <div data-page="a-clients" class="page hidden space-y-6">
   <div class="bg-white rounded-xl shadow p-5">
     <h2 class="font-semibold mb-3">Register client</h2>
-    <form id="clientForm" class="grid sm:grid-cols-5 gap-3 items-end">
+    <form id="clientForm" class="grid sm:grid-cols-4 gap-3 items-end">
       <label><span>Company name</span><input name="companyName" required></label>
       <label><span>Login email</span><input name="clientEmail" type="email" required></label>
       <label><span>Mobile number <span class="text-slate-400">(optional)</span></span><input name="mobile" type="tel" inputmode="tel" maxlength="16" autocomplete="off"></label>
       <label><span>Password</span><input name="clientPassword" type="password" minlength="8" required data-pwrules="quiet" autocomplete="new-password"></label>
+      <label class="sm:col-span-2"><span>Allowed to use the application for <span class="text-slate-400">(counted from today; you can change it later under Manage)</span></span>
+        <div class="flex gap-2"><input name="accessCount" id="rcCount" type="number" min="1" max="120" step="1" value="1" inputmode="numeric" class="!w-24" aria-label="How many" disabled>
+          <select name="accessUnit" id="rcUnit" aria-label="Months, years or no time limit"><option value="">No time limit</option><option value="YEAR">years</option><option value="MONTH">months</option></select></div></label>
+      <p id="rcNote" class="sm:col-span-1 text-xs text-slate-500 pb-2"></p>
       <button class="bg-emerald-700 text-white rounded py-2">Create</button>
     </form>
   </div>
@@ -239,15 +252,26 @@
     <p class="text-xs text-slate-600 mb-3">Added by a client's owner. They cannot log in until you approve.</p>
     <table class="w-full text-sm"><tbody id="userRequestRows"></tbody></table>
   </div>
-  <div class="bg-white rounded-xl shadow p-5 overflow-x-auto">
+  <div class="bg-white rounded-xl shadow p-5">
     <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
-      <h2 class="font-semibold">Clients</h2>
-      <button type="button" onclick="loadClients()" class="text-sm text-emerald-700 underline">Refresh</button>
+      <h2 class="font-semibold">Clients <span id="clientCount" class="text-xs font-normal text-slate-500"></span></h2>
+      <div class="flex items-center gap-4 text-sm"><button type="button" id="cfReset" onclick="resetClientFilters()" class="hidden text-slate-600 underline">Clear filters</button>
+        <button type="button" onclick="loadClients()" class="text-emerald-700 underline">Refresh</button></div>
     </div>
+    <div id="clientFilters" class="grid grid-cols-2 lg:grid-cols-7 gap-2 mb-4">
+      <label class="col-span-2"><span>Search</span><input id="cfQ" type="search" placeholder="Company, login, mobile, NTN or sector" oninput="clientFilterChanged()" autocomplete="off"></label>
+      <label><span>Status</span><select id="cfStatus" onchange="clientFilterChanged()"><option value="">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+      <label><span>Access period</span><select id="cfAccess" onchange="clientFilterChanged()"><option value="">All</option><option value="attention">Needs attention (ending, grace, over)</option><option value="running">Running</option><option value="ending">Ending within 30 days</option><option value="grace">In grace period</option><option value="expired">Expired</option><option value="unlimited">No time limit</option></select></label>
+      <label><span>Product</span><select id="cfProduct" onchange="clientFilterChanged()"><option value="">All</option><option value="INVOICING">FBR Digital Invoicing</option><option value="POS">Point of Sale</option></select></label>
+      <label><span>FBR environment</span><select id="cfEnv" onchange="clientFilterChanged()"><option value="">All</option><option value="SANDBOX">Sandbox</option><option value="PRODUCTION">Production</option></select></label>
+      <label><span>Sort by</span><select id="cfSort" onchange="clientFilterChanged()"></select></label>
+    </div>
+    <div class="overflow-x-auto">
     <table class="w-full text-sm">
-      <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Company</th><th>Login</th><th>Mobile</th><th>Status</th><th>Env</th><th>Go-live</th><th class="text-right">This month</th><th>Last invoice</th><th></th></tr></thead>
+      <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Company</th><th>Login &amp; mobile</th><th>Status</th><th>Integrated &amp; access</th><th>FBR set-up</th><th class="text-right">This month</th><th>Last invoice</th><th></th></tr></thead>
       <tbody id="clientRows"></tbody>
     </table>
+    </div>
   </div>
   </div>
   <!-- Client queries: every client's Help & feedback, to answer and resolve -->
@@ -263,16 +287,38 @@
   <div data-page="a-client" class="page hidden space-y-5">
   <!-- Setting up a client, in the order FBR takes them live: profile → token → sandbox scenarios → production → settings & users -->
   <div class="bg-white rounded-xl shadow p-5 flex flex-wrap items-center justify-between gap-3">
-    <h2 class="text-lg font-semibold">Set up: <span id="mpName"></span> <span id="mpStatus" class="ml-2 text-xs font-normal"></span> <span id="mpObSummary" class="ml-2 text-xs font-normal"></span> <span id="settingsHint" class="ml-2 text-xs font-normal text-amber-700"></span></h2>
+    <h2 class="text-lg font-semibold">Set up: <span id="mpName"></span> <span id="mpStatus" class="ml-2 text-xs font-normal"></span> <span id="mpAccessChip" class="ml-1 text-xs font-normal"></span> <span id="mpObSummary" class="ml-2 text-xs font-normal"></span> <span id="settingsHint" class="ml-2 text-xs font-normal text-amber-700"></span></h2>
     <div class="flex flex-wrap gap-2 text-sm">
       <button type="button" onclick="openWorkspace()" class="bg-indigo-700 text-white rounded px-3 py-1.5" title="Work inside this client's screen">Open workspace</button>
-      <button type="button" onclick="showClientHistory(S.manageId)" class="border rounded px-3 py-1.5">History</button>
+      <button type="button" id="mpBtnHistory" onclick="showClientHistory(S.manageId)" class="border rounded px-3 py-1.5">History</button>
       <button type="button" onclick="showClientActivity()" class="border rounded px-3 py-1.5">Activity log</button>
-      <button type="button" onclick="showClientReport()" class="border rounded px-3 py-1.5">Annex-C report</button>
+      <button type="button" id="mpBtnAnnex" onclick="showClientReport()" class="border rounded px-3 py-1.5">Annex-C report</button>
       <button type="button" onclick="closeManage()" class="text-slate-600 underline">← All clients</button>
     </div>
   </div>
-  <nav id="mpStepper" class="stepper bg-white rounded-xl shadow">
+  <div class="max-w-full overflow-x-auto"><div id="mpTabs" class="seg" role="tablist"></div></div>
+  <section id="mpAccess" data-mp-tab="overview" class="step-card bg-white rounded-xl shadow">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="flex-1 min-w-[16rem]"><h3 class="font-semibold text-base">Access period</h3>
+        <p class="text-xs text-slate-500">How long this client may use the application. After the last day it keeps working for a few days of grace (3 for a monthly plan, 7 for a yearly one), then it is made inactive by itself. Renewing makes it active again.</p></div>
+      <div id="mpAccessStatus" class="text-sm text-right"></div>
+    </div>
+    <form id="accessForm" class="grid sm:grid-cols-3 gap-3 items-end mt-4">
+      <label><span>Integration date</span><input name="integratedAt" type="date" required></label>
+      <label><span>Allowed to use the application for</span>
+        <div class="flex gap-2"><input name="count" type="number" min="1" max="120" step="1" inputmode="numeric" class="!w-24" aria-label="How many"><select name="unit" aria-label="Months or years"><option value="MONTH">months</option><option value="YEAR">years</option></select></div></label>
+      <label class="!flex items-center gap-2 pb-2 cursor-pointer"><input name="unlimited" type="checkbox" style="width:auto"> <span class="!mb-0 text-sm text-slate-700">No time limit</span></label>
+      <p id="accessPreview" class="sm:col-span-3 text-sm"></p>
+      <div class="sm:col-span-3"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save access period</button></div>
+    </form>
+    <div class="mt-4 pt-4 border-t flex flex-wrap items-end gap-3 text-sm">
+      <div class="font-medium pb-2">Renew</div>
+      <label><span>Add</span><div class="flex gap-2"><input id="renewCount" type="number" min="1" max="120" step="1" inputmode="numeric" class="!w-24" aria-label="How many"><select id="renewUnit" aria-label="Months or years"><option value="MONTH">months</option><option value="YEAR">years</option></select></div></label>
+      <button type="button" onclick="renewAccess()" class="border border-emerald-600 text-emerald-700 rounded px-4 py-2 font-medium hover:bg-emerald-50">Renew</button>
+      <span class="text-xs text-slate-500 pb-2">Added to the last day, or to today if the period has already ended. A client switched off because its period ended becomes active again.</span>
+    </div>
+  </section>
+  <nav id="mpStepper" data-mp-tab="di" class="stepper bg-white rounded-xl shadow hidden">
     <button type="button" class="stepper-item" data-go="mpS1"><span class="step-no">1</span><span><b>Client profile</b><small data-mp-text="1"></small></span></button>
     <button type="button" class="stepper-item" data-go="mpS2"><span class="step-no">2</span><span><b>FBR token</b><small data-mp-text="2"></small></span></button>
     <button type="button" class="stepper-item" data-go="mpS3"><span class="step-no">3</span><span><b>Sandbox scenarios</b><small data-mp-text="3"></small></span></button>
@@ -280,12 +326,12 @@
     <button type="button" class="stepper-item" data-go="mpS5"><span class="step-no">5</span><span><b>Settings &amp; users</b><small data-mp-text="5"></small></span></button>
   </nav>
   <form id="settingsForm" class="space-y-5">
-    <section id="mpModules" class="step-card bg-white rounded-xl shadow">
+    <section id="mpModules" data-mp-tab="overview" class="step-card bg-white rounded-xl shadow">
       <div class="step-head"><div class="flex-1"><h3 class="font-semibold text-base">Modules</h3><p class="text-xs text-slate-500">What this client can use. With more than one switched on, the user picks which to open after logging in.</p></div></div>
       <div id="moduleBoxes" class="flex flex-wrap gap-x-8 gap-y-3 text-sm"></div>
       <div class="mt-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button></div>
     </section>
-    <section id="mpS1" class="step-card bg-white rounded-xl shadow">
+    <section id="mpS1" data-mp-tab="di" class="step-card bg-white rounded-xl shadow hidden">
       <div class="step-head"><span class="step-no">1</span><div class="flex-1"><h3 class="font-semibold text-base">Client profile (as in IRIS)</h3><p class="text-xs text-slate-500">Copy from the client's IRIS profile. Fields marked <span class="fbr-sent">(Sent to FBR)</span> go on every invoice — FBR rejects the invoice if they differ from IRIS.</p></div><span class="step-state" data-mp="1"></span></div>
       <div class="grid sm:grid-cols-3 gap-3">
           <label><span>Seller NTN <span class="fbr-sent">(Sent to FBR)</span></span><input name="sellerNtn" inputmode="numeric" data-digits="7" placeholder="7 digits" autocomplete="off"></label>
@@ -308,7 +354,7 @@
       </div>
       <div class="mt-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button></div>
     </section>
-    <section id="mpS2" class="step-card bg-white rounded-xl shadow">
+    <section id="mpS2" data-mp-tab="di" class="step-card bg-white rounded-xl shadow hidden">
       <div class="step-head"><span class="step-no">2</span><div class="flex-1"><h3 class="font-semibold text-base">FBR token</h3><p class="text-xs text-slate-500">From IRIS → Digital Invoicing → API Integration. Sandbox token while testing; the production token replaces it in step 4.</p></div><span class="step-state" data-mp="2"></span></div>
       <div class="grid sm:grid-cols-3 gap-3">
           <label><span>Environment</span>
@@ -326,7 +372,7 @@
       </div>
       <div class="mt-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button></div>
     </section>
-    <section id="mpS3" class="step-card bg-white rounded-xl shadow">
+    <section id="mpS3" data-mp-tab="di" class="step-card bg-white rounded-xl shadow hidden">
       <div class="step-head"><span class="step-no">3</span><div class="flex-1"><h3 class="font-semibold text-base">Sandbox scenarios</h3><p class="text-xs text-slate-500">One test invoice per scenario to FBR's sandbox — then IRIS shows them Successful and issues the production token.</p></div><span class="step-state" data-mp="3"></span></div>
       <div id="mpScen" class="text-sm"></div>
       <!-- IRIS → Digital Invoicing → Scenario Details is the official record: the admin ticks what it shows -->
@@ -336,7 +382,7 @@
       <div id="irisPanel" class="hidden mt-3 border rounded-lg p-3 bg-slate-50"></div>
       <div id="sbxPanel" class="hidden mt-3 border rounded-lg p-3 bg-slate-50 text-sm"></div>
     </section>
-    <section id="mpS4" class="step-card bg-white rounded-xl shadow">
+    <section id="mpS4" data-mp-tab="di" class="step-card bg-white rounded-xl shadow hidden">
       <div class="step-head"><span class="step-no">4</span><div class="flex-1"><h3 class="font-semibold text-base">Go live</h3><p class="text-xs text-slate-500">When IRIS shows every scenario Successful: production token, Production environment, then the first real invoice.</p></div><span class="step-state" data-mp="4"></span></div>
       <div id="mpGoLive" class="text-sm"></div>
       <ol class="mt-3 text-xs text-slate-600 list-decimal pl-5 space-y-0.5">
@@ -345,7 +391,7 @@
         <li>The client files their first real invoice; check it in IRIS (production).</li>
       </ol>
     </section>
-    <section id="mpS5" class="step-card bg-white rounded-xl shadow">
+    <section id="mpS5" data-mp-tab="di" class="step-card bg-white rounded-xl shadow hidden">
       <div class="step-head"><span class="step-no">5</span><div class="flex-1"><h3 class="font-semibold text-base">Invoice settings &amp; users</h3><p class="text-xs text-slate-500">Used inside ETAX — not sent to FBR.</p></div><span class="step-state" data-mp="5"></span></div>
       <div class="grid sm:grid-cols-3 gap-3">
           <label><span>Further tax % (unregistered buyers)</span><input name="furtherTaxRate" type="number" step="0.01" min="0" max="100"></label>
@@ -356,7 +402,15 @@
       <div class="mt-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button></div>
     </section>
   </form>
-  <section id="mpUsers">
+  <section id="mpPos" data-mp-tab="pos" class="bg-white rounded-xl shadow p-5 space-y-4 text-sm hidden">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div><h3 class="font-semibold text-base">Point of Sale (PRA)</h3>
+        <p class="text-xs text-slate-500">What this client has set up. The counters, PRA tokens and items are kept by the client's owner (or by you, in the workspace).</p></div>
+      <button type="button" onclick="openWorkspace()" class="bg-indigo-700 text-white rounded px-3 py-1.5" title="Work inside this client's screen">Open workspace</button>
+    </div>
+    <div id="mpPosBody" class="text-slate-500">Loading…</div>
+  </section>
+  <section id="mpUsers" data-mp-tab="users" class="hidden">
   <div class="bg-white rounded-xl shadow p-5 space-y-3 text-sm">
     <h2 class="font-semibold">Users <span class="text-xs font-normal text-slate-500">— Owner: everything + users · Accountant: invoicing, debit notes, import, products, buyers · Cashier: create &amp; print invoices only</span></h2>
     <form id="aUserForm" class="grid sm:grid-cols-5 gap-2 items-end bg-slate-50 border rounded p-3">
@@ -1050,6 +1104,8 @@
   </div>
 </div>
 
+<script src="/access.js"></script>
+<script src="/clients-view.js"></script>
 <script src="/pos-calc.js"></script>
 <script src="/pos.js"></script>
 <script>
@@ -1311,6 +1367,8 @@ $('#loginForm').addEventListener('submit', async e => {
 
 /* ---------- Admin ---------- */
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+// A calendar day (a date-only value, kept at midnight Pakistan time) shown as that same day wherever the browser is
+const fmtDay = d => d ? new Date(`${Access.dayOf(d)}T00:00:00Z`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—';
 async function loadUserRequests() {
   try {
     const list = await api('/api/admin/user-requests');
@@ -1334,27 +1392,59 @@ async function loadClients() {
   loadUserRequests();
   try {
     const rows = await api('/api/admin/clients');
-    $('#clientRows').innerHTML = rows.map(c => {
-      const ob = c.onboarding, live = ob.done === ob.total;
-      return `<tr class="border-b align-top">
-      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc((c.sectors || []).join(', ') || 'sector not set')}${(c.modules || []).includes('POS') ? ' · <span class="text-emerald-700">+ POS</span>' : ''}</div></td>
-      <td class="text-xs">${esc(c.emails.join(', '))}</td>
-      <td class="text-xs font-mono whitespace-nowrap">${c.mobile ? esc(c.mobile) : '<span class="text-slate-300">—</span>'}</td>
-      <td class="text-xs whitespace-nowrap"><span class="px-2 py-0.5 rounded ${c.active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}">${c.active ? 'Active' : 'Inactive'}</span>
-        <div><button type="button" class="mt-1 underline text-slate-600" onclick="setClientActive('${c.id}', ${!c.active})">${c.active ? 'Make inactive' : 'Make active'}</button></div></td>
-      <td class="text-xs">${esc(c.fbrEnv)}<div>${c.fbrTokenMasked ? 'token ✔' : '<span class="text-amber-700">no token</span>'}</div></td>
-      <td class="text-xs"><span class="px-2 py-0.5 rounded ${live ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}">${live ? 'Live' : `${ob.done}/${ob.total} steps`}</span>
-        <div class="mt-1 text-slate-600">Scenarios ${ob.scenariosPassed}/${ob.scenariosAssigned || '?'}</div></td>
-      <td class="text-right text-xs">${c.thisMonth.invoices} invoices<div class="font-semibold">Rs ${money(c.thisMonth.total)}</div>
-        ${c.needsAttention ? `<div class="text-red-700">${c.needsAttention} need attention</div>` : ''}</td>
-      <td class="text-xs">${fmtDate(c.lastInvoiceAt)}</td>
-      <td class="text-right whitespace-nowrap"><button class="text-slate-600 underline text-xs mr-2" onclick="showClientHistory('${c.id}')">History</button><button class="bg-emerald-700 text-white rounded px-3 py-1 text-xs" onclick="manageClient('${c.id}')">Manage</button></td></tr>`;
-    }).join('') || '<tr><td colspan="9" class="py-3 text-slate-500">No clients yet.</td></tr>';
     const sel = $('#aAuTenant'), cur = sel.value;
     sel.innerHTML = '<option value="">All clients</option><option value="platform">Platform / admin</option>' + rows.map(c => `<option value="${c.id}">${esc(c.companyName)}</option>`).join('');
     sel.value = cur;
     S.clients = rows;
+    renderClients();
   } catch (err) { toast(err.message); }
+}
+// The Clients list: filtered and sorted as the administrator chose (ClientsView, public/clients-view.js)
+const CF_DEFAULT = { q: '', status: '', access: '', product: '', env: '', sort: 'newest' };
+const TONES = { slate: 'bg-slate-100 text-slate-700', emerald: 'bg-emerald-100 text-emerald-800', amber: 'bg-amber-100 text-amber-900', orange: 'bg-orange-100 text-orange-900', red: 'bg-red-100 text-red-800', sky: 'bg-sky-100 text-sky-800' };
+const chip = (tone, text, extra = '') => `<span class="inline-block px-2 py-0.5 rounded ${TONES[tone]} ${extra}">${text}</span>`;
+function syncClientFilterBoxes() {
+  const f = S.cf;
+  if (!$('#cfSort').options.length) $('#cfSort').innerHTML = ClientsView.SORTS.map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('');
+  $('#cfQ').value = f.q; $('#cfStatus').value = f.status; $('#cfAccess').value = f.access; $('#cfProduct').value = f.product; $('#cfEnv').value = f.env; $('#cfSort').value = f.sort;
+}
+function clientFilterChanged() {
+  S.cf = { q: $('#cfQ').value, status: $('#cfStatus').value, access: $('#cfAccess').value, product: $('#cfProduct').value, env: $('#cfEnv').value, sort: $('#cfSort').value };
+  renderClients();
+}
+function resetClientFilters() { S.cf = { ...CF_DEFAULT }; syncClientFilterBoxes(); renderClients(); }
+function showClients(filter) { S.cf = { ...CF_DEFAULT, ...(filter || {}) }; go('a-clients'); } // the dashboard opens the list already filtered
+function renderClients() {
+  S.cf = S.cf || { ...CF_DEFAULT };
+  syncClientFilterBoxes();
+  const all = S.clients || [], rows = ClientsView.sortClients(ClientsView.filterClients(all, S.cf), S.cf.sort);
+  const filtered = Object.entries(S.cf).some(([k, v]) => (k === 'sort' ? v !== CF_DEFAULT.sort : v));
+  $('#clientCount').textContent = filtered ? `${rows.length} of ${all.length}` : `(${all.length})`;
+  $('#cfReset').classList.toggle('hidden', !filtered);
+  const n = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  $('#clientRows').innerHTML = rows.map(c => {
+    const ob = c.onboarding, live = ob.done === ob.total, mods = ClientsView.modulesOf(c), di = mods.includes('INVOICING'), pos = mods.includes('POS') && c.pos;
+    const lab = ClientsView.accessLabel(c);
+    const ended = !c.active && c.inactiveReason === 'EXPIRED';
+    const month = [
+      di ? `<div>${n(c.thisMonth.invoices, 'invoice')}<div class="font-semibold">Rs ${money(c.thisMonth.total)}</div>${c.needsAttention ? `<div class="text-red-700">${c.needsAttention} need attention</div>` : ''}</div>` : '',
+      pos ? `<div class="${di ? 'mt-1.5 pt-1.5 border-t' : ''}"><span class="text-slate-500">POS:</span> ${n(c.pos.sales.count, 'sale')}<div class="font-semibold">Rs ${money(c.pos.sales.total)}</div>${c.pos.needsAttention ? `<div class="${c.pos.unknown ? 'text-red-700' : 'text-amber-700'}">${c.pos.needsAttention} need attention</div>` : ''}${c.pos.testMode ? '<div class="text-amber-700">test sales</div>' : ''}</div>` : '',
+    ].join('') || '<span class="text-slate-300">—</span>';
+    const last = [di ? fmtDate(c.lastInvoiceAt) : '', pos ? `${di ? '<div class="text-slate-500">POS: ' : '<div>'}${c.pos.lastSaleAt ? fmtDate(c.pos.lastSaleAt) : '—'}</div>` : ''].join('');
+    return `<tr class="border-b align-top">
+      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div>
+        <div class="mt-0.5 flex flex-wrap items-center gap-1">${di ? chip('sky', 'FBR', 'text-[10px] leading-4') : ''}${mods.includes('POS') ? chip('emerald', 'POS', 'text-[10px] leading-4') : ''}</div>
+        ${di ? `<div class="text-xs text-slate-500 mt-0.5">${c.sellerNtnCnic ? `NTN ${esc(c.sellerNtnCnic)}` : 'NTN —'} · ${esc((c.sectors || []).join(', ') || 'sector not set')}</div>` : ''}</td>
+      <td class="text-xs"><div class="break-all">${esc(c.emails.join(', '))}</div>${c.mobile ? `<div class="font-mono text-slate-600 whitespace-nowrap mt-0.5">${esc(c.mobile)}</div>` : ''}</td>
+      <td class="text-xs whitespace-nowrap">${chip(c.active ? 'emerald' : 'red', c.active ? 'Active' : 'Inactive')}${ended ? '<div class="text-slate-500 whitespace-normal">period ended</div>' : ''}
+        <div>${ended ? `<button type="button" class="mt-1 underline text-emerald-700" onclick="manageClient('${c.id}', 'overview')">Renew…</button>` : `<button type="button" class="mt-1 underline text-slate-600" onclick="setClientActive('${c.id}', ${!c.active})">${c.active ? 'Make inactive' : 'Make active'}</button>`}</div></td>
+      <td class="text-xs"><div class="whitespace-nowrap text-slate-600">Since ${fmtDay(c.integratedAt)}</div>${chip(lab.tone, esc(lab.text), 'mt-1')}${lab.date ? `<div class="mt-0.5 text-slate-500 whitespace-nowrap">${lab.dateLabel} ${fmtDay(lab.date)}</div>` : ''}</td>
+      <td class="text-xs">${di ? `<div>${esc(c.fbrEnv)} · ${c.fbrTokenMasked ? 'token ✔' : '<span class="text-amber-700">no token</span>'}</div><div class="mt-1">${chip(live ? 'emerald' : 'amber', live ? 'Live' : `${ob.done}/${ob.total} steps`)}</div>
+        <div class="mt-0.5 text-slate-600">Scenarios ${ob.scenariosPassed}/${ob.scenariosAssigned || '?'}</div>` : pos ? `<span class="text-slate-600">${n(c.pos.counters, 'counter')}</span>` : '<span class="text-slate-300">—</span>'}</td>
+      <td class="text-right text-xs">${month}</td>
+      <td class="text-xs">${last || '<span class="text-slate-300">—</span>'}</td>
+      <td class="text-right whitespace-nowrap"><button class="bg-emerald-700 text-white rounded px-3 py-1 text-xs" onclick="manageClient('${c.id}')">Manage</button>${di ? `<div><button class="text-slate-600 underline text-xs mt-1" onclick="showClientHistory('${c.id}')">History</button></div>` : ''}</td></tr>`;
+  }).join('') || `<tr><td colspan="8" class="py-4 text-slate-500">${all.length ? 'No client matches these filters. <button type="button" class="underline text-emerald-700" onclick="resetClientFilters()">Clear filters</button>' : 'No clients yet.'}</td></tr>`;
 }
 // Shared by the client card and the admin grid. clickable = scenario chips pick the scenario in the invoice form.
 function checklistHtml(ob, clickable) {
@@ -1658,17 +1748,25 @@ async function loadAdminDash() {
     const [clients, leads, tk] = await Promise.all([api('/api/admin/clients'), api('/api/admin/leads'), api('/api/admin/tickets?status=OPEN').catch(() => ({ open: 0 }))]);
     setNavBadge('a-help', tk.open);
     S.clients = clients;
-    const live = clients.filter(c => c.onboarding.done === c.onboarding.total).length;
-    const card = (label, value, href, cls = '') => `<a href="${href}" class="bg-white rounded-xl shadow p-4 hover:ring-2 hover:ring-emerald-600"><div class="text-xs text-slate-500">${label}</div><div class="text-2xl font-bold mt-1 ${cls}">${value}</div></a>`;
-    const att = clients.reduce((a, c) => a + c.needsAttention, 0), newLeads = leads.filter(l => l.status === 'NEW').length;
+    // the FBR figures count the clients that use Digital Invoicing; the Point of Sale and the access periods have their own
+    const di = clients.filter(c => ClientsView.has(c, 'INVOICING')), posClients = clients.filter(c => c.pos);
+    const live = di.filter(c => c.onboarding.done === c.onboarding.total).length;
+    const lapsing = clients.filter(c => ['ENDING', 'GRACE', 'EXPIRED'].includes(c.access && c.access.status));
+    const card = (label, value, href, cls = '', sub = '') => `<a href="${href}" class="bg-white rounded-xl shadow p-4 hover:ring-2 hover:ring-emerald-600"><div class="text-xs text-slate-500">${label}</div><div class="text-2xl font-bold mt-1 ${cls}">${value}</div>${sub ? `<div class="text-xs text-slate-500 mt-0.5">${sub}</div>` : ''}</a>`;
+    const att = clients.reduce((a, c) => a + c.needsAttention + (c.pos ? c.pos.needsAttention : 0), 0), newLeads = leads.filter(l => l.status === 'NEW').length;
+    const posSales = posClients.reduce((a, c) => a + c.pos.sales.count, 0), posTotal = posClients.reduce((a, c) => a + c.pos.sales.total, 0);
     $('#adStats').innerHTML = card('Clients', clients.length, '#/a-clients') + card('Live with FBR', live, '#/a-clients', 'text-emerald-700')
-      + card('In setup / testing', clients.length - live, '#/a-clients', 'text-amber-700')
-      + card('Invoices this month', clients.reduce((a, c) => a + c.thisMonth.invoices, 0), '#/a-reports')
+      + card('In setup / testing (FBR)', di.length - live, '#/a-clients', 'text-amber-700')
+      + card('Invoices this month', di.reduce((a, c) => a + c.thisMonth.invoices, 0), '#/a-reports')
+      + card('POS sales this month', posSales, '#/a-clients', '', posClients.length ? `Rs ${money(posTotal)} · ${posClients.length} ${posClients.length === 1 ? 'client' : 'clients'}` : 'no Point of Sale client yet')
+      + card('Access ending or over', lapsing.length, "javascript:showClients({ access: 'attention' })", lapsing.length ? 'text-amber-700' : '', 'within 30 days, in grace, or expired')
       + card('Need attention', att, '#/a-clients', att ? 'text-red-700' : '') + card('New enquiries', newLeads, '#/a-leads', newLeads ? 'text-amber-700' : '');
     const items = [
-      ...clients.filter(c => c.needsAttention).map(c => `<li>⚠️ <b>${esc(c.companyName)}</b>: ${c.needsAttention} invoice(s) failed or uncertain — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">open</a></li>`),
-      ...clients.filter(c => c.onboarding.done < c.onboarding.total).map(c => `<li>🛠️ <b>${esc(c.companyName)}</b>: go-live ${c.onboarding.done}/${c.onboarding.total}, scenarios ${c.onboarding.scenariosPassed}/${c.onboarding.scenariosAssigned || '?'} — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">manage</a></li>`),
-      ...clients.filter(c => c.tokenExpiring).map(c => `<li>🔑 <b>${esc(c.companyName)}</b>: FBR token expires on ${fmtDate(c.tokenExpiresAt)} (valid 5 years) — ask PRAL for a new one, then save it — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">open</a></li>`),
+      ...di.filter(c => c.needsAttention).map(c => `<li>⚠️ <b>${esc(c.companyName)}</b>: ${c.needsAttention} invoice(s) failed or uncertain — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">open</a></li>`),
+      ...di.filter(c => c.onboarding.done < c.onboarding.total).map(c => `<li>🛠️ <b>${esc(c.companyName)}</b>: go-live ${c.onboarding.done}/${c.onboarding.total}, scenarios ${c.onboarding.scenariosPassed}/${c.onboarding.scenariosAssigned || '?'} — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">manage</a></li>`),
+      ...di.filter(c => c.tokenExpiring).map(c => `<li>🔑 <b>${esc(c.companyName)}</b>: FBR token expires on ${fmtDate(c.tokenExpiresAt)} (valid 5 years) — ask PRAL for a new one, then save it — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}')">open</a></li>`),
+      ...posClients.filter(c => c.pos.needsAttention).map(c => `<li>${c.pos.unknown ? '🚨' : '⚠️'} <b>${esc(c.companyName)}</b>: ${c.pos.needsAttention} Point of Sale sale(s) not fiscalized${c.pos.unknown ? `, ${c.pos.unknown} with an unknown outcome` : ''} — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}', 'pos')">open</a></li>`),
+      ...lapsing.map(c => { const lab = ClientsView.accessLabel(c); return `<li>${c.access.status === 'EXPIRED' ? '⛔' : '⏳'} <b>${esc(c.companyName)}</b>: access period — ${esc(lab.text.toLowerCase())}${lab.date ? ` (${lab.dateLabel} ${fmtDay(lab.date)})` : ''}${c.access.status === 'EXPIRED' ? ', made inactive' : ''} — <a class="text-emerald-700 underline" href="javascript:manageClient('${c.id}', 'overview')">renew</a></li>`; }),
       ...(tk.open ? [`<li>💬 ${tk.open} client quer${tk.open > 1 ? 'ies' : 'y'} waiting for a reply — <a class="text-emerald-700 underline" href="#/a-help">answer</a></li>`] : []),
       ...(newLeads ? [`<li>✉️ ${newLeads} new website enquir${newLeads > 1 ? 'ies' : 'y'} — <a class="text-emerald-700 underline" href="#/a-leads">view</a></li>`] : []),
     ];
@@ -1712,10 +1810,10 @@ async function fillReportClients(preselect) {
   } catch (err) { toast(err.message); }
 }
 function showClientReport() { const id = S.manageId; go('a-reports'); setTimeout(() => fillReportClients(id), 0); }
-async function manageClient(id) {
+async function manageClient(id, tab) {
   try {
     const [t, ob] = await Promise.all([api(`/api/admin/clients/${id}/settings`), api(`/api/admin/clients/${id}/onboarding`)]);
-    S.manageId = id; S.managed = t;
+    S.manageId = id; S.managed = t; S.mpTab = tab || 'overview'; // every client opens on its Overview
     // nothing from the previously opened client stays on screen
     $('#settingsForm').fbrToken.value = '';
     $('#fbrTestOut').className = 'text-slate-500 pt-1.5'; $('#fbrTestOut').textContent = 'Asks FBR for its province list with the token (records nothing at FBR) — the one typed above, else the saved one.';
@@ -1953,11 +2051,24 @@ $('#contactForm').addEventListener('submit', async e => {
     $('#contactOut').textContent = 'Saved'; toast('Mobile number saved', true);
   } catch (err) { toast(err.message); }
 });
+// the access period box: a number and months/years, or no time limit; the note says what the dates will be
+function syncRegisterAccess() {
+  const unit = $('#rcUnit').value, count = $('#rcCount'), note = $('#rcNote');
+  count.disabled = !unit;
+  if (!unit) { note.className = 'sm:col-span-1 text-xs text-slate-500 pb-2'; note.textContent = 'No time limit.'; return; }
+  try {
+    const d = Access.setPeriod({ unit, count: count.value }, {}), ends = Access.dayOf(d.accessEndsAt);
+    note.className = 'sm:col-span-1 text-xs text-slate-600 pb-2'; note.textContent = `Last day ${fmtDay(ends)}, then ${Access.GRACE_DAYS[d.accessUnit]} days of grace.`;
+  } catch (err) { note.className = 'sm:col-span-1 text-xs text-red-700 pb-2'; note.textContent = err.message; }
+}
+$('#rcUnit').addEventListener('change', syncRegisterAccess); $('#rcCount').addEventListener('input', syncRegisterAccess); syncRegisterAccess();
 $('#clientForm').addEventListener('submit', async e => {
   e.preventDefault();
   try {
-    await api('/api/admin/clients', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
-    e.target.reset(); toast('Client created', true); loadClients();
+    const body = Object.fromEntries(new FormData(e.target));
+    if (!body.accessUnit) delete body.accessCount; // no time limit
+    await api('/api/admin/clients', { method: 'POST', body });
+    e.target.reset(); syncRegisterAccess(); toast('Client created', true); loadClients();
   } catch (err) { toast(err.message); }
 });
 
@@ -2052,7 +2163,7 @@ async function loadLists() {
 function fillSettings(s) {
   const f = $('#settingsForm');
   f.mobile.value = s.mobile || '';
-  $('#mpStatus').innerHTML = s.active === false ? '<span class="px-2 py-0.5 rounded bg-red-100 text-red-800">Inactive</span> <button type="button" class="underline text-slate-600" onclick="setClientActive(S.manageId, true)">Make active</button>'
+  $('#mpStatus').innerHTML = s.active === false ? `<span class="px-2 py-0.5 rounded bg-red-100 text-red-800">Inactive</span> ${s.inactiveReason === 'EXPIRED' ? `<button type="button" class="underline text-emerald-700" onclick="mpShowTab('overview'); $('#renewCount').focus()">Renew…</button>` : '<button type="button" class="underline text-slate-600" onclick="setClientActive(S.manageId, true)">Make active</button>'}`
     : '<span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Active</span> <button type="button" class="underline text-slate-600" onclick="setClientActive(S.manageId, false)">Make inactive</button>';
   for (const k of ['sellerNtn', 'sellerCnic', 'sellerStrn', 'sellerBusinessName', 'sellerAddress', 'fbrEnv', 'furtherTaxRate', 'invoiceNumberFormat', 'softwareRegNo']) f[k].value = s[k] ?? '';
   // FBR token: valid 5 years from issue (spec §3.1)
@@ -2083,6 +2194,95 @@ function fillSettings(s) {
   $('#settingsHint').textContent = sellerMissing && tokenMissing ? 'Complete seller details and token before invoicing'
     : sellerMissing ? 'Complete seller details before invoicing'
     : tokenMissing ? 'Add the PRAL token before invoicing' : '';
+  mpRefresh(s);
+}
+
+/* ---------- Manage client: tabs, the access period, the Point of Sale side ---------- */
+const MP_TABS = [['overview', 'Overview'], ['di', 'Digital Invoicing'], ['pos', 'Point of Sale'], ['users', 'Users']];
+const mpHas = id => ((S.managed && S.managed.modules) || ['INVOICING']).includes(id);
+// a client that does not use Digital Invoicing (or the Point of Sale) never sees that product's settings
+const mpTabOk = tab => tab === 'overview' || tab === 'users' || (tab === 'di' && mpHas('INVOICING')) || (tab === 'pos' && mpHas('POS'));
+function mpShowTab(tab) {
+  if (!mpTabOk(tab)) tab = 'overview';
+  S.mpTab = tab;
+  $('#mpTabs').innerHTML = MP_TABS.filter(([id]) => mpTabOk(id)).map(([id, label]) =>
+    `<button type="button" role="tab" aria-selected="${id === tab}" class="seg-btn ${id === tab ? 'on' : ''}" onclick="mpShowTab('${id}')">${esc(label)}</button>`).join('');
+  for (const el of document.querySelectorAll('[data-page="a-client"] [data-mp-tab]')) el.classList.toggle('hidden', el.dataset.mpTab !== tab);
+  if (tab === 'pos') loadPosSummary();
+}
+// Everything on the screen that depends on which products the client has, and on its access period
+function mpRefresh(s) {
+  const di = (s.modules || ['INVOICING']).includes('INVOICING');
+  for (const id of ['#mpBtnHistory', '#mpBtnAnnex', '#mpObSummary', '#settingsHint']) $(id).classList.toggle('hidden', !di);
+  const lab = ClientsView.accessLabel(s);
+  $('#mpAccessChip').innerHTML = chip(lab.tone, esc(lab.text));
+  fillAccess(s);
+  mpShowTab(S.mpTab || 'overview');
+}
+function fillAccess(s) {
+  const f = $('#accessForm'), lab = ClientsView.accessLabel(s), a = s.access || {};
+  f.integratedAt.value = Access.dayOf(s.integratedAt || new Date());
+  f.unlimited.checked = !s.accessEndsAt;
+  f.count.value = s.accessCount || 1; f.unit.value = s.accessUnit || 'YEAR';
+  $('#renewCount').value = s.accessCount || 1; $('#renewUnit').value = s.accessUnit || 'YEAR';
+  const state = !s.active && s.inactiveReason === 'EXPIRED' ? `${chip('red', 'Inactive: the period ended')}` : !s.active ? chip('red', 'Inactive (switched off by hand)') : '';
+  $('#mpAccessStatus').innerHTML = `${chip(lab.tone, esc(lab.text))} ${state}${lab.date ? `<div class="text-xs text-slate-500 mt-1">${lab.dateLabel} ${fmtDay(lab.date)}${a.status === 'GRACE' ? ', then inactive' : ''}</div>` : ''}`;
+  syncAccessForm();
+}
+// What the dates will mean, as the administrator types (the same rules as the server: public/access.js)
+function syncAccessForm() {
+  const f = $('#accessForm'), out = $('#accessPreview');
+  f.count.disabled = f.unit.disabled = f.unlimited.checked;
+  if (f.unlimited.checked) { out.className = 'sm:col-span-3 text-sm text-slate-600'; out.textContent = 'No time limit: this client can always use the application.'; return; }
+  try {
+    const d = Access.setPeriod({ integratedAt: f.integratedAt.value, unit: f.unit.value, count: f.count.value }, S.managed || {});
+    const ends = Access.dayOf(d.accessEndsAt), grace = Access.GRACE_DAYS[d.accessUnit];
+    out.className = 'sm:col-span-3 text-sm text-slate-700';
+    out.innerHTML = `Last day of access: <b>${fmtDay(ends)}</b>. Then ${grace} days of grace (until ${fmtDay(Access.addDays(ends, grace))}), after which the client is made inactive by itself.`;
+  } catch (err) { out.className = 'sm:col-span-3 text-sm text-red-700'; out.textContent = err.message; }
+}
+$('#accessForm').addEventListener('input', syncAccessForm);
+$('#accessForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target;
+  const body = { integratedAt: f.integratedAt.value, ...(f.unlimited.checked ? { unlimited: true } : { unit: f.unit.value, count: f.count.value }) };
+  try {
+    const was = S.managed.active;
+    S.managed = await api(`/api/admin/clients/${S.manageId}/access`, { method: 'PUT', body });
+    fillSettings(S.managed); loadClients();
+    toast(was && !S.managed.active ? 'Saved. That period is already over, so the client is now inactive.' : !was && S.managed.active ? 'Saved. The client is active again.' : 'Access period saved', true);
+  } catch (err) { toast(err.message); }
+});
+async function renewAccess() {
+  const count = $('#renewCount').value, unit = $('#renewUnit').value;
+  if (!confirm(`Renew ${S.managed.companyName} for ${count} ${unit === 'YEAR' ? (count == 1 ? 'year' : 'years') : (count == 1 ? 'month' : 'months')}?`)) return;
+  try {
+    const was = S.managed.active;
+    S.managed = await api(`/api/admin/clients/${S.manageId}/access/renew`, { method: 'POST', body: { unit, count } });
+    fillSettings(S.managed); loadClients();
+    toast(`Renewed: the last day is now ${fmtDay(S.managed.access.endsOn)}${!was && S.managed.active ? '. The client is active again.' : ''}`, true);
+  } catch (err) { toast(err.message); }
+}
+// The Point of Sale side of the client, read-only: this month, what needs attention, the counters
+async function loadPosSummary() {
+  const box = $('#mpPosBody'), id = S.manageId;
+  box.className = 'text-slate-500'; box.textContent = 'Loading…';
+  try {
+    const p = await api(`/api/admin/clients/${id}/pos-summary`);
+    if (S.manageId !== id) return;
+    const tile = (title, big, sub, tone = '') => `<div class="border rounded-lg p-3"><div class="text-xs text-slate-500">${title}</div><div class="text-lg font-semibold ${tone}">${big}</div><div class="text-xs text-slate-500">${sub || ''}</div></div>`;
+    box.className = 'space-y-4 text-slate-800';
+    box.innerHTML = `${p.testMode ? '<div class="rounded-lg border bg-amber-50 border-amber-300 text-amber-900 px-3 py-2 text-xs"><b>Test mode.</b> These are test sales: nothing was sent to PRA.</div>' : ''}
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        ${tile('Sales this month', `Rs ${money(p.sales.total)}`, `${p.sales.count} fiscal ${p.sales.count === 1 ? 'invoice' : 'invoices'}`)}
+        ${tile('Needs attention', p.needsAttention, p.unknown ? `${p.unknown} with an unknown outcome` : 'waiting for, or refused by, PRA', p.unknown ? 'text-red-700' : p.needsAttention ? 'text-amber-700' : 'text-emerald-700')}
+        ${tile('Last sale', p.lastSaleAt ? fmtDate(p.lastSaleAt) : 'none yet', '')}
+        ${tile('Items on sale', p.items, p.profileComplete ? 'business details complete' : '<span class="text-amber-700">business details incomplete</span>')}</div>
+      <div><div class="text-xs text-slate-500 mb-1">Counters</div>
+        ${p.counters.length ? `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Counter</th><th>POS ID</th><th>Environment</th><th>PRA token</th><th>Waiting for PRA</th><th>Connection</th></tr></thead><tbody>
+          ${p.counters.map(c => `<tr class="border-b last:border-0 ${c.active ? '' : 'opacity-50'}"><td class="py-1.5"><b>${esc(c.name)}</b>${c.active ? '' : ' (off)'}<div class="text-xs text-slate-500">${esc(c.branch)}</div></td><td class="font-mono text-xs">${esc(c.posId)}</td><td>${c.env === 'PRODUCTION' ? chip('emerald', 'Production') : chip('slate', 'Sandbox')}</td><td>${c.hasToken ? `✔ <span class="font-mono text-xs text-slate-500">${esc(c.tokenMasked)}</span>` : '<span class="text-amber-700">missing</span>'}</td><td>${c.pending || '—'}</td><td class="text-xs">${c.breaker.open ? `<span class="text-amber-700">resting (${Math.ceil(c.breaker.retryInMs / 1000)} s)</span>` : c.breaker.fails ? `<span class="text-amber-700">${c.breaker.fails} failed in a row</span>` : '<span class="text-emerald-700">ok</span>'}</td></tr>`).join('')}</tbody></table></div>`
+          : '<div class="rounded-lg border border-dashed p-4 text-slate-500">No counter yet. The owner of this client adds one under Settings (it needs the POS ID PRA gave), or open the workspace and add it there.</div>'}</div>`;
+  } catch (err) { box.className = 'text-red-700'; box.textContent = err.message; }
 }
 
 // Same rule as formatInvoiceNo() on the server

@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { blockedMessage } = require('./subscription');
 
 // tv = the user's tokenVersion when the token was issued; bumping it (password change/reset, deactivation)
 // makes every older token stop working.
@@ -34,14 +35,14 @@ function createAuth(prisma) {
         try {
             const user = await prisma.user.findUnique({
                 where: { id: payload.id },
-                select: { active: true, tokenVersion: true, role: true, tenantRole: true, tenantId: true, tenant: { select: { active: true } } },
+                select: { active: true, tokenVersion: true, role: true, tenantRole: true, tenantId: true, tenant: { select: { active: true, inactiveReason: true, accessEndsAt: true, accessUnit: true } } },
             });
             if (!user || !user.active || user.tokenVersion !== (payload.tv || 0)) {
                 return res.status(401).json({ error: 'Session ended, please log in again.' });
             }
-            if (user.tenant && user.tenant.active === false && !payload.impersonatedBy) {
-                return res.status(401).json({ error: 'This business account is inactive. Contact ETAX to reactivate it.' });
-            }
+            // switched off by the administrator, or its access period (and grace) is over: whichever the job has already noted or not
+            const blocked = user.tenant && !payload.impersonatedBy ? blockedMessage(user.tenant) : null;
+            if (blocked) return res.status(401).json({ error: blocked });
             req.user = payload.impersonatedBy
                 ? { ...payload, tenantRole: 'OWNER' }                     // admin in a workspace = owner rights there
                 : { ...payload, role: user.role, tenantId: user.tenantId, tenantRole: user.tenantRole };

@@ -681,6 +681,30 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         };
     }
 
+    // For the administrator's client list: this month's fiscalized sales, the last one, and what needs attention (cheap: no tokens read)
+    async function adminFigures(tenantId) {
+        const month = pktDay(now()).slice(0, 7), env = figuresEnv();
+        const [sold, last, needs, counters] = await Promise.all([
+            prisma.posSale.aggregate({ where: { tenantId, state: 'FISCALIZED', invoiceType: 1, env, fiscalizedAt: { gte: new Date(`${month}-01T00:00:00+05:00`) } }, _count: { _all: true }, _sum: { totalBill: true } }),
+            prisma.posSale.findFirst({ where: { tenantId, state: 'FISCALIZED', env }, orderBy: { fiscalizedAt: 'desc' }, select: { fiscalizedAt: true } }),
+            prisma.posSale.groupBy({ by: ['state'], where: { tenantId, state: { in: ['AWAITING_FISCALIZATION', 'REJECTED', 'OUTCOME_UNKNOWN'] } }, _count: { _all: true } }),
+            prisma.posCounter.count({ where: { tenantId, active: true } }),
+        ]);
+        const n = st => (needs.find(r => r.state === st) || { _count: { _all: 0 } })._count._all;
+        return {
+            testMode: pra.isMock(), month, counters, sales: { count: sold._count._all, total: num(sold._sum.totalBill) || 0 }, lastSaleAt: last ? last.fiscalizedAt : null,
+            needsAttention: n('AWAITING_FISCALIZATION') + n('REJECTED') + n('OUTCOME_UNKNOWN'), unknown: n('OUTCOME_UNKNOWN'),
+        };
+    }
+    // The same for one client's Manage screen, with its counters and business details (the token is only ever shown masked)
+    async function adminSummary(tenantId) {
+        const [figures, branches, profile, items] = await Promise.all([adminFigures(tenantId), listBranches(tenantId), getProfile(tenantId), prisma.posItem.count({ where: { tenantId, active: true } })]);
+        return {
+            ...figures, items, profileComplete: profile.complete, businessName: profile.businessName, pntn: profile.pntn,
+            counters: branches.flatMap(b => b.counters.map(c => ({ id: c.id, name: c.name, branch: b.name, posId: c.posId, env: c.env, active: c.active, hasToken: c.hasToken, tokenMasked: c.tokenMasked, pending: c.pending, breaker: c.breaker }))),
+        };
+    }
+
     // Totals for a date range (managers): fiscalized sales and returns, by payment mode and by item, and what is not fiscalized
     const money2 = n => Math.round(Number(n || 0) * 100) / 100;
     async function salesReport(ctx, filters = {}) {
@@ -764,7 +788,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     return {
         getProfile, saveProfile, listBranches, createBranch, updateBranch, createCounter, updateCounter, setToken, decommission,
         listItems, createItem, updateItem, searchPct, createSale, retry, updateBuyer, cancel, resolve, creditNote,
-        listSales, saleDetail, receipt, overview, attention, cashierSetup, sweepInterrupted, salesReport, salesCsv,
+        listSales, saleDetail, receipt, overview, attention, cashierSetup, sweepInterrupted, salesReport, salesCsv, adminFigures, adminSummary,
     };
 }
 

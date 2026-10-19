@@ -1,6 +1,6 @@
 # ETAX — complete guide
 
-_Last updated: 2026-10-07_
+_Last updated: 2026-10-19_
 
 ETAX is a multi-tenant FBR Digital Invoicing app. A CA firm (the **admin**) onboards its clients. Each client
 (a **tenant**, one NTN) issues invoices, and ETAX sends them to FBR through the PRAL DI API v1.12. The receipt or
@@ -37,14 +37,22 @@ so the first page can take about a minute to load.
 ### Admin (the CA firm)
 | Menu | What it does |
 |---|---|
-| Dashboard | Go-live progress for every client, this month's invoices and totals, invoices that need attention |
-| Clients | Add a client (business details + its first login), open a client to manage it |
-| Client page | FBR settings in three groups (must match IRIS · received from FBR · entered in ETAX), Business Nature / Sector → scenarios, go-live checklist, users |
+| Dashboard | Go-live progress for the clients that use Digital Invoicing, this month's invoices and Point of Sale sales, invoices and POS sales that need attention, and every client whose **access period** is ending, in grace or over |
+| Clients | Add a client (business details, its first login, and how long it may use the application). The list shows each client's **integration date and a countdown of the days left**, and can be **filtered** (search, status, access period, product, FBR environment) and **sorted** (newest, name, integration date, days left, most active, latest invoice or sale). Open a client to manage it |
+| Client page (Manage) | Tabs, so only what applies shows: **Overview** (access period, modules), **Digital Invoicing** (only if the client has it: FBR settings in three groups, Business Nature / Sector → scenarios, go-live checklist, invoice settings), **Point of Sale** (only if the client has it: this month, what needs attention, counters and tokens, read-only), **Users** |
 | Workspace (inside a client) | "Enter" the client's account for 2 hours, e.g. to run sandbox scenarios on their behalf |
 | Reports | Annex-C (sales) CSV and Annex-H1 (stock statement) per client and month |
 | Activity | Audit log of every action. It can't be edited or deleted. CSV export |
 | Enquiries | Messages sent from the website's contact form |
 | System | HS code sync with FBR, server egress IP, client guideline buttons, FBR references (copied from fbr.gov.pk daily; "Refresh now") |
+
+**Access period.** Under *Manage → Overview → Access period* (or when registering a client) the administrator says how many
+months or years a client may use the application, counted from its integration date (which can be changed). The last day is the
+integration date plus the period (19 Oct 2026 + 1 year = 19 Oct 2027). After it the client keeps working for a few days of
+grace: **3 days for a monthly plan, 7 days for a yearly one**. When the grace is over the client is **made inactive by itself**
+(checked when the server starts, every ten minutes, and on every login and request) and its users see "Your access period has
+ended". **Renew** adds a period to the last day, or to today if it had already ended, and makes the client active again. A client
+with no end date has no time limit (all clients before this existed). Everything is written to the Activity log.
 
 ### Client (each NTN)
 | Menu | What it does |

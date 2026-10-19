@@ -87,6 +87,14 @@ model Tenant {
   // Signed authorization (Form STR-13) letting the firm manage this client's FBR token / IRIS
   authLetterRef      String    @default("")
   authLetterAt       DateTime?
+  // How long the client may use the application (src/subscription.js). No end date = no limit (every client before this existed).
+  // Dates are Pakistan calendar days kept at 00:00 Pakistan time. When the end date plus the grace days (3 for a monthly plan,
+  // 7 for a yearly one) has passed the client is made inactive by itself, and renewing it makes it active again.
+  integratedAt       DateTime  @default(now()) // the day the client was integrated
+  accessUnit         String?   // MONTH or YEAR: the length of the last period given (decides the grace days)
+  accessCount        Int?      // how many of them
+  accessEndsAt       DateTime? // the last day of access
+  inactiveReason     String?   // why active is false: ADMIN (switched off by hand) or EXPIRED (the period ended)
   users              User[]
   invoices           Invoice[]
   products           Product[]
