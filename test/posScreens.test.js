@@ -913,11 +913,15 @@ test('POS screen: the report rows carry an Invoices link for the ways of groupin
     assert.deepStrictEqual(links(p.run(`posAnalysisHtml(${JSON.stringify(repData('hour', rows))})`)), [], 'the hour has none');
     assert.deepStrictEqual(links(p.run(`posAnalysisHtml(${JSON.stringify(repData('weekday', rows))})`)), []);
     assert.deepStrictEqual(links(p.run(`posTaxHtml(${JSON.stringify(repData('taxRate', [repRow('16.00', '16%'), repRow('5.00', '5%')]))})`)), [0, 1], 'the tax summary has one on each rate');
-    // the table has a column for it (its header and its cell in the total row), so the columns line up
+    // the link sits under the row's name (a table that is already wide gets no extra column to be scrolled to), so the columns are the same with or without it
     const html = p.run(`posAnalysisHtml(${JSON.stringify(repData('item', rows))})`);
     const head = /<thead[\s\S]*?<\/thead>/.exec(html)[0], foot = /border-t-2[\s\S]*?<\/tr>/.exec(html)[0];
     assert.strictEqual((head.match(/<th[ >]/g) || []).length, (foot.match(/<td[ >]/g) || []).length, 'a cell for every column in the total row');
-    assert.strictEqual((head.match(/<th[ >]/g) || []).length, 11, 'ten columns and the link');
+    assert.strictEqual((head.match(/<th[ >]/g) || []).length, 10, 'ten columns, link or not');
+    const first = /<tbody>\s*<tr[^>]*><td[^>]*>([\s\S]*?)<\/td>/.exec(html)[1];
+    assert.ok(first.includes('Lunch') && first.includes('data-drill="0"'), 'the name and its link are in the same cell');
+    const dayRow = p.run(`posAnalysisHtml(${JSON.stringify(repData('day', [repRow('2026-10-06', 'Tue, 6 Oct 2026')]))})`);
+    assert.ok(/whitespace-nowrap">Tue, 6 Oct 2026<\/div>/.test(dayRow), 'a day stays on one line');
     const hourHtml = p.run(`posAnalysisHtml(${JSON.stringify(repData('hour', rows))})`);
     assert.strictEqual((/<thead[\s\S]*?<\/thead>/.exec(hourHtml)[0].match(/<th[ >]/g) || []).length, 10, 'no extra column where there is no link');
 });
