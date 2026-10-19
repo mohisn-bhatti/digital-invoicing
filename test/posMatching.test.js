@@ -81,22 +81,22 @@ run('matching: a lookup of "%" or "_" finds nothing, and real numbers are still 
 
 run('matching: a cashier\'s sheet holds only that cashier\'s sales, though another login differs by "_" or "."', async () => {
     const day = '2026-10-19';
-    const ann = W.ctxFor(W.tenantId, 'ann_lee-x@test.pk'), other = W.ctxFor(W.tenantId, 'ann.lee-x@test.pk');
+    const ann = W.ctxFor(W.tenantId, 'ann_lee-x@example.com'), other = W.ctxFor(W.tenantId, 'ann.lee-x@example.com');
     await W.sellOne({}, ann);
     const theirs = (await W.sellOne({}, other)).sale; // the later sale
     const sheetOf = who => W.svc.reportClosing(W.ctx, { date: day, cashier: who });
     W.pra.mock = true; // (the figures cover the sandbox counter's sales while the server is in test mode)
     let a, b;
-    try { a = await sheetOf('ann_lee-x@test.pk'); b = await sheetOf('ann.lee-x@test.pk'); } finally { W.pra.mock = false; }
+    try { a = await sheetOf('ann_lee-x@example.com'); b = await sheetOf('ann.lee-x@example.com'); } finally { W.pra.mock = false; }
     assert.strictEqual(a.totals.sales, 1);
     assert.strictEqual(b.totals.sales, 1);
     assert.notStrictEqual(a.lastSale.usin, theirs.usin, 'the last sale on her sheet is hers');
     assert.strictEqual(b.lastSale.usin, theirs.usin);
     assert.strictEqual(a.firstSale.usin, a.lastSale.usin);
     // the list, and a refused sale: nothing of the other login leaks into either
-    assert.strictEqual((await W.svc.listSales(W.ctx, { cashier: 'ann_lee-x@test.pk', from: day, to: day })).total, 1);
-    assert.strictEqual((await W.svc.listSales(W.ctx, { cashier: 'ANN_LEE-X@TEST.PK', from: day, to: day })).total, 1, 'capitals do not matter');
-    assert.strictEqual((await W.svc.listSales(W.ctx, { cashier: 'ann_%@test.pk', from: day, to: day })).total, 0, 'a pattern is not a name');
+    assert.strictEqual((await W.svc.listSales(W.ctx, { cashier: 'ann_lee-x@example.com', from: day, to: day })).total, 1);
+    assert.strictEqual((await W.svc.listSales(W.ctx, { cashier: 'ANN_LEE-X@EXAMPLE.COM', from: day, to: day })).total, 1, 'capitals do not matter');
+    assert.strictEqual((await W.svc.listSales(W.ctx, { cashier: 'ann_%@example.com', from: day, to: day })).total, 0, 'a pattern is not a name');
 });
 
 run('matching: searches for "%" and "_" look for those characters, not for everything', async () => {

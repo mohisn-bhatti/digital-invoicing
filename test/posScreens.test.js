@@ -837,7 +837,7 @@ test('POS screen: the counter list gives the keyboard back once a counter is pic
 
 test('POS screen: the cashier names of one login are not the next login\'s', () => {
     const p = page();
-    p.run("POS.cashiers = [{ email: 'old@business.pk', name: 'Old Staff' }]");
+    p.run("POS.cashiers = [{ email: 'old@example.com', name: 'Old Staff' }]");
     p.run('posReset()');
     assert.strictEqual(p.run('POS.cashiers'), null);
 });

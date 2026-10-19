@@ -11,7 +11,7 @@ test('drill: each way of grouping names its group by the filter the sales list h
     assert.deepStrictEqual(f('item', 'ITM0003'), { itemCode: 'ITM0003' });
     assert.deepStrictEqual(f('category', 'Food'), { category: 'Food' });
     assert.deepStrictEqual(f('category', ''), { category: '__none' }, 'no category is its own filter');
-    assert.deepStrictEqual(f('cashier', 'ali@test.pk'), { cashier: 'ali@test.pk' });
+    assert.deepStrictEqual(f('cashier', 'ali@example.com'), { cashier: 'ali@example.com' });
     assert.deepStrictEqual(f('counter', 'c1'), { counterId: 'c1' });
     assert.deepStrictEqual(f('branch', 'b1'), { branchId: 'b1' });
     assert.deepStrictEqual(f('payment', '2'), { paymentMode: '2' });
