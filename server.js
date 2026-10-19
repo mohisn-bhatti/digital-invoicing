@@ -669,7 +669,7 @@ app.post('/api/admin/clients/:id/workspace', authenticateToken, requireRole('SUP
     if (!t) throw new HttpError(404, 'Client not found.');
     const admin = await prisma.user.findUniqueOrThrow({ where: { id: req.user.id } });
     await audit(req, { tenantId: t.id, action: 'admin.workspace_open', entityType: 'Tenant', entityId: t.id, summary: `Admin opened the workspace of "${t.companyName}"` });
-    res.json({ token: signWorkspaceToken(admin, t.id), companyName: t.companyName });
+    res.json({ token: signWorkspaceToken(admin, t.id), companyName: t.companyName, modules: tenantModules(t) });
 });
 
 // Website enquiries
@@ -2363,9 +2363,6 @@ app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNT
     res.json({ deleted: true });
 });
 
-// ---------- Errors ----------
-app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
-
 // Point of Sale (PRA): a separate product, its own routes and tables (src/pos)
 {
     const pra = require('./src/pos/pra');
@@ -2373,8 +2370,11 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
     const { createPosService } = require('./src/pos/service');
     const { registerPosRoutes } = require('./src/pos/routes');
     const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker: createBreaker() });
-    registerPosRoutes(app, { service: posService, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
+    registerPosRoutes(app, { service: posService, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
 }
+
+// ---------- Errors ----------
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
 app.use((err, req, res, next) => {
     if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });

@@ -97,6 +97,8 @@
   #receipt { width: 80mm; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #000; }
   #receipt .qr { padding: 0.12in; background: #fff; } /* quiet zone so scanners can find the code */
   #receipt .qr img, #receipt .qr canvas { width: 1in !important; height: 1in !important; }
+  #posReceipt { width: 80mm; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #000; }
+  #posReceipt .posqr img, #posReceipt .posqr canvas { width: 1in !important; height: 1in !important; }
   #invoiceA4 { width: 190mm; font-family: Arial, Helvetica, sans-serif; font-size: 10.5px; color: #000; background: #fff; }
   #invoiceA4 table { border-collapse: collapse; width: 100%; }
   #invoiceA4 th, #invoiceA4 td { border: 1px solid #555; padding: 4px 5px; vertical-align: top; }
@@ -122,9 +124,9 @@
   @media print {
     /* Only the receipt pop-up prints, as normal page flow: a fixed, scrolling pop-up would print as one page and
        cut off long invoices after page 1 */
-    body > *:not(#receiptModal) { display: none !important; }
+    body > *:not(#receiptModal):not(#posReceiptModal) { display: none !important; }
     html, body { background: #fff !important; }
-    #receiptModal, #receiptModal > div, #receiptModal .overflow-x-auto { position: static !important; overflow: visible !important;
+    #receiptModal, #receiptModal > div, #receiptModal .overflow-x-auto, #posReceiptModal, #posReceiptModal > div, #posReceiptModal .overflow-x-auto { position: static !important; overflow: visible !important;
       display: block !important; max-height: none !important; height: auto !important; padding: 0 !important; margin: 0 !important;
       background: none !important; box-shadow: none !important; border: 0 !important; }
     body.print-a4 #invoiceA4 { border: 0 !important; box-shadow: none !important; padding: 0 !important; }
@@ -133,6 +135,8 @@
     body:not(.print-a4) #receipt { position: absolute; left: 0; top: 0; }
     body.print-a4 #invoiceA4, body.print-a4 #invoiceA4 * { visibility: visible; }
     body.print-a4 #invoiceA4 { position: absolute; left: 0; top: 0; }
+    body.print-pos #posReceipt, body.print-pos #posReceipt * { visibility: visible; }
+    body.print-pos #posReceipt { position: absolute; left: 0; top: 0; }
     body.print-a4 #invoiceA4 thead { display: table-header-group; } /* repeat the item header on every page */
     body.print-a4 #invoiceA4 tr { break-inside: avoid; }
   }
@@ -1043,6 +1047,8 @@
   </div>
 </div>
 
+<script src="/pos-calc.js"></script>
+<script src="/pos.js"></script>
 <script>
 const S = { token: null, role: null, company: '', meta: null, settings: null, lists: {} };
 try { Object.assign(S, JSON.parse(localStorage.getItem('fbrSession') || '{}')); } catch {}
@@ -1114,21 +1120,13 @@ const NAV = {
     { id: 'c-help', label: 'Help & feedback', icon: 'chat', crumb: 'Help' },
     // CA: Bulk Import, Stock and Users are not shown to clients (users are managed by the admin under Clients)
   ],
-  // Trading & Accounts (second module). The menu follows the planned screens; each is built one at a time.
-  trading: [
-    { id: 't-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
-    { id: 't-sale', label: 'Sale Invoice', icon: 'plus', crumb: 'Sales', group: 'tsales',
-      blurb: 'Pick a customer or a walk-in, add items by name or barcode, discount and sales tax on each line, pay by cash, bank or on credit; print on 80mm or A4.' },
-    { id: 't-salereturn', label: 'Sale Return', icon: 'draft', crumb: 'Sales', group: 'tsales', blurb: 'Take goods back against a sale: stock and the customer account are corrected.' },
-    { id: 't-receipts', label: 'Receive Cash', icon: 'list', crumb: 'Sales', group: 'tsales', blurb: 'Receive cash or bank payments from customers, with cash and account statements.' },
-    { id: 't-purchase', label: 'Purchase Invoice', icon: 'plus', crumb: 'Purchases', group: 'tbuy', blurb: 'Record what you buy from vendors: stock comes in, with discount and tax, and purchase reports by category and company.' },
-    { id: 't-payments', label: 'Pay Cash to Vendor', icon: 'list', crumb: 'Purchases', group: 'tbuy', blurb: 'Pay vendors by cash or bank, with vendor account statements.' },
-    { id: 't-items', label: 'Items & Stock', icon: 'box', crumb: 'Stock', roles: ['OWNER', 'ACCOUNTANT'],
-      blurb: 'Items with category, company, unit, sale and purchase price, opening and minimum stock and HS code; stock position and rate list.' },
-    { id: 't-parties', label: 'Customers & Vendors', icon: 'users', crumb: 'Accounts', roles: ['OWNER', 'ACCOUNTANT'], blurb: 'Customers and vendors with phone, address and opening balance (Dr / Cr).' },
-    { id: 't-accounts', label: 'Cash & Bank', icon: 'building', crumb: 'Accounts', roles: ['OWNER', 'ACCOUNTANT'], blurb: 'Cash and bank accounts with their opening balances.' },
-    { id: 't-reports', label: 'Reports', icon: 'chart', crumb: 'Reports', blurb: 'Stock and short stock, sales by category and company, sales tax report, account, invoice and cash statements, edited and deleted transactions.' },
-    { id: 't-settings', label: 'Settings', icon: 'cog', crumb: 'Settings', roles: ['OWNER'], blurb: 'Who may change an invoice date, edit or delete an invoice, or change a price; discount, service charge and tax defaults; print size.' },
+  // Point of Sale (PRA): its own product with its own screens (public/pos.js)
+  pos: [
+    { id: 'p-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'p-sale', label: 'New Sale', icon: 'plus', crumb: 'Sales' },
+    { id: 'p-sales', label: 'Sales & Receipts', icon: 'list', crumb: 'Sales' },
+    { id: 'p-items', label: 'Items', icon: 'box', crumb: 'Catalogue', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'p-settings', label: 'Settings', icon: 'cog', crumb: 'Settings', roles: ['OWNER'] },
   ],
   admin: [
     { id: 'a-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
@@ -1150,10 +1148,10 @@ const PAGE_ENTER = {
   'a-dashboard': () => loadAdminDash(), 'a-clients': () => loadClients(), 'a-reports': () => fillReportClients(),
   'a-itemrules': () => loadItemBank(), 'a-activity': () => loadAudit('a'), 'a-leads': () => loadLeads(), 'a-system': () => loadSystem(),
 };
-const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : (S.module === 'TRADING' ? NAV.trading : NAV.client).filter(n => !n.roles || n.roles.includes(S.tenantRole || 'OWNER'));
+const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : (S.module === 'POS' ? NAV.pos : NAV.client).filter(n => !n.roles || n.roles.includes(S.tenantRole || 'OWNER'));
 const canManage = () => ['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER'); // cashier can't
 // Menu groups that open and close (remembered per browser); a group opens by itself when one of its pages is shown
-const NAV_GROUPS = { sales: { label: 'Sales / Revenue', icon: 'sales' }, tsales: { label: 'Sales', icon: 'sales' }, tbuy: { label: 'Purchases', icon: 'box' } };
+const NAV_GROUPS = { sales: { label: 'Sales / Revenue', icon: 'sales' } };
 const navOpen = id => { try { return localStorage.getItem('navGroup:' + id) !== 'closed'; } catch { return true; } };
 function renderNav() {
   const svg = icon => `<svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[icon]}"/></svg>`;
@@ -1199,7 +1197,7 @@ function route() {
   if (id === 'c-taxrules') { id = 'c-products'; history.replaceState(null, '', '#/c-products'); } // merged into Items with Tax Rules
   const meta = list.find(n => n.id === id);
   if (!meta || !document.querySelector(`${view} [data-page="${id}"]`) || (id === 'a-client' && !S.manageId)) {
-    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : (S.module === 'TRADING' ? 't-dashboard' : (S.adminSession ? 'c-new' : 'c-dashboard'));
+    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : (S.module === 'POS' ? (['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER') ? 'p-dashboard' : 'p-sale') : (S.adminSession ? 'c-new' : 'c-dashboard'));
     history.replaceState(null, '', '#/' + id);
   }
   const m = list.find(n => n.id === id);
@@ -1226,12 +1224,12 @@ function route() {
 }
 window.addEventListener('hashchange', route);
 
-// A client can have several modules (Digital Invoicing, Trading & Accounts…): the user picks one after logging in
+// A client can have several modules (Digital Invoicing, Point of Sale…): the user picks one after logging in
 const myModules = () => (S.modules && S.modules.length ? S.modules : ['INVOICING']);
-const hasModuleChoice = () => S.role !== 'SUPER_ADMIN' && !S.adminSession && myModules().length > 1;
+const hasModuleChoice = () => S.role !== 'SUPER_ADMIN' && myModules().length > 1;
 const moduleLabel = id => S.meta?.modules?.find(m => m.id === id)?.label || id;
 function needsModuleChoice() {
-  if (S.role === 'SUPER_ADMIN' || S.adminSession) return false;
+  if (S.role === 'SUPER_ADMIN') return false;
   const mods = myModules();
   if (mods.length === 1) { S.module = mods[0]; return false; }
   return !mods.includes(S.module);
@@ -1264,7 +1262,7 @@ function switchModule() {
 // The administrator may change a client's modules while someone is logged in: keep ours current.
 // true = the module that was open is no longer allowed (the user picks again)
 function syncModules() {
-  if (S.adminSession || !Array.isArray(S.settings?.modules)) return false;
+  if (!Array.isArray(S.settings?.modules)) return false;
   const changed = JSON.stringify(S.modules) !== JSON.stringify(S.settings.modules);
   S.modules = S.settings.modules;
   if (S.module && !S.modules.includes(S.module)) { S.module = null; saveSession(); show(); return true; }
@@ -1284,7 +1282,7 @@ function show() {
   $('#wsName').textContent = S.company;
   renderNav();
   if (S.role === 'SUPER_ADMIN') { $('#adminView').classList.remove('hidden'); $('#envBadge').classList.add('hidden'); initAdmin(); }
-  else { $('#clientView').classList.remove('hidden'); S.module === 'TRADING' ? initTrading() : initClient(); }
+  else { $('#clientView').classList.remove('hidden'); (S.module === 'POS' ? (typeof initPos === 'function' ? initPos() : toast('The Point of Sale screens did not load. Reload the page.')) : initClient()); }
 }
 
 $('#loginForm').addEventListener('submit', async e => {
@@ -1326,7 +1324,7 @@ async function loadClients() {
     $('#clientRows').innerHTML = rows.map(c => {
       const ob = c.onboarding, live = ob.done === ob.total;
       return `<tr class="border-b align-top">
-      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc((c.sectors || []).join(', ') || 'sector not set')}${(c.modules || []).includes('TRADING') ? ' · <span class="text-emerald-700">+ Trading</span>' : ''}</div></td>
+      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc((c.sectors || []).join(', ') || 'sector not set')}${(c.modules || []).includes('POS') ? ' · <span class="text-emerald-700">+ POS</span>' : ''}</div></td>
       <td class="text-xs">${esc(c.emails.join(', '))}</td>
       <td class="text-xs font-mono whitespace-nowrap">${c.mobile ? esc(c.mobile) : '<span class="text-slate-300">—</span>'}</td>
       <td class="text-xs whitespace-nowrap"><span class="px-2 py-0.5 rounded ${c.active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}">${c.active ? 'Active' : 'Inactive'}</span>
@@ -1915,7 +1913,7 @@ async function openWorkspace() {
   try {
     const d = await api(`/api/admin/clients/${S.manageId}/workspace`, { method: 'POST' });
     S.adminSession = { token: S.token, role: S.role, company: S.company, tenantRole: S.tenantRole, name: S.name };
-    Object.assign(S, { token: d.token, role: 'CLIENT_USER', company: d.companyName, tenantRole: 'OWNER', modules: ['INVOICING'], module: 'INVOICING' }); // the workspace is for sandbox testing: Digital Invoicing
+    Object.assign(S, { token: d.token, role: 'CLIENT_USER', company: d.companyName, tenantRole: 'OWNER', modules: d.modules || ['INVOICING'], module: null }); // the admin picks a module like the client's owner
     clientReady = false;
     saveSession(); show();
   } catch (err) { toast(err.message); }
@@ -2014,31 +2012,6 @@ async function initClient() {
     showNextInvoiceNo();
   } catch (err) { toast(err.message); }
   route(); // always: a failed request must not leave a blank page (or a page of the other role) showing
-}
-
-// Trading & Accounts: the pages are laid out from NAV.trading (each screen is built in turn; the rest say "coming soon")
-async function initTrading() {
-  try {
-    if (!S.meta) { S.meta = await api('/api/meta'); renderNav(); }
-    S.settings = await api('/api/client/settings');
-    if (syncModules()) return;
-    if (S.settings.tenantRole && S.settings.tenantRole !== S.tenantRole) { S.tenantRole = S.settings.tenantRole; saveSession(); renderNav(); }
-  } catch (err) { toast(err.message); }
-  $('#envBadge').classList.add('hidden'); // the FBR environment badge belongs to Digital Invoicing
-  const host = $('#clientView');
-  host.querySelectorAll('[data-page^="t-"]').forEach(el => el.remove());
-  host.insertAdjacentHTML('beforeend', NAV.trading.map(n => `<div data-page="${n.id}" class="page hidden space-y-6">${tradingPageHtml(n)}</div>`).join(''));
-  route();
-}
-function tradingPageHtml(n) {
-  if (n.id !== 't-dashboard') return `<div class="bg-white rounded-xl shadow p-6"><h2 class="text-lg font-semibold">${esc(n.label)}</h2>
-    <p class="text-sm text-slate-600 mt-1">${esc(n.blurb)}</p><p class="mt-4 inline-block text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800">Coming soon — not built yet</p></div>`;
-  const mine = NAV.trading.filter(x => x.id !== n.id && (!x.roles || x.roles.includes(S.tenantRole || 'OWNER')));
-  const other = myModules().find(id => id !== 'TRADING');
-  return `<div class="bg-white rounded-xl shadow p-6"><h2 class="text-lg font-semibold">Trading &amp; Accounts</h2>
-    <p class="text-sm text-slate-600 mt-1">Sales, purchases, stock and accounts in one place. This module is being built screen by screen; here is what is coming.</p>
-    <div class="grid sm:grid-cols-2 gap-3 mt-4">${mine.map(x => `<a href="#/${x.id}" class="border rounded-lg p-3 hover:border-emerald-600"><div class="font-medium">${esc(x.label)}</div><div class="text-xs text-slate-500 mt-0.5">${esc(x.blurb)}</div></a>`).join('')}</div>
-    ${other ? `<button type="button" onclick="switchModule()" class="mt-4 text-sm text-emerald-700 underline">Switch to ${esc(moduleLabel(other))}</button>` : ''}</div>`;
 }
 
 // FBR's province names are sent; the screen shows the names from the CA's list

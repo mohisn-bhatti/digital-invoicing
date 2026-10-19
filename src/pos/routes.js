@@ -11,7 +11,7 @@ const { PosCalcError } = require('./calc');
 const { PosValidationError } = require('./validate');
 const { PosStateError } = require('./states');
 
-function registerPosRoutes(app, { service, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError }) {
+function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError }) {
     const translate = e => {
         if (e instanceof PosError) return new HttpError(e.status, e.message);
         if (e instanceof PosValidationError || e instanceof PosCalcError || e instanceof PosStateError) return new HttpError(400, e.message);
@@ -37,6 +37,7 @@ function registerPosRoutes(app, { service, authenticateToken, requireTenant, req
     app.get('/api/pos/setup', ...base, wrap(req => service.cashierSetup(ctxOf(req))));
     app.get('/api/pos/overview', ...base, wrap(req => service.overview(ctxOf(req))));
 
+    app.get('/api/pos/egress-ip', ...owner, wrap(() => pra.egressIp()));
     app.get('/api/pos/profile', ...base, wrap(req => service.getProfile(req.user.tenantId)));
     app.put('/api/pos/profile', ...owner, wrap(req => service.saveProfile(ctxOf(req), req.body || {})));
 

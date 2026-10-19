@@ -116,4 +116,10 @@ async function submit({ env, token, payload }, deps = {}) {
     }
 }
 
-module.exports = { ENDPOINTS, VERIFY_URL, verifyUrl, isMock, timeoutMs, parseBody, classifyResponse, classifyError, mockSubmit, submit };
+// The public IP PRA will see (through the static-IP proxy if there is one): what goes in the whitelisting email
+async function egressIp() {
+    const res = await axios.get('https://api.ipify.org?format=json', { httpsAgent: agent(), proxy: false, timeout: 10000 });
+    return { ip: res.data.ip, viaProxy: Boolean(agent()) };
+}
+
+module.exports = { egressIp, ENDPOINTS, VERIFY_URL, verifyUrl, isMock, timeoutMs, parseBody, classifyResponse, classifyError, mockSubmit, submit };

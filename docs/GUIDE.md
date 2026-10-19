@@ -66,6 +66,24 @@ Roles inside a client:
 
 A client can't file real invoices while it is in **SANDBOX**. Only the admin switches it to production.
 
+### Point of Sale (PRA): a second product, per client
+
+Switched on per client by the administrator (client page → **Modules**). A client with more than one product picks one after
+logging in and can switch from the menu. It is separate from FBR invoicing: its own business details, counters, items and sales.
+Every sale is sent to PRA (Punjab Revenue Authority) and the receipt carries PRA's invoice number and a QR code.
+
+| Menu | Who | What it does |
+|---|---|---|
+| New Sale | everyone | Touch screen: tap items, quantity buttons, discount in rupees or %, pay mode (cash, card, gift voucher, loyalty card, mixed, cheque), optional buyer details, **Finalize & send to PRA** |
+| Sales & Receipts | everyone | Every sale and its status; reprint a receipt (never re-sent); send again, correct the buyer; managers also cancel, return items (credit note) and record a manual PRA check |
+| Dashboard | manager, owner | Today's sales and returns, what needs attention (unknown outcome, refused, waiting), the connection to PRA per counter |
+| Items | manager, owner | Services with their PCT code (9801.xxxx), tax rate, an optional rate for card payments, price |
+| Settings | owner | Business details printed on receipts, branches, counters (POS ID + PRA token, sandbox or production), the server IP to give PRA |
+
+It runs in **test mode** until the server has `PRA_MOCK=false`: nothing is sent to PRA and receipts say they are not fiscal invoices.
+A sale whose answer from PRA is lost is never sent again by itself: a manager checks PRA's report and records the result.
+Details, decisions and what is still open: [POS_MODULE.md](POS_MODULE.md).
+
 ### Invoice statuses
 - **SUBMITTED:** FBR accepted it (it has an FBR number).
 - **FAILED:** FBR rejected it. The FBR error is shown; fix the invoice and retry.
