@@ -53,6 +53,12 @@ _Last updated: 2026-10-19 (Point of Sale reviewed and finished in test mode)_ ·
 - Amount boxes start empty (no 0 to delete); whole-number quantity for counted units (pieces, dozen, …), decimals for KG etc.
 - Suggestion-list boxes (UOM, rate, SRO) always show their arrow
 
+**Website pricing (done 2026-10-19)**
+- Pricing section on the landing page: Starter / Pro / Enterprise, annual only at 50% off, the same prices for FBR Digital Invoicing
+  and PRA Point of Sale, feature table by plan with "Soon" tags for what is not built; PRA features added; plan chosen on the
+  site is carried into the contact form (data in `public/plans.js`)
+- Change-password dialog: one new password (with the eye to see it), no "repeat" box
+
 **Admin console (done 2026-10-19)**
 - Access period per client: integration date, months or years allowed, countdown, grace (3 days monthly, 7 days yearly),
   automatic switch-off, renew; shown in the Clients list and on the dashboard

@@ -54,6 +54,15 @@ grace: **3 days for a monthly plan, 7 days for a yearly one**. When the grace is
 ended". **Renew** adds a period to the last day, or to today if it had already ended, and makes the client active again. A client
 with no end date has no time limit (all clients before this existed). Everything is written to the Activity log.
 
+**Plans and prices (website).** The landing page has a *Pricing* section with a switch between FBR Digital Invoicing and PRA Point of
+Sale. Both products have the **same prices**, and plans are **annual only, shown at 50% off** with the full price beside it:
+Starter Rs. 12,000 (full Rs. 24,000), Pro Rs. 30,000 (Rs. 60,000), Enterprise Rs. 90,000 (Rs. 180,000) a year; limits per plan
+(branches, terminals, products, users) and a feature table by plan. Everything lives in one file, `public/plans.js`: change a
+price or a feature there. A feature the product cannot do yet shows a **Soon** tag instead of a tick (change its status to
+`live` when it is built). The Get Started buttons open the contact form with the product and plan already chosen, and the choice
+is written at the top of the enquiry message you see under *Enquiries*. **The plan limits and the features per plan are what is
+sold; the application does not enforce them yet** (no plan is stored per client).
+
 ### Client (each NTN)
 | Menu | What it does |
 |---|---|

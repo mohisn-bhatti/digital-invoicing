@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ETAX — FBR Digital Invoicing for Pakistani businesses</title>
-<meta name="description" content="ETAX files every sales invoice with FBR Digital Invoicing in real time, prints receipts with the official FBR invoice number and QR, and keeps your sales tax records ready for your return.">
+<title>ETAX — FBR Digital Invoicing and PRA Point of Sale for Pakistani businesses</title>
+<meta name="description" content="ETAX files every sales invoice with FBR Digital Invoicing in real time and sends every point-of-sale sale to PRA, with the official invoice number and QR on the receipt. Annual plans from Rs. 12,000 a year, the same price for FBR and PRA.">
 <meta name="theme-color" content="#047857">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="/plans.js"></script>
 <style>
   html { scroll-behavior: smooth; }
   .receipt { font-family: ui-monospace, Menlo, monospace; }
@@ -34,6 +35,7 @@
     </a>
     <nav class="hidden md:flex items-center gap-6 text-sm text-slate-600">
       <a href="#features" class="hover:text-emerald-700">Features</a>
+      <a href="#pricing" class="hover:text-emerald-700">Pricing</a>
       <a href="#how" class="hover:text-emerald-700">How it works</a>
       <a href="#who" class="hover:text-emerald-700">Who it's for</a>
       <a href="#faq" class="hover:text-emerald-700">FAQ</a>
@@ -108,6 +110,24 @@
   </div>
 </section>
 
+<!-- Two products -->
+<section class="max-w-6xl mx-auto px-4 -mt-4 pb-6">
+  <div class="grid md:grid-cols-2 gap-5">
+    <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div class="text-xs font-semibold tracking-wide uppercase text-emerald-700">For businesses across Pakistan</div>
+      <h2 class="mt-1 text-xl font-extrabold text-slate-900">FBR Digital Invoicing</h2>
+      <p class="mt-2 text-sm text-slate-600">Every sales invoice is validated and filed with FBR in real time, and prints with the FBR invoice number and QR code.</p>
+      <div class="mt-4 flex flex-wrap gap-3 text-sm"><a href="#features" class="text-emerald-700 font-medium hover:underline">See the features</a><a href="/?product=fbr#pricing" class="text-emerald-700 font-medium hover:underline">See the prices</a></div>
+    </div>
+    <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div class="text-xs font-semibold tracking-wide uppercase text-emerald-700">For Punjab restaurants, halls and hotels</div>
+      <h2 class="mt-1 text-xl font-extrabold text-slate-900">PRA Point of Sale</h2>
+      <p class="mt-2 text-sm text-slate-600">A cashier screen on a phone, tablet or laptop. Every sale goes to PRA and the receipt prints with PRA's invoice number and QR code.</p>
+      <div class="mt-4 flex flex-wrap gap-3 text-sm"><a href="#pra" class="text-emerald-700 font-medium hover:underline">See the features</a><a href="/?product=pra#pricing" class="text-emerald-700 font-medium hover:underline">See the prices</a></div>
+    </div>
+  </div>
+</section>
+
 <!-- Why -->
 <section class="max-w-6xl mx-auto px-4 py-14">
   <div class="grid md:grid-cols-3 gap-6 text-center">
@@ -133,6 +153,39 @@
       <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">📑</div><h3 class="mt-3 font-semibold">Annex-C report</h3><p class="mt-2 text-sm text-slate-600">Monthly item-wise sales export in the IRIS Annex-C layout for your sales tax return.</p></div>
       <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🛡️</div><h3 class="mt-3 font-semibold">Records you can trust</h3><p class="mt-2 text-sm text-slate-600">A tamper-proof activity log of every invoice and change, kept for FBR's six-year retention period.</p></div>
     </div>
+
+    <div id="pra" class="mt-20">
+      <h2 class="text-3xl font-extrabold text-slate-900 text-center">For Punjab restaurants, banquet halls and hotels: PRA Point of Sale</h2>
+      <p class="mt-3 text-center text-slate-600 max-w-2xl mx-auto">A cashier screen that sends every sale to PRA and prints the receipt with PRA's invoice number and QR code. Same login, same team, same price as FBR Digital Invoicing.</p>
+      <div class="mt-10 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🧾</div><h3 class="mt-3 font-semibold">PRA invoice number &amp; QR</h3><p class="mt-2 text-sm text-slate-600">Each receipt carries PRA's own invoice number and a QR code customers can verify. Prints on 80mm thermal printers.</p></div>
+        <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">📱</div><h3 class="mt-3 font-semibold">A cashier screen made for touch</h3><p class="mt-2 text-sm text-slate-600">Tap items, change quantity, give a discount in rupees or percent. Works on a phone, tablet or laptop; barcode scanners work too.</p></div>
+        <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">💳</div><h3 class="mt-3 font-semibold">Cash, card, wallet and QR</h3><p class="mt-2 text-sm text-slate-600">All of PRA's payment types. The lower tax rate for card, wallet and QR payments is applied for you, item by item.</p></div>
+        <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">↩️</div><h3 class="mt-3 font-semibold">Returns &amp; credit notes</h3><p class="mt-2 text-sm text-slate-600">Return part or all of a sale. The credit note goes to PRA and the returns always add up to the sale.</p></div>
+        <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🏬</div><h3 class="mt-3 font-semibold">Branches &amp; counters</h3><p class="mt-2 text-sm text-slate-600">Each counter has its own PRA POS ID. Cashiers, managers and owners each see only what they need.</p></div>
+        <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🛡️</div><h3 class="mt-3 font-semibold">Never billed twice</h3><p class="mt-2 text-sm text-slate-600">A double tap, a dropped connection or a slow PRA never makes two invoices. If PRA's answer is lost, a manager checks and records it.</p></div>
+        <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">📈</div><h3 class="mt-3 font-semibold">Daily totals &amp; CSV</h3><p class="mt-2 text-sm text-slate-600">Sales and tax by day, by item and by payment type, and a CSV for your accountant.</p></div>
+        <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🧪</div><h3 class="mt-3 font-semibold">Practice first, setup done for you</h3><p class="mt-2 text-sm text-slate-600">Try sales in test mode before going live. We help with the PRA registration, your POS IDs and the server IP PRA needs to whitelist.</p></div>
+        <div class="bg-white rounded-xl p-6 shadow-sm"><div class="text-2xl">🔐</div><h3 class="mt-3 font-semibold">Your data stays yours</h3><p class="mt-2 text-sm text-slate-600">Each business only sees its own sales. PRA keys are stored encrypted and every action is logged.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Pricing -->
+<section id="pricing" class="py-16">
+  <div class="max-w-6xl mx-auto px-4">
+    <div class="text-center">
+      <span class="inline-block text-xs font-semibold tracking-wide uppercase text-emerald-800 bg-emerald-100 rounded-full px-3 py-1">Annual plans only · 50% off on all plans</span>
+      <h2 class="mt-4 text-3xl font-extrabold text-slate-900">Simple. Compliant. Built for your business.</h2>
+      <p class="mt-3 text-slate-600 max-w-2xl mx-auto">One price list for both products: FBR Digital Invoicing and PRA Point of Sale cost the same.</p>
+      <div id="productTabs" class="mt-6 inline-flex flex-wrap justify-center rounded-xl bg-slate-100 p-1 text-sm" role="tablist" aria-label="Product"></div>
+    </div>
+    <div id="planGrid" class="mt-10 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-stretch">
+      <noscript><p class="text-slate-600">Starter Rs. 12,000 a year, Pro Rs. 30,000 a year, Enterprise Rs. 90,000 a year (all annual plans, 50% off the full price). <a href="/contact" class="text-emerald-700 underline">Contact us</a> for details.</p></noscript>
+    </div>
+    <div id="planMatrix" class="mt-12"></div>
+    <p class="mt-4 text-center text-xs text-slate-500">Prices are in Pakistani rupees per year. A ✓ is available today; <span class="inline-block text-[10px] uppercase font-semibold bg-amber-100 text-amber-800 rounded px-1.5 py-0.5">Soon</span> means it is being built and comes with the plan when released.</p>
   </div>
 </section>
 
@@ -183,7 +236,11 @@
       <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">Is my data safe?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
         <p class="mt-3 text-slate-600 text-sm">Each business only sees its own data. Your FBR connection key is stored encrypted, and every action is recorded in a log that cannot be edited or deleted.</p></details>
       <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">How much does it cost?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
-        <p class="mt-3 text-slate-600 text-sm">It depends on your business and invoice volume. <a href="/contact" class="text-emerald-700 underline">Contact us</a> for a free demo and a quote.</p></details>
+        <p class="mt-3 text-slate-600 text-sm">We sell annual plans only: Starter Rs. 12,000 a year, Pro Rs. 30,000 a year and Enterprise Rs. 90,000 a year. Those are 50% off the full prices (Rs. 24,000, Rs. 60,000 and Rs. 180,000). See <a href="#pricing" class="text-emerald-700 underline">Pricing</a> for what each plan includes, or <a href="/contact" class="text-emerald-700 underline">contact us</a> for a free demo.</p></details>
+      <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">Do you also support PRA (Punjab)?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
+        <p class="mt-3 text-slate-600 text-sm">Yes. ETAX also has a Point of Sale that sends every sale to the Punjab Revenue Authority's eIMS, for restaurants, banquet halls, hotels and other Punjab service businesses. It costs the same as FBR Digital Invoicing, and a business can use both with one login.</p></details>
+      <details class="group rounded-xl border p-5"><summary class="font-semibold cursor-pointer list-none flex justify-between">What happens when my year ends?<span class="text-emerald-700 group-open:rotate-45 transition">+</span></summary>
+        <p class="mt-3 text-slate-600 text-sm">Your plan runs for a year from the day we set you up. After that there is a short grace period (3 days on a monthly plan, 7 days on a yearly one), and then the account is paused until you renew. Nothing is deleted.</p></details>
     </div>
   </div>
 </section>
@@ -205,18 +262,71 @@
 
 <footer class="border-t">
   <div class="max-w-6xl mx-auto px-4 py-8 flex flex-col md:flex-row gap-4 justify-between text-sm text-slate-500">
-    <div><span class="font-bold text-emerald-700">ETAX</span> · FBR Digital Invoicing for Pakistani businesses <span data-contact class="block mt-1"></span>
+    <div><span class="font-bold text-emerald-700">ETAX</span> · FBR Digital Invoicing and PRA Point of Sale for Pakistani businesses <span data-contact class="block mt-1"></span>
       <div class="mt-2 space-y-1">
         <div>Email: <a href="mailto:e.tax.di@gmail.com" class="text-emerald-700 hover:underline">e.tax.di@gmail.com</a></div>
         <div>WhatsApp: <a href="https://wa.me/923334351102?text=Hello!%20I%20would%20like%20to%20know%20more%20about%20ETAX." target="_blank" rel="noopener" class="text-emerald-700 hover:underline">+92 333 4351102</a></div>
       </div></div>
-    <div class="flex gap-4"><a href="/contact" class="hover:text-emerald-700">Contact</a><a href="/app" class="hover:text-emerald-700">Log in</a></div>
+    <div class="flex gap-4"><a href="#pricing" class="hover:text-emerald-700">Pricing</a><a href="/contact" class="hover:text-emerald-700">Contact</a><a href="/app" class="hover:text-emerald-700">Log in</a></div>
   </div>
-  <p class="max-w-6xl mx-auto px-4 pb-8 text-xs text-slate-400">ETAX is independent software that connects to FBR Digital Invoicing through PRAL. It is not affiliated with or endorsed by the Federal Board of Revenue or PRAL.</p>
+  <p class="max-w-6xl mx-auto px-4 pb-8 text-xs text-slate-400">ETAX is independent software that connects to FBR Digital Invoicing through PRAL and to PRA's eIMS. It is not affiliated with or endorsed by the Federal Board of Revenue, the Punjab Revenue Authority or PRAL.</p>
 </footer>
 
 <script>
 try { new QRCode(document.getElementById('heroQr'), { text: '1234567DI1791300004321', width: 80, height: 80, correctLevel: QRCode.CorrectLevel.L }); } catch {}
+
+// ---- Pricing (the plans, prices and features are in /plans.js: one price list for both products)
+(function () {
+  const ACCENT = {
+    starter: { head: 'bg-sky-50', btn: 'bg-sky-600 hover:bg-sky-700' },
+    pro: { head: 'bg-emerald-50', btn: 'bg-emerald-700 hover:bg-emerald-800' },
+    enterprise: { head: 'bg-violet-50', btn: 'bg-violet-600 hover:bg-violet-700' },
+  };
+  const ICONS = ['🏢', '🖥️', '📦', '👤'];
+  const asked = new URLSearchParams(location.search).get('product');
+  let product = Plans.product(asked) ? asked : 'fbr';
+  const tabs = document.getElementById('productTabs'), grid = document.getElementById('planGrid'), matrix = document.getElementById('planMatrix');
+  const soon = '<span class="inline-block text-[10px] uppercase font-semibold bg-amber-100 text-amber-800 rounded px-1.5 py-0.5">Soon</span>';
+
+  function render() {
+    tabs.innerHTML = Plans.PRODUCTS.map(p => `<button type="button" role="tab" aria-selected="${p.id === product}" data-product="${p.id}" class="px-4 py-2 rounded-lg font-medium ${p.id === product ? 'bg-white text-emerald-800 shadow' : 'text-slate-600 hover:text-slate-900'}">${p.name}</button>`).join('');
+    const off = Plans.percentOff(Plans.PLANS[0]);
+    const promo = `<div class="rounded-2xl bg-emerald-50 border border-emerald-100 p-6 flex flex-col justify-center">
+        <div class="inline-flex items-center gap-2 font-semibold text-emerald-800"><span class="text-xl">🏷️</span> Annual plans only</div>
+        <div class="mt-4 text-3xl font-extrabold text-slate-900 leading-tight">Get <span class="text-emerald-600">${off}% OFF</span> on all plans</div>
+        <p class="mt-4 text-sm text-slate-600">The prices shown are the discounted annual prices. The full price (per year) is shown beside your discounted price.</p></div>`;
+    const cards = Plans.PLANS.map(p => {
+      const a = ACCENT[p.id], limits = Plans.limitTexts(p);
+      return `<div class="relative flex flex-col rounded-2xl border bg-white p-6 ${p.popular ? 'border-emerald-500 ring-2 ring-emerald-500 shadow-lg' : 'shadow-sm'}">
+        ${p.popular ? '<div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-600 text-white text-xs font-semibold px-3 py-1 rounded-full whitespace-nowrap">★ Most Popular</div>' : ''}
+        <div class="rounded-xl ${a.head} p-4"><h3 class="text-2xl font-extrabold text-slate-900">${p.name}</h3><p class="mt-1 text-sm text-slate-600">${p.tagline}</p></div>
+        <div class="mt-5">
+          <div class="flex items-baseline justify-between gap-2 text-sm"><span class="text-slate-500">Full price</span><span class="text-slate-400 font-semibold line-through whitespace-nowrap">${Plans.rupees(p.full)}<span class="text-xs">/year</span></span></div>
+          <div class="mt-3 flex items-center justify-between gap-2"><span class="text-xs text-slate-500">Discounted price</span>
+            <span class="text-xs font-semibold text-emerald-800 bg-emerald-100 rounded px-2 py-0.5 whitespace-nowrap">${Plans.percentOff(p)}% OFF</span></div>
+          <div class="mt-1 text-2xl font-extrabold text-slate-900 leading-none whitespace-nowrap">${Plans.rupees(p.price)}<span class="text-sm font-medium text-slate-500">/year</span></div></div>
+        <a href="/contact?product=${product}&plan=${p.id}" class="mt-5 block text-center rounded-lg px-4 py-3 font-semibold text-white ${a.btn}">${p.cta}</a>
+        <ul class="mt-5 pt-4 border-t grid grid-cols-2 gap-x-3 gap-y-2 text-sm text-slate-700">${limits.map((t, i) => `<li class="flex items-center gap-2"><span aria-hidden="true">${p.limits ? ICONS[i] : '∞'}</span>${t}</li>`).join('')}</ul></div>`;
+    }).join('');
+    grid.innerHTML = promo + cards;
+
+    const rows = Plans.featuresFor(product), common = rows.filter(r => r.in.every(Boolean)), higher = rows.filter(r => !r.in.every(Boolean));
+    const cell = (r, i) => (!r.in[i] ? '<span class="text-slate-300">–</span>' : r.soon ? soon : '<span class="text-emerald-600 font-bold" aria-label="Included">✓</span>');
+    const body = (title, list) => list.length ? `<tr class="bg-slate-50"><td colspan="4" class="px-3 sm:px-5 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">${title}</td></tr>`
+      + list.map(r => `<tr class="border-t"><td class="px-3 sm:px-5 py-2.5 text-slate-700">${r.label}</td>${[0, 1, 2].map(i => `<td class="px-1 sm:px-3 py-2.5 text-center">${cell(r, i)}</td>`).join('')}</tr>`).join('') : '';
+    matrix.innerHTML = `<div class="rounded-2xl border bg-white overflow-hidden">
+      <div class="px-5 py-4 border-b flex flex-wrap items-baseline justify-between gap-2"><h3 class="font-bold text-slate-900 text-lg">All features included</h3><span class="text-sm text-slate-500">${Plans.product(product).name}</span></div>
+      <div class="overflow-x-auto"><table class="w-full text-xs sm:text-sm"><thead><tr class="text-slate-600"><th class="text-left font-medium px-3 sm:px-5 py-2.5">Feature</th>${Plans.PLANS.map(p => `<th class="px-1 sm:px-3 py-2.5 font-semibold text-center w-[4.25rem] sm:w-24 text-[11px] sm:text-sm ${p.popular ? 'text-emerald-700' : ''}">${p.name}</th>`).join('')}</tr></thead>
+      <tbody>${body('In every plan', common)}${body('Higher plans', higher)}</tbody></table></div></div>`;
+  }
+  tabs.addEventListener('click', e => {
+    const b = e.target.closest('[data-product]'); if (!b || b.dataset.product === product) return;
+    product = b.dataset.product; render();
+    try { history.replaceState(null, '', `?product=${product}#pricing`); } catch {}
+  });
+  render();
+  if (location.hash === '#pricing') document.getElementById('pricing').scrollIntoView(); // the section had no height when the browser first jumped here
+})();
 // Contact details come from the server (.env CONTACT_*); hidden when not set
 fetch('/api/public/site').then(r => r.json()).then(s => {
   if (s.whatsapp) document.querySelectorAll('[data-wa]').forEach(a => {

@@ -1076,8 +1076,7 @@
     <h2 class="font-semibold text-lg">Change password</h2>
     <p id="pwNote" class="hidden text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">Please set your own password before continuing.</p>
     <label><span>Current password</span><input name="currentPassword" type="password" required autocomplete="current-password"></label>
-    <label><span>New password</span><input name="newPassword" type="password" required minlength="8" data-pwrules autocomplete="new-password"></label>
-    <label><span>Repeat new password</span><input name="repeat" type="password" required minlength="8" autocomplete="new-password"></label>
+    <label><span>New password <span class="text-slate-400">(use the eye to see what you type)</span></span><input name="newPassword" type="password" required minlength="8" data-pwrules autocomplete="new-password"></label>
     <div class="flex gap-2 pt-1">
       <button class="flex-1 bg-emerald-700 text-white rounded py-2 font-medium">Save password</button>
       <button type="button" id="pwCancel" onclick="closePw()" class="border rounded px-4">Cancel</button>
@@ -1553,7 +1552,6 @@ function closePw() { if (!S.pwForced) $('#pwModal').classList.add('hidden'); }
 $('#pwForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = new FormData(e.target);
-  if (f.get('newPassword') !== f.get('repeat')) return toast('The two new passwords are not the same');
   try {
     const d = await api('/api/auth/password', { method: 'POST', body: { currentPassword: f.get('currentPassword'), newPassword: f.get('newPassword') } });
     S.token = d.token; saveSession();
