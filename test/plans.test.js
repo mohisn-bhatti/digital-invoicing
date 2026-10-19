@@ -90,6 +90,18 @@ test('plans: the one-line hint on a page: what is used, and what to do when it i
     assert.strictEqual(P.hint({ plan: { id: 'starter', name: 'Starter' } }, ['users']), null, 'a reply without rows');
 });
 
+test('plans: every feature has a picture, and the page draws every picture it uses', () => {
+    const html = page('index.html');
+    const drawn = new Set([...html.slice(html.indexOf('const GLYPH = {'), html.indexOf('const icon = ')).matchAll(/^\s{4}(\w+): '</gm)].map(m => m[1]));
+    assert.ok(drawn.size >= 20, `found ${drawn.size} drawings`);
+    for (const f of P.FEATURES) assert.ok(f.icon && drawn.has(f.icon), `${JSON.stringify(f.label)} has no drawing (${f.icon})`);
+    for (const prod of ['fbr', 'pra']) assert.ok(P.featuresFor(prod).every(r => r.icon), 'the rows carry their picture');
+    const cards = ['building', 'terminal', 'box', 'user', 'infinity']; // branches, terminals, products, users, unlimited
+    for (const name of cards) assert.ok(drawn.has(name), `the plan cards need "${name}"`);
+    const used = new Set([...P.FEATURES.map(f => f.icon), ...cards]);
+    for (const name of drawn) assert.ok(used.has(name), `"${name}" is drawn but nothing uses it`);
+});
+
 test('plans: each plan includes everything the cheaper one does', () => {
     for (const f of P.FEATURES) {
         assert.strictEqual(f.in.length, 3, JSON.stringify(f.label));

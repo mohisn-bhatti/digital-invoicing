@@ -24,36 +24,37 @@
     // what the application counts against each number in a plan's limits (Point of Sale items and Digital Invoicing products share one number)
     const KIND_INDEX = { branches: 0, terminals: 1, products: 2, items: 2, users: 3 };
 
-    // in = [Starter, Pro, Enterprise]; status per product: live (shown as a tick) or na (does not apply to that product: left out)
+    // in = [Starter, Pro, Enterprise]; icon = the picture shown beside it (the drawings are in index.html); status per product: live (shown
+    // as a tick) or na (does not apply to that product: left out)
     const FEATURES = [
-        { label: { fbr: 'FBR digital invoicing & QR receipts', pra: 'PRA fiscal invoicing & QR receipts' }, in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: { fbr: 'Real FBR invoice number on every sale', pra: 'Real PRA invoice number on every sale' }, in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Excel bulk upload', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: { fbr: 'Setup & FBR testing done for you', pra: 'Setup & PRA testing done for you' }, in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Offline-first POS terminal', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'All payment methods', in: [1, 1, 1], status: { fbr: 'na', pra: 'live' } },
-        { label: 'Inventory & stock tracking', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Basic sales & tax reports', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'CSV product import', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Multi-branch & warehouse stock', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Phone & WhatsApp support', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Advanced & scheduled reports', in: [0, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: { fbr: 'Returns, debit notes & cancellations', pra: 'Returns & credit notes' }, in: [0, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Stock transfers & audits', in: [0, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Email support', in: [0, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Priority onboarding', in: [0, 1, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Dedicated account manager', in: [0, 0, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'Custom onboarding & training', in: [0, 0, 1], status: { fbr: 'live', pra: 'live' } },
-        { label: 'SDC/IMS setup for Tier-1 retailers', in: [0, 0, 1], status: { fbr: 'live', pra: 'na' } },
-        { label: 'Priority compliance support', in: [0, 0, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: { fbr: 'FBR digital invoicing & QR receipts', pra: 'PRA fiscal invoicing & QR receipts' }, icon: 'invoice', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: { fbr: 'Real FBR invoice number on every sale', pra: 'Real PRA invoice number on every sale' }, icon: 'hash', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Excel bulk upload', icon: 'sheet', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: { fbr: 'Setup & FBR testing done for you', pra: 'Setup & PRA testing done for you' }, icon: 'sliders', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Offline-first POS terminal', icon: 'terminal', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'All payment methods', icon: 'card', in: [1, 1, 1], status: { fbr: 'na', pra: 'live' } },
+        { label: 'Inventory & stock tracking', icon: 'box', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Basic sales & tax reports', icon: 'chart', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'CSV product import', icon: 'upload', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Multi-branch & warehouse stock', icon: 'layers', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Phone & WhatsApp support', icon: 'phone', in: [1, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Advanced & scheduled reports', icon: 'calendar', in: [0, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: { fbr: 'Returns, debit notes & cancellations', pra: 'Returns & credit notes' }, icon: 'undo', in: [0, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Stock transfers & audits', icon: 'transfer', in: [0, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Email support', icon: 'mail', in: [0, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Priority onboarding', icon: 'star', in: [0, 1, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Dedicated account manager', icon: 'user', in: [0, 0, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'Custom onboarding & training', icon: 'book', in: [0, 0, 1], status: { fbr: 'live', pra: 'live' } },
+        { label: 'SDC/IMS setup for Tier-1 retailers', icon: 'server', in: [0, 0, 1], status: { fbr: 'live', pra: 'na' } },
+        { label: 'Priority compliance support', icon: 'shield', in: [0, 0, 1], status: { fbr: 'live', pra: 'live' } },
     ];
     const rupees = n => 'Rs. ' + Number(n).toLocaleString('en-US');
     const percentOff = plan => Math.round((1 - plan.price / plan.full) * 100);
     const plan = id => PLANS.find(p => p.id === id) || null;
     const product = id => PRODUCTS.find(p => p.id === id) || null;
-    // "1 branch", "2 terminals", "Unlimited users" ...
     // the limit of one kind (branches, terminals, products, items, users) on a plan; null = no limit (no plan, or Enterprise)
     const limitOf = (p, kind) => (p && p.limits ? p.limits[KIND_INDEX[kind]] : null);
+    // "1 branch", "2 terminals", "Unlimited users" ...
     const limitTexts = p => LIMITS.map(([one, many], i) => (p.limits ? `${p.limits[i].toLocaleString('en-US')} ${p.limits[i] === 1 ? one : many}` : `Unlimited ${many}`));
 
     const n = x => Number(x).toLocaleString('en-US');
@@ -92,7 +93,7 @@
     // The rows for one product, in the order shown: what every plan has first, then what the higher plans add
     function featuresFor(productId) {
         const rows = FEATURES.filter(f => (f.status[productId] || 'na') !== 'na')
-            .map(f => ({ label: typeof f.label === 'string' ? f.label : f.label[productId], in: f.in.map(Boolean) }));
+            .map(f => ({ label: typeof f.label === 'string' ? f.label : f.label[productId], icon: f.icon, in: f.in.map(Boolean) }));
         return [...rows.filter(r => r.in.every(Boolean)), ...rows.filter(r => !r.in.every(Boolean))];
     }
 

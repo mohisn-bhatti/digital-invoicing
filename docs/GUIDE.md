@@ -58,7 +58,9 @@ with no end date has no time limit (all clients before this existed). Everything
 Sale. Both products have the **same prices**, and plans are **annual only, shown at 50% off** with the full price beside it:
 Starter Rs. 12,000 (full Rs. 24,000), Pro Rs. 30,000 (Rs. 60,000), Enterprise Rs. 90,000 (Rs. 180,000) a year; limits per plan
 (branches, terminals, products, users) and a feature table by plan. Everything lives in one file, `public/plans.js`: change a
-price or a feature there. Every feature a plan includes is shown with a tick; one that does not apply to a product (for example the
+price, a limit or a feature there (a feature also names its picture; the drawings are in `public/index.html`). The feature table is two
+short tables side by side (what every plan has, and what the higher plans add), each plan in its own colour, one picture per row; on
+a phone they stack. Every feature a plan includes is shown with a tick; one that does not apply to a product (for example the
 SDC/IMS set-up for PRA) is left out of that product's table. The Get Started buttons open the contact form with the product and plan
 already chosen, and the choice is written at the top of the enquiry message you see under *Enquiries*.
 

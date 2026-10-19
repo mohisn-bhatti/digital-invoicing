@@ -278,11 +278,37 @@ try { new QRCode(document.getElementById('heroQr'), { text: '1234567DI1791300004
 // ---- Pricing (the plans, prices and features are in /plans.js: one price list for both products)
 (function () {
   const ACCENT = {
-    starter: { head: 'bg-sky-50', btn: 'bg-sky-600 hover:bg-sky-700' },
-    pro: { head: 'bg-emerald-50', btn: 'bg-emerald-700 hover:bg-emerald-800' },
-    enterprise: { head: 'bg-violet-50', btn: 'bg-violet-600 hover:bg-violet-700' },
+    starter: { head: 'bg-sky-50', btn: 'bg-sky-600 hover:bg-sky-700', ink: 'text-sky-600', pill: 'bg-sky-50 text-sky-700' },
+    pro: { head: 'bg-emerald-50', btn: 'bg-emerald-700 hover:bg-emerald-800', ink: 'text-emerald-600', pill: 'bg-emerald-50 text-emerald-700' },
+    enterprise: { head: 'bg-violet-50', btn: 'bg-violet-600 hover:bg-violet-700', ink: 'text-violet-600', pill: 'bg-violet-50 text-violet-700' },
   };
-  const ICONS = ['🏢', '🖥️', '📦', '👤'];
+  // line drawings (24 x 24) for the limits and the feature table; a feature names its picture in plans.js
+  const GLYPH = {
+    invoice: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>',
+    hash: '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>',
+    sheet: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>',
+    sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+    terminal: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+    card: '<rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/>',
+    box: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M16.5 9.4 7.5 4.21M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/>',
+    chart: '<path d="M18 20V10M12 20V4M6 20v-6"/>',
+    upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
+    layers: '<path d="m12 2 10 5-10 5L2 7zM2 17l10 5 10-5M2 12l10 5 10-5"/>',
+    phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
+    calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    undo: '<path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
+    transfer: '<path d="m17 1 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
+    mail: '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/>',
+    star: '<path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/>',
+    user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    book: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+    server: '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/>',
+    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
+    building: '<rect x="5" y="2" width="14" height="20" rx="1.5"/><path d="M9 22v-4h6v4M9 6h.01M15 6h.01M9 10h.01M15 10h.01M9 14h.01M15 14h.01"/>',
+    infinity: '<path d="M18.178 8c5.096 0 5.096 8 0 8-5.095 0-7.133-8-12.739-8-4.585 0-4.585 8 0 8 5.606 0 7.644-8 12.74-8z"/>',
+  };
+  const icon = (name, size = 'w-[18px] h-[18px]') => `<svg viewBox="0 0 24 24" class="${size} shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${GLYPH[name] || ''}</svg>`;
+  const LIMIT_ICONS = ['building', 'terminal', 'box', 'user']; // branches, terminals, products, users
   const asked = new URLSearchParams(location.search).get('product');
   let product = Plans.product(asked) ? asked : 'fbr';
   const tabs = document.getElementById('productTabs'), grid = document.getElementById('planGrid'), matrix = document.getElementById('planMatrix');
@@ -305,18 +331,19 @@ try { new QRCode(document.getElementById('heroQr'), { text: '1234567DI1791300004
             <span class="text-xs font-semibold text-emerald-800 bg-emerald-100 rounded px-2 py-0.5 whitespace-nowrap">${Plans.percentOff(p)}% OFF</span></div>
           <div class="mt-1 text-2xl font-extrabold text-slate-900 leading-none whitespace-nowrap">${Plans.rupees(p.price)}<span class="text-sm font-medium text-slate-500">/year</span></div></div>
         <a href="/contact?product=${product}&plan=${p.id}" class="mt-5 block text-center rounded-lg px-4 py-3 font-semibold text-white ${a.btn}">${p.cta}</a>
-        <ul class="mt-5 pt-4 border-t grid grid-cols-2 gap-x-3 gap-y-2 text-sm text-slate-700">${limits.map((t, i) => `<li class="flex items-center gap-2"><span aria-hidden="true">${p.limits ? ICONS[i] : '∞'}</span>${t}</li>`).join('')}</ul></div>`;
+        <ul class="mt-5 pt-4 border-t grid grid-cols-2 gap-x-3 gap-y-3 text-sm text-slate-700">${limits.map((t, i) => `<li class="flex items-center gap-2"><span class="${a.ink}">${icon(p.limits ? LIMIT_ICONS[i] : 'infinity', 'w-5 h-5')}</span>${t}</li>`).join('')}</ul></div>`;
     }).join('');
     grid.innerHTML = promo + cards;
 
+    // What every plan has on the left, what the higher plans add on the right: two short tables that fit on one screen
     const rows = Plans.featuresFor(product), common = rows.filter(r => r.in.every(Boolean)), higher = rows.filter(r => !r.in.every(Boolean));
-    const cell = (r, i) => (!r.in[i] ? '<span class="text-slate-300">–</span>' : '<span class="text-emerald-600 font-bold" aria-label="Included">✓</span>');
-    const body = (title, list) => list.length ? `<tr class="bg-slate-50"><td colspan="4" class="px-3 sm:px-5 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">${title}</td></tr>`
-      + list.map(r => `<tr class="border-t"><td class="px-3 sm:px-5 py-2.5 text-slate-700">${r.label}</td>${[0, 1, 2].map(i => `<td class="px-1 sm:px-3 py-2.5 text-center">${cell(r, i)}</td>`).join('')}</tr>`).join('') : '';
+    const tick = '<span class="text-emerald-600 font-bold" aria-label="Included">✓</span>', dash = '<span class="text-slate-300" aria-label="Not included">–</span>';
+    const panel = (title, list) => !list.length ? '' : `<div class="min-w-0"><table class="w-full text-[13px] sm:text-sm">
+      <thead><tr><th class="text-left pl-3 sm:pl-5 pr-2 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 align-bottom">${title}</th>${Plans.PLANS.map((p, i) => `<th class="w-[3.7rem] sm:w-[5.5rem] lg:w-[4.9rem] px-0.5 sm:px-1 py-2.5 ${i === 2 ? 'pr-2 sm:pr-4' : ''}"><span class="block rounded-md py-1 text-[10px] sm:text-xs font-semibold ${ACCENT[p.id].pill}">${p.name}</span></th>`).join('')}</tr></thead>
+      <tbody>${list.map(r => `<tr class="border-t border-slate-100"><td class="pl-3 sm:pl-5 pr-2 py-2"><span class="flex items-center gap-2.5 text-slate-700"><span class="text-slate-400">${icon(r.icon)}</span><span>${r.label}</span></span></td>${r.in.map((inc, i) => `<td class="text-center ${i === 2 ? 'pr-2 sm:pr-4' : ''}">${inc ? tick : dash}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
     matrix.innerHTML = `<div class="rounded-2xl border bg-white overflow-hidden">
       <div class="px-5 py-4 border-b flex flex-wrap items-baseline justify-between gap-2"><h3 class="font-bold text-slate-900 text-lg">All features included</h3><span class="text-sm text-slate-500">${Plans.product(product).name}</span></div>
-      <div class="overflow-x-auto"><table class="w-full text-xs sm:text-sm"><thead><tr class="text-slate-600"><th class="text-left font-medium px-3 sm:px-5 py-2.5">Feature</th>${Plans.PLANS.map(p => `<th class="px-1 sm:px-3 py-2.5 font-semibold text-center w-[4.25rem] sm:w-24 text-[11px] sm:text-sm ${p.popular ? 'text-emerald-700' : ''}">${p.name}</th>`).join('')}</tr></thead>
-      <tbody>${body('In every plan', common)}${body('Higher plans', higher)}</tbody></table></div></div>`;
+      <div class="grid lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x">${panel('In every plan', common)}${panel('Higher plans', higher)}</div></div>`;
   }
   tabs.addEventListener('click', e => {
     const b = e.target.closest('[data-product]'); if (!b || b.dataset.product === product) return;
