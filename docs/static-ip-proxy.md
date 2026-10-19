@@ -31,8 +31,9 @@ Filter "/etc/tinyproxy/filter"
 DisableViaHeader Yes
 EOF
 
-# Only these hosts can be reached through the proxy
-printf '^gw\\.fbr\\.gov\\.pk$\n^api\\.ipify\\.org$\n' | sudo tee /etc/tinyproxy/filter
+# Only these hosts can be reached through the proxy (gw.fbr.gov.pk = FBR Digital Invoicing, ims.pral.com.pk = PRA's eIMS for the
+# Point of Sale, api.ipify.org = "what is my IP"). Without the middle line every Point of Sale call is refused by the proxy.
+printf '^gw\\.fbr\\.gov\\.pk$\n^ims\\.pral\\.com\\.pk$\n^api\\.ipify\\.org$\n' | sudo tee /etc/tinyproxy/filter
 
 # Oracle's Ubuntu image blocks ports with iptables by default
 sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 8888 -j ACCEPT
@@ -41,7 +42,10 @@ sudo netfilter-persistent save
 sudo systemctl restart tinyproxy && sudo systemctl enable tinyproxy
 curl -s https://api.ipify.org; echo   # this is the IP to whitelist in IRIS
 ```
-6. On Render set `FBR_PROXY_URL=http://fbr:<PASS>@<RESERVED_IP>:8888`.
+6. On Render set `FBR_PROXY_URL=http://fbr:<PASS>@<RESERVED_IP>:8888`. The Point of Sale uses the same proxy (it reads
+   `PRA_PROXY_URL` first and falls back to `FBR_PROXY_URL`), and the same IP is what you give PRA when you email
+   eims@pra.punjab.gov.pk to whitelist the server. If you set up the proxy before the Point of Sale existed, add the
+   `ims.pral.com.pk` line to `/etc/tinyproxy/filter` and run `sudo systemctl restart tinyproxy`.
 7. Log in as super admin → **Check** "IP for FBR whitelisting" → it should show the Oracle IP "(via static proxy)".
 
 ## Option B — paid, zero maintenance

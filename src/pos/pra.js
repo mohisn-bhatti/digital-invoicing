@@ -58,6 +58,12 @@ function classifyResponse(status, body) {
     if (status >= 200 && status < 300 && code === '100') {
         return { ...base, outcome: 'UNKNOWN', message: 'PRA said it accepted the sale but did not return an invoice number, so it must be checked by hand.' };
     }
+    // A 403 or 407 with no JSON in it did not come from PRA's system but from something in front of it (the proxy, a firewall, an
+    // address that is not whitelisted): PRA never saw the sale, so it is safe to send again once that is fixed. (A bare 401 can be
+    // PRA's own way of refusing a token, so that one stays a refusal below.)
+    if (!data && (status === 403 || status === 407)) {
+        return { ...base, outcome: 'NOT_SENT', reason: 'BLOCKED', message: `Something between this server and PRA refused the call (HTTP ${status}) and the reply did not come from PRA's system. Nothing was recorded. This usually means PRA has not whitelisted this server's IP address, or the proxy does not allow ims.pral.com.pk.` };
+    }
     if (status === 401 || status === 403) {
         return { ...base, outcome: 'REJECTED', message: `PRA refused the token or this server's IP address (HTTP ${status}). Check the token, and that PRA has whitelisted the server's IP.${said ? ' PRA said: ' + said : ''}` };
     }
@@ -74,7 +80,13 @@ const NOT_SENT = new Set(['ENOTFOUND', 'ECONNREFUSED', 'EAI_AGAIN', 'ENETUNREACH
 function classifyError(err) {
     const code = err && err.code;
     if (NOT_SENT.has(code)) {
-        return { outcome: 'NOT_SENT', reason: 'NO_CONNECTION', code: null, httpStatus: null, errors: [], message: `Could not connect to PRA (${code}). Nothing was sent. Check the internet connection and try again.` };
+        const certificate = /CERT|TLS|LEAF|ISSUER|SELF_SIGNED/.test(code);
+        return {
+            outcome: 'NOT_SENT', reason: 'NO_CONNECTION', code: null, httpStatus: null, errors: [],
+            message: certificate
+                ? `PRA's security certificate could not be verified (${code}), so nothing was sent. This is not an internet problem: tell the administrator.`
+                : `Could not connect to PRA (${code}). Nothing was sent. Check the internet connection and try again.`,
+        };
     }
     const timedOut = code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ERR_CANCELED' || (err && (err.name === 'TimeoutError' || err.name === 'CanceledError' || /timeout|aborted/i.test(err.message || '')));
     return {
@@ -96,10 +108,10 @@ function mockSubmit(payload) {
     return { ...classifyResponse(200, { InvoiceNumber: number, Code: '100', Response: 'Fiscal invoice number generated (test mode, not sent to PRA).', Errors: null }), mock: true };
 }
 
-const defaultPost = (url, body, { token, timeout }) => axios.post(url, body, {
+const defaultPost = (url, body, { token, timeout, httpsAgent }) => axios.post(url, body, {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
     timeout, signal: AbortSignal.timeout(timeout), // a hard cap on the whole call, so the cashier screen never waits forever
-    httpsAgent: agent(), proxy: false, validateStatus: () => true, transformResponse: [x => x],
+    httpsAgent, proxy: false, validateStatus: () => true, transformResponse: [x => x],
 });
 
 // deps.post: replaces the HTTP call (tests)
@@ -114,8 +126,12 @@ async function submit({ env, token, payload }, deps = {}) {
     const url = ENDPOINTS[env];
     if (!url) return finish({ outcome: 'NOT_SENT', reason: 'NO_ENDPOINT', message: 'This counter has no valid environment (Sandbox or Production).', errors: [] });
     if (!token) return finish({ outcome: 'NOT_SENT', reason: 'NO_TOKEN', message: 'This counter has no PRA token yet. Ask the account owner to add it in Settings.', errors: [] });
+    let httpsAgent;
+    try { httpsAgent = agent(); } catch {
+        return finish({ outcome: 'NOT_SENT', reason: 'BAD_PROXY', message: 'The proxy address set for PRA calls (PRA_PROXY_URL or FBR_PROXY_URL) is not valid, so nothing was sent. Ask the administrator to correct it.', errors: [] });
+    }
     try {
-        const res = await (deps.post || defaultPost)(url, payload, { token, timeout: timeoutMs() });
+        const res = await (deps.post || defaultPost)(url, payload, { token, timeout: timeoutMs(), httpsAgent });
         return finish(classifyResponse(res.status, res.data));
     } catch (err) {
         return finish(classifyError(err));

@@ -5,7 +5,6 @@
 //   Cashier        (CASHIER)     make sales, send again, correct the buyer, reprint receipts, see sales
 //   Manager        (ACCOUNTANT)  also items, returns (credit notes), cancel, record the result of a manual PRA check
 //   Administrator  (OWNER)       also the business profile, branches, counters, PRA tokens, decommissioning
-const path = require('path');
 const { PosError } = require('./service');
 const { PosCalcError } = require('./calc');
 const { PosValidationError } = require('./validate');
@@ -31,10 +30,8 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
         try { res.json(await fn(req)); } catch (e) { throw translate(e); }
     };
 
-    // the same money maths the server uses, for the cashier screen's preview
-    app.get('/pos-calc.js', (req, res) => { res.set('Cache-Control', 'no-cache'); res.type('js').sendFile(path.join(__dirname, 'calc.js')); });
-
     app.get('/api/pos/setup', ...base, wrap(req => service.cashierSetup(ctxOf(req))));
+    app.get('/api/pos/alerts', ...base, wrap(req => service.attention(ctxOf(req))));
     app.get('/api/pos/overview', ...base, wrap(req => service.overview(ctxOf(req))));
 
     app.get('/api/pos/egress-ip', ...owner, wrap(() => pra.egressIp()));

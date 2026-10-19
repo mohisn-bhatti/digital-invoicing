@@ -120,3 +120,43 @@ test('POS maths: figures too big for the database are refused in plain words', (
     assert.strictEqual(C.calcSale([{ quantity: 1000000, unitPrice: '99999.99', taxRate: 0 }]).totals.bill, 99999990000);
     assert.strictEqual(C.calcSale([{ quantity: 1, unitPrice: '99999999.99', taxRate: 100 }]).totals.bill, 199999999.98);
 });
+
+test('POS credit notes: returned one unit at a time, no note is ever negative and the notes add up to the sale', () => {
+    // each case: a sold line (qty, price, discount, tax rate), returned one unit per note
+    for (const [qty, price, disc, rate] of [[10, 0.10, 0, 5], [8, 1, 0.20, 2.5], [12, 10, 0.30, 16], [78, 10, 195, 5], [300, 14.30, 0, 5], [7, 33.33, 1, 16]]) {
+        const sold = C.calcSale([{ quantity: qty, unitPrice: price, discount: disc, taxRate: rate }]);
+        const orig = sold.lines[0];
+        let done = { quantity: 0, discount: 0, saleValue: 0, taxCharged: 0 };
+        const notes = [];
+        for (let i = 0; i < qty; i++) {
+            const c = C.creditLine(orig, 1, done);
+            for (const k of ['saleValue', 'discount', 'taxCharged', 'totalAmount']) assert.ok(c[k] >= 0, `${k} of note ${i + 1} (${qty} x ${price}) is ${c[k]}`);
+            notes.push(c);
+            const add = (a, b) => Math.round((a + b) * 100) / 100;
+            done = { quantity: done.quantity + 1, discount: add(done.discount, c.discount), saleValue: add(done.saleValue, c.saleValue), taxCharged: add(done.taxCharged, c.taxCharged) };
+        }
+        const t = C.totalsOf(notes);
+        assert.deepStrictEqual([t.saleValue, t.discount, t.tax, t.bill], [sold.totals.saleValue, sold.totals.discount, sold.totals.tax, sold.totals.bill], `${qty} x ${price}`);
+    }
+});
+
+test('POS maths: no figure is rounded behind the user\'s back (extra decimals are refused, trailing zeros are fine)', () => {
+    assert.throws(() => C.calcLine({ quantity: '1.00005', unitPrice: 10 }), /Quantity can have 4 decimal places at most/);
+    assert.throws(() => C.calcLine({ quantity: 1, unitPrice: '10.505' }), /Price can have 2 decimal places at most/);
+    assert.throws(() => C.calcLine({ quantity: 1, unitPrice: 10, discount: '0.005' }), /Discount can have 2 decimal places at most/);
+    assert.throws(() => C.calcLine({ quantity: 1, unitPrice: 10, taxRate: '16.005' }), /Tax rate can have 2 decimal places at most/);
+    assert.throws(() => C.discountFromPercent({ quantity: 1, unitPrice: 10 }, '12.345'), /Discount % can have 2 decimal places at most/);
+    assert.throws(() => C.creditLine({ quantity: 2, discount: 0, saleValue: 20, taxCharged: 3.2, unitPrice: 10, taxRate: 16 }, '0.00001', { quantity: 0, discount: 0, saleValue: 0, taxCharged: 0 }), /Return quantity can have 4 decimal places/);
+    const ok = C.calcLine({ quantity: '1.5000', unitPrice: '10.500', discount: '0.50', taxRate: '16.00' });
+    assert.strictEqual(ok.total, 1769n); // 1.5 x 10.50 = 15.75, less 0.50 = 15.25, plus 16% (2.44) = 17.69 rupees
+});
+
+test('POS rule: above Rs 50,000 before tax the buyer\'s name and CNIC or NTN are needed (PRA e-IMS Rules, rule 6)', () => {
+    assert.strictEqual(C.BUYER_REQUIRED_ABOVE, 50000);
+    const named = { name: 'Ali Khan', cnic: '3520212345671' }, firm = { name: 'Khan Traders', pntn: '1234567-8' };
+    for (const v of [0, 1, 49999.99, 50000, '50000.00']) assert.strictEqual(C.buyerProblem(v, {}), '', `${v} needs nothing`);
+    for (const [v, b] of [[50000.01, named], [50000.01, firm], [1e6, { name: 'A', cnic: '1' }], [51000, { name: ' x ', pntn: '1' }]]) assert.strictEqual(C.buyerProblem(v, b), '', `${v} with ${JSON.stringify(b)}`);
+    for (const b of [{}, undefined, null, { name: 'Ali Khan' }, { cnic: '3520212345671' }, { pntn: '1234567-8' }, { name: '   ', cnic: '3520212345671' }, { name: 'Ali', cnic: '  ', pntn: '' }]) {
+        assert.match(C.buyerProblem(50000.01, b), /Rs 50,000.*name and CNIC.*NTN/, JSON.stringify(b));
+    }
+});

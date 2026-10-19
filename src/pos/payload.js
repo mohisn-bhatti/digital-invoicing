@@ -4,11 +4,11 @@
 const { itemAmounts, INVOICE_TYPES, SALE_VALUE_BASIS } = require('./calc');
 
 // Pakistan time, "yyyy-MM-dd HH:mm:ss" (the format in PRA's sample JSON)
+const PKT_CLOCK = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Karachi', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+});
 function praDateTime(date) {
-    const f = new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Asia/Karachi', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-    });
-    const p = Object.fromEntries(f.formatToParts(date instanceof Date ? date : new Date(date)).map(x => [x.type, x.value]));
+    const p = Object.fromEntries(PKT_CLOCK.formatToParts(date instanceof Date ? date : new Date(date)).map(x => [x.type, x.value]));
     return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
 }
 

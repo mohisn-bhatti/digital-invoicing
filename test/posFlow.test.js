@@ -83,7 +83,7 @@ run('POS flow: a sale goes to PRA and comes back fiscalized, with every record k
     assert.match(s.fiscalNumber, /^TEST1/);
     assert.deepStrictEqual(s.totals, { quantity: 5, saleValue: 3061.5, discount: 300, tax: 489.84, bill: 3551.34 });
     assert.strictEqual(s.attempts, 1);
-    assert.deepStrictEqual(s.events.map(e => [e.from, e.to]), [['DRAFT', 'AWAITING_FISCALIZATION'], ['AWAITING_FISCALIZATION', 'FISCALIZED']]);
+    assert.deepStrictEqual(s.events.map(e => [e.from, e.to]), [[null, 'AWAITING_FISCALIZATION'], ['AWAITING_FISCALIZATION', 'FISCALIZED']]);
     assert.strictEqual(s.tries.length, 1);
     assert.strictEqual(s.tries[0].outcome, 'FISCALIZED');
     assert.ok(s.submittedAt && s.respondedAt && s.fiscalizedAt && s.finalizedAt, 'the times are kept apart');
@@ -461,9 +461,13 @@ run('POS flow: the sales report adds up, and the CSV export is safe to open in a
     clock += 20000;
     const evil = await sellOne({ buyer: { name: '=HYPERLINK("http://example.com","click")' } });
     assert.strictEqual(evil.result.outcome, 'FISCALIZED');
-    // the report against figures worked out separately from the database
+    // the figures cover the kind of sale the server is working with: all of these are Sandbox sales, so this is test mode
+    pra.mock = true;
     const rep = await svc.salesReport(ctx, {});
-    const rows = await prisma.posSale.findMany({ where: { tenantId, state: 'FISCALIZED' }, select: { invoiceType: true, totalBill: true, totalTax: true, paymentMode: true } });
+    pra.mock = false;
+    assert.strictEqual(rep.scope, 'TEST');
+    const rows = await prisma.posSale.findMany({ where: { tenantId, state: 'FISCALIZED', env: 'SANDBOX' }, select: { invoiceType: true, totalBill: true, totalTax: true, paymentMode: true } });
+    assert.strictEqual(rep.leftOut, await prisma.posSale.count({ where: { tenantId, state: 'FISCALIZED', env: 'PRODUCTION' } }), 'sales of the other kind are counted as left out');
     const sum = (t, k) => Math.round(rows.filter(r => r.invoiceType === t).reduce((a, r) => a + Number(r[k]), 0) * 100) / 100;
     assert.strictEqual(rep.sales.count, rows.filter(r => r.invoiceType === 1).length);
     assert.strictEqual(rep.returns.count, rows.filter(r => r.invoiceType === 3).length);
@@ -480,14 +484,14 @@ run('POS flow: the sales report adds up, and the CSV export is safe to open in a
     const out = await svc.salesCsv(ctx, {});
     const lines = out.csv.trim().split('\r\n');
     assert.strictEqual(lines.length, 1 + (await prisma.posSale.count({ where: { tenantId } })), 'a header and one row per sale');
-    assert.match(lines[0], /^Date and time \(Pakistan\),Invoice no\. \(USIN\),Type,Status,PRA invoice no\./);
+    assert.match(lines[0], /^Date and time \(Pakistan\),Invoice no\. \(USIN\),Type,Status,Environment,PRA invoice no\./);
     assert.ok(out.csv.includes(`"'=HYPERLINK(""http://example.com"",""click"")"`), 'text that looks like a formula is defused and quoted: ' + lines.at(-1));
     assert.ok(!/(^|,)=HYPERLINK/m.test(out.csv));
     assert.match(out.filename, /^pos-sales-start-to-today\.csv$/);
     const detail = await svc.salesCsv(ctx, { detail: 'lines', from: '2020-01-01', to: '2099-12-31' });
     assert.match(detail.csv.split('\r\n')[0], /Item code,Item,PCT code,Quantity,Unit price/);
     assert.ok(detail.rows >= 10 && detail.csv.split('\r\n').length > detail.rows, 'a row for each line');
-    assert.strictEqual((await svc.salesCsv(ctx, { state: 'FISCALIZED' })).csv.trim().split('\r\n').length - 1, rows.length, 'a status filter works');
+    assert.strictEqual((await svc.salesCsv(ctx, { state: 'FISCALIZED' })).csv.trim().split('\r\n').length - 1, await prisma.posSale.count({ where: { tenantId, state: 'FISCALIZED' } }), 'a status filter works (the export holds every environment)');
     assert.deepStrictEqual((await svc.salesCsv(ctxOther, {})).csv.trim().split('\r\n').length, 1, 'another business exports only a header');
     assert.ok(audits.some(a => /^pos\.export/.test(a)), 'an export is logged');
 });
@@ -517,4 +521,222 @@ test.after(async () => {
         }
     }
     await prisma.$disconnect();
+});
+
+// ---------- fixes from the independent code review ----------
+const waitingSale = async (over = {}) => { // a sale PRA has not been reached for: AWAITING, not in flight
+    clock += 10000;
+    pra.queue.push(answer('NOT_SENT', 'Could not connect to PRA', { reason: 'NO_CONNECTION' }));
+    return (await sellOne(over)).sale;
+};
+const unknownSale = async () => {
+    clock += 10000;
+    pra.queue.push(answer('UNKNOWN', 'PRA did not answer in time'));
+    return (await sellOne()).sale;
+};
+const history = async id => (await svc.saleDetail(ctx, id)).events;
+
+run('POS flow: a sale found "not recorded" after an interrupted send can be sent again, and is not swept back to unknown', async () => {
+    const r = await waitingSale();
+    await prisma.posSale.update({ where: { id: r.id }, data: { submittedAt: new Date(clock - 120000), respondedAt: null, attempts: 1 } }); // the server died while waiting
+    const swept = await svc.saleDetail(ctx, r.id);
+    assert.strictEqual(swept.state, 'OUTCOME_UNKNOWN');
+    assert.ok(swept.respondedAt, 'the interrupted send is over');
+    await svc.resolve(ctx, r.id, { result: 'NOT_FOUND', note: 'Not in the IMS fiscal report' });
+    clock += 10000;
+    const again = await svc.retry(ctx, r.id);
+    assert.strictEqual(again.result.outcome, 'FISCALIZED', 'not "being sent right now"');
+    clock += 120000;
+    assert.strictEqual((await svc.saleDetail(ctx, r.id)).state, 'FISCALIZED', 'and nothing sweeps it back');
+});
+
+run('POS flow: a credit note PRA refused cannot be revived once its quantity was returned by a newer note', async () => {
+    clock += 10000;
+    const sold = (await sellOne({ lines: [{ itemId: items.lunch.id, quantity: 2 }] })).sale;
+    const back = (quantity, reason) => svc.creditNote(ctx, sold.id, { lines: [{ lineId: sold.lines[0].id, quantity }], reason });
+    clock += 10000;
+    pra.queue.push(answer('REJECTED', 'RefUSIN not found', { code: '120' }));
+    const first = (await back(2, 'Return both')).sale;
+    assert.strictEqual(first.state, 'REJECTED');
+    clock += 10000;
+    const second = (await back(2, 'Return both again')).sale;
+    assert.strictEqual(second.state, 'FISCALIZED');
+    clock += 10000;
+    const calls = pra.calls.length;
+    await rejects(svc.retry(ctx, first.id), 409, /returned by another credit note/);
+    assert.strictEqual(pra.calls.length, calls, 'nothing was sent');
+    assert.strictEqual((await svc.saleDetail(ctx, first.id)).state, 'REJECTED', 'and nothing changed');
+    assert.strictEqual((await svc.saleDetail(ctx, sold.id)).lines[0].returned.quantity, 2, 'two sold, two returned: never four');
+    // while the quantity is free, the refused note can be sent again
+    clock += 10000;
+    const sold2 = (await sellOne({ lines: [{ itemId: items.lunch.id, quantity: 2 }] })).sale;
+    clock += 10000;
+    pra.queue.push(answer('REJECTED', 'RefUSIN not found', { code: '120' }));
+    const refused = (await svc.creditNote(ctx, sold2.id, { lines: [{ lineId: sold2.lines[0].id, quantity: 1 }], reason: 'Return one' })).sale;
+    clock += 10000;
+    assert.strictEqual((await svc.retry(ctx, refused.id)).result.outcome, 'FISCALIZED');
+});
+
+run('POS flow: two returns of the same item at the same moment cannot take the same quantity', async () => {
+    clock += 10000;
+    const sold = (await sellOne({ lines: [{ itemId: items.lunch.id, quantity: 2 }] })).sale;
+    clock += 10000;
+    pra.delay = 40;
+    const back = () => svc.creditNote(ctx, sold.id, { lines: [{ lineId: sold.lines[0].id, quantity: 2 }], reason: 'Return both', clientRef: 'race' + crypto.randomBytes(8).toString('hex') });
+    const results = await Promise.allSettled([back(), back()]);
+    pra.delay = 0;
+    assert.strictEqual(results.filter(r => r.status === 'fulfilled').length, 1, results.map(r => r.status + (r.reason ? ': ' + r.reason.message : '')).join(' | '));
+    assert.match(results.find(r => r.status === 'rejected').reason.message, /more than was sold/);
+    assert.strictEqual((await svc.saleDetail(ctx, sold.id)).lines[0].returned.quantity, 2);
+});
+
+run('POS flow: two people acting on one sale at the same moment: one wins, the other is told', async () => {
+    const r = await waitingSale();
+    const both = await Promise.allSettled([svc.cancel(ctx, r.id, 'Customer left'), svc.cancel(ctx, r.id, 'Customer left, too')]);
+    assert.strictEqual(both.filter(x => x.status === 'fulfilled').length, 1);
+    assert.strictEqual((await history(r.id)).filter(e => e.to === 'CANCELLED').length, 1, 'one cancellation on record');
+    // two managers record the result of the same manual check
+    const u = await unknownSale();
+    const checks = await Promise.allSettled([
+        svc.resolve(ctx, u.id, { result: 'NOT_FOUND', note: 'Not in the report' }),
+        svc.resolve(ctx, u.id, { result: 'FISCALIZED', fiscalNumber: 'HAND-' + crypto.randomBytes(4).toString('hex'), note: 'Found in the report' }),
+    ]);
+    assert.strictEqual(checks.filter(x => x.status === 'fulfilled').length, 1, 'the second check is turned away');
+    const d = await svc.saleDetail(ctx, u.id);
+    assert.ok(['REJECTED', 'FISCALIZED'].includes(d.state));
+    assert.strictEqual(d.events.filter(e => e.from === 'OUTCOME_UNKNOWN' && e.to !== 'OUTCOME_UNKNOWN').length, 1, 'one result on record');
+});
+
+run('POS flow: a cancel and a send at the same moment never leave a cancelled sale that PRA recorded', async () => {
+    for (let round = 0; round < 6; round++) {
+        const r = await waitingSale();
+        clock += 10000; // past the gap between sends
+        const calls = pra.calls.length;
+        pra.delay = 15;
+        const [cancelled] = await Promise.allSettled([svc.cancel(ctx, r.id, 'Cancel it'), svc.retry(ctx, r.id)]);
+        pra.delay = 0;
+        const d = await svc.saleDetail(ctx, r.id);
+        if (d.state === 'CANCELLED') assert.strictEqual(pra.calls.length, calls, 'cancelled before it was claimed: nothing was sent');
+        else { assert.strictEqual(d.state, 'FISCALIZED'); assert.strictEqual(cancelled.status, 'rejected', 'the cancel was refused'); }
+    }
+});
+
+run('POS flow: a "send again" that is refused changes nothing', async () => {
+    clock += 10000;
+    pra.queue.push(answer('REJECTED', 'Invalid buyer PNTN', { code: '110', httpStatus: 200 }));
+    const r = (await sellOne({ buyer: { name: 'Bad', pntn: '1111111-1' } })).sale;
+    const before = (await history(r.id)).length;
+    clock += 10000;
+    // the connection is resting
+    const br = createBreaker({ threshold: 1, coolDownMs: 15000, now: () => clock });
+    br.record(counter.id, false);
+    const resting = createPosService({ prisma, audit, encrypt, decrypt, mask, pra: praApi, breaker: br, now });
+    await rejects(resting.retry(ctx, r.id), 503, /rest/);
+    // the counter is switched off
+    await prisma.posCounter.update({ where: { id: counter.id }, data: { active: false } });
+    try { await rejects(svc.retry(ctx, r.id), 400, /switched off/); } finally { await prisma.posCounter.update({ where: { id: counter.id }, data: { active: true } }); }
+    const d = await svc.saleDetail(ctx, r.id);
+    assert.strictEqual(d.state, 'REJECTED');
+    assert.strictEqual(d.events.length, before, 'no false "sent again" in the history');
+});
+
+run('POS flow: a sale keeps the environment and POS ID it was made with', async () => {
+    clock += 10000;
+    const sold = (await sellOne()).sale;
+    clock += 10000;
+    pra.queue.push(answer('REJECTED', 'Invalid buyer PNTN', { code: '110', httpStatus: 200 }));
+    const bad = (await sellOne({ buyer: { name: 'Bad', pntn: '1111111-1' } })).sale;
+    const back = () => svc.creditNote(ctx, sold.id, { lines: [{ lineId: sold.lines[0].id, quantity: 1 }], reason: 'Return one' });
+    for (const change of [{ posId: '800123' }, { env: 'PRODUCTION' }]) {
+        await prisma.posCounter.update({ where: { id: counter.id }, data: change });
+        try {
+            clock += 10000;
+            await rejects(back(), 409, /counter has been changed/);
+            await rejects(svc.retry(ctx, bad.id), 409, /counter has been changed/);
+            assert.strictEqual((await svc.saleDetail(ctx, bad.id)).state, 'REJECTED', 'nothing was changed');
+        } finally { await prisma.posCounter.update({ where: { id: counter.id }, data: { posId: '900001', env: 'SANDBOX' } }); }
+    }
+    clock += 10000;
+    const calls = pra.calls.length;
+    assert.strictEqual((await back()).sale.state, 'FISCALIZED', 'with the counter as it was, the return goes through');
+    assert.strictEqual(pra.calls.at(-1).env, 'SANDBOX');
+    assert.strictEqual(pra.calls.at(-1).payload.POSID, 900001);
+    assert.strictEqual(pra.calls.length, calls + 1);
+});
+
+run('POS flow: the dashboard and the report keep test sales apart from real ones', async () => {
+    const branch = (await svc.listBranches(tenantId))[0];
+    await svc.createCounter(ctx, { branchId: branch.id, name: 'Till 9', posId: '900009', env: 'PRODUCTION', token: 'production-token-1234567890' });
+    const prod = (await svc.listBranches(tenantId))[0].counters.find(c => c.name === 'Till 9');
+    clock += 10000;
+    assert.strictEqual((await svc.createSale(ctx, { counterId: prod.id, paymentMode: 1, buyer: {}, lines: [{ itemId: items.lunch.id, quantity: 1 }] })).result.outcome, 'FISCALIZED');
+    const today = await prisma.posSale.groupBy({ by: ['env'], where: { tenantId, state: 'FISCALIZED', invoiceType: 1, fiscalizedAt: { gte: new Date('2026-10-19T00:00:00+05:00') } }, _count: { _all: true } });
+    const countOf = env => (today.find(r => r.env === env) || { _count: { _all: 0 } })._count._all;
+    assert.ok(countOf('PRODUCTION') >= 1 && countOf('SANDBOX') >= 1, 'both kinds exist');
+    const live = await svc.overview(ctx);               // the server is live: real sales only
+    assert.strictEqual(live.todaySales.count, countOf('PRODUCTION'));
+    const rep = await svc.salesReport(ctx, {});
+    assert.strictEqual(rep.scope, 'LIVE');
+    assert.strictEqual(rep.sales.count, (await prisma.posSale.count({ where: { tenantId, state: 'FISCALIZED', invoiceType: 1, env: 'PRODUCTION' } })));
+    assert.ok(rep.leftOut >= countOf('SANDBOX'), 'the rehearsal sales are named as left out');
+    pra.mock = true;                                    // in test mode the figures are the test sales
+    try {
+        assert.strictEqual((await svc.overview(ctx)).todaySales.count, countOf('SANDBOX'));
+        assert.strictEqual((await svc.salesReport(ctx, {})).scope, 'TEST');
+    } finally { pra.mock = false; }
+});
+
+run('POS flow: dates and paging in the sales queries are checked', async () => {
+    for (const bad of ['2026-13-01', '2026-00-10', '2026-01-32', '2026-02-31', '2026/10/19', 'yesterday']) {
+        await rejects(svc.listSales(ctx, { from: bad }), 400, /real date/);
+        await rejects(svc.salesReport(ctx, { to: bad }), 400, /real date/);
+        await rejects(svc.salesCsv(ctx, { from: bad }), 400, /real date/);
+    }
+    assert.ok(Array.isArray((await svc.listSales(ctx, { from: '2026-02-28', to: '2026-03-01' })).sales), 'real days are fine');
+    assert.ok(Array.isArray((await svc.listSales(ctx, { from: '', to: '' })).sales), 'no dates = all dates');
+    for (const v of ['1e21', 'Infinity', '-5', 'abc', '2.5', '']) assert.ok(Array.isArray((await svc.listSales(ctx, { limit: v, offset: v })).sales), `paging "${v}"`);
+});
+
+run('POS flow: a malformed sale is a 400, never a crash', async () => {
+    for (const lines of [[null], ['x'], [[]], [7], [{ itemId: items.drink.id, quantity: 1 }, null]]) await rejects(sellOne({ lines }), 400, /not valid/);
+    await rejects(svc.creditNote(ctx, (await waitingSale()).id, { lines: [null], reason: 'x' }), 409); // (not fiscalized: refused before the lines are read)
+});
+
+run('POS flow: the PCT search finds a code typed with or without its dot', async () => {
+    const dotted = await svc.searchPct('9801.2000');
+    assert.ok(dotted.length >= 1 && dotted.every(r => r.code.startsWith('9801.2000')), JSON.stringify(dotted));
+    assert.deepStrictEqual((await svc.searchPct('98012000')).map(r => r.code), dotted.map(r => r.code));
+    assert.ok((await svc.searchPct('9801.2')).some(r => r.code === '9801.2000'));
+    assert.ok((await svc.searchPct('01')).some(r => r.code === '9801.0000'), 'digits after the chapter work too');
+    assert.deepStrictEqual(await svc.searchPct('9'), [], 'too short');
+});
+
+run('POS flow: the alert counts are one cheap call, and the interrupted sends are swept first', async () => {
+    const r = await waitingSale();
+    await prisma.posSale.update({ where: { id: r.id }, data: { submittedAt: new Date(clock - 120000), respondedAt: null, attempts: 1 } });
+    const a = await svc.attention(ctx);
+    assert.deepStrictEqual(Object.keys(a).sort(), ['awaiting', 'outcomeUnknown', 'rejected']);
+    assert.ok(a.outcomeUnknown >= 1);
+    assert.strictEqual((await svc.saleDetail(ctx, r.id)).state, 'OUTCOME_UNKNOWN');
+    assert.deepStrictEqual(await svc.attention(ctxOther), { awaiting: 0, rejected: 0, outcomeUnknown: 0 }, 'another business sees nothing');
+});
+
+run('POS flow: a bill above Rs 50,000 before tax needs the buyer\'s name and CNIC or NTN (PRA e-IMS Rules, rule 6)', async () => {
+    const hall = (price, buyer = {}, discount) => sellOne({ buyer, lines: [{ itemId: items.hall.id, quantity: 1, unitPrice: price, ...(discount ? { discount } : {}) }] });
+    const before = await prisma.posSale.count({ where: { tenantId } });
+    clock += 10000;
+    assert.strictEqual((await hall('50000.00')).result.outcome, 'FISCALIZED', 'exactly Rs 50,000 is not "above"');
+    const after = await prisma.posSale.count({ where: { tenantId } });
+    assert.strictEqual(after, before + 1);
+    await rejects(hall('50000.01'), 400, /Rs 50,000.*name and CNIC.*NTN/);
+    await rejects(hall('50000.01', { name: 'Ali Khan' }), 400, /Rs 50,000/);
+    await rejects(hall('50000.01', { cnic: '3520212345671' }), 400, /Rs 50,000/);
+    await rejects(hall('50000.01', { pntn: '1234567-8' }), 400, /Rs 50,000/);
+    assert.strictEqual(await prisma.posSale.count({ where: { tenantId } }), after, 'a refused sale is not made');
+    clock += 10000;
+    assert.strictEqual((await hall('80000', { name: 'Ali Khan', cnic: '35202-1234567-1' })).result.outcome, 'FISCALIZED', 'an individual: name and CNIC');
+    clock += 10000;
+    assert.strictEqual((await hall('80000', { name: 'Khan Traders', pntn: '1234567-8' })).result.outcome, 'FISCALIZED', 'a business: name and NTN');
+    clock += 10000;
+    assert.strictEqual((await hall('60000', {}, '10000')).result.outcome, 'FISCALIZED', 'the bill after the discount is what counts');
 });

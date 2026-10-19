@@ -110,8 +110,15 @@ test('PRA reply: an answer that is not success is never treated as success', () 
     assert.strictEqual(pra.classifyResponse(200, '{"Code":"100"}').outcome, 'UNKNOWN');
     assert.strictEqual(pra.classifyResponse(200, 'not json at all').outcome, 'UNKNOWN');
     assert.strictEqual(pra.classifyResponse(200, '').outcome, 'UNKNOWN');
-    assert.strictEqual(pra.classifyResponse(401, '').outcome, 'REJECTED');
-    assert.match(pra.classifyResponse(403, '').message, /whitelisted/);
+    assert.strictEqual(pra.classifyResponse(401, '').outcome, 'REJECTED'); // a bare 401 is how a token is refused
+    assert.strictEqual(pra.classifyResponse(403, '{"Message":"Forbidden"}').outcome, 'REJECTED');
+    // a 403 / 407 that is not PRA's JSON came from the proxy or a firewall: PRA never saw the sale
+    for (const status of [403, 407]) {
+        const blocked = pra.classifyResponse(status, '<html>The requested URL is not allowed</html>');
+        assert.strictEqual(blocked.outcome, 'NOT_SENT', String(status));
+        assert.strictEqual(blocked.reason, 'BLOCKED');
+        assert.match(blocked.message, /whitelisted/);
+    }
     assert.strictEqual(pra.classifyResponse(400, '{"Message":"bad"}').outcome, 'REJECTED');
     assert.strictEqual(pra.classifyResponse(503, '').outcome, 'NOT_SENT');
     assert.strictEqual(pra.classifyResponse(500, '').outcome, 'UNKNOWN');
@@ -217,4 +224,40 @@ test('POS sale states follow the SRS table, plus cancelling a sale that was neve
     assert.ok(canMove('REJECTED', 'AWAITING_FISCALIZATION') && canMove('REJECTED', 'CANCELLED'));
     for (const to of STATES) { assert.ok(!canMove('FISCALIZED', to)); assert.ok(!canMove('CANCELLED', to)); }
     assert.throws(() => assertMove('FISCALIZED', 'CANCELLED'), /cannot become/);
+});
+
+test('POS circuit breaker: after the rest exactly one caller is let through; the others wait for its answer', () => {
+    let t = 0;
+    const b = createBreaker({ threshold: 1, coolDownMs: 15000, probeMs: 10000, now: () => t });
+    assert.strictEqual(b.allow('c'), true);
+    b.record('c', false);                      // the first failure opens it (as on the server: 1 failure, 15 s rest)
+    assert.strictEqual(b.allow('c'), false);
+    t = 14999; assert.strictEqual(b.allow('c'), false);
+    t = 15000;
+    assert.strictEqual(b.state('c').open, false, 'looking does not use up the trial');
+    assert.strictEqual(b.allow('c'), true, 'the trial');
+    assert.strictEqual(b.allow('c'), false, 'everyone else waits for its answer');
+    assert.strictEqual(b.allow('c'), false);
+    assert.strictEqual(b.state('c').open, true);
+    t = 25000; assert.strictEqual(b.allow('c'), true, 'a trial that never reported back is replaced after probeMs');
+    b.record('c', false);                      // the trial failed: the rest starts again
+    assert.strictEqual(b.allow('c'), false);
+    t = 40000; assert.strictEqual(b.allow('c'), true);
+    b.record('c', true);                       // answered: closed for everybody
+    assert.deepStrictEqual([b.allow('c'), b.allow('c'), b.state('c').open], [true, true, false]);
+});
+
+test('PRA submit: a proxy address that cannot be read means nothing was sent (not "outcome unknown")', async () => {
+    const saved = { mock: process.env.PRA_MOCK, pra: process.env.PRA_PROXY_URL, fbr: process.env.FBR_PROXY_URL };
+    process.env.PRA_MOCK = 'false'; process.env.PRA_PROXY_URL = '203.0.113.7:3128'; // no http://
+    try {
+        let called = false;
+        const r = await pra.submit({ env: 'SANDBOX', token: 'x'.repeat(24), payload: {} }, { post: async () => { called = true; return { status: 200, data: '' }; } });
+        assert.strictEqual(r.outcome, 'NOT_SENT');
+        assert.strictEqual(r.reason, 'BAD_PROXY');
+        assert.match(r.message, /proxy address/);
+        assert.strictEqual(called, false, 'nothing was posted');
+    } finally {
+        for (const [k, v] of [['PRA_MOCK', saved.mock], ['PRA_PROXY_URL', saved.pra], ['FBR_PROXY_URL', saved.fbr]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
 });

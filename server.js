@@ -146,6 +146,9 @@ function publicTenant(t) {
 
 // Clients can't file in SANDBOX: test invoices are the admin's job (via Open workspace)
 function assertCanInvoice(req, tenant) {
+    if (!tenantModules(tenant).includes('INVOICING')) {
+        throw new HttpError(403, 'FBR Digital Invoicing is not switched on for this business. Please contact your administrator.');
+    }
     if (!sellerReady(tenant) || !tenant.fbrTokenEnc && process.env.FBR_MOCK !== 'true') {
         throw new HttpError(403, 'Your FBR setup is not complete yet. Please contact your administrator.');
     }

@@ -19,8 +19,22 @@ class PosError extends Error {
 const num = d => (d === null || d === undefined ? null : Number(d));
 const MIN_RETRY_GAP_MS = 3000; // SRS FR-6.6: operator retries are rate limited
 const PENDING = ['AWAITING_FISCALIZATION', 'OUTCOME_UNKNOWN'];
-const pktDay = date => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(date); // YYYY-MM-DD
+const PKT_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' });
+const pktDay = date => PKT_DAY.format(date); // YYYY-MM-DD
 const pad = (n, w) => String(n).padStart(w, '0');
+
+// "In flight" = a send has started and PRA has not answered yet. Whoever ends a send sets respondedAt: the answer itself, or the
+// sweep of a send that was cut off. A sale in flight is left alone by everything except that sweep.
+const inFlight = s => s.state === 'AWAITING_FISCALIZATION' && Boolean(s.submittedAt) && !s.respondedAt;
+const NOT_IN_FLIGHT = { OR: [{ submittedAt: null }, { respondedAt: { not: null } }] }; // the same test, as a database condition
+// NOT_SENT answers that mean the connection to PRA is not working (as opposed to "no token yet"): with every UNKNOWN they count as a failed connection
+const DOWN = new Set(['NO_CONNECTION', 'SERVICE_UNAVAILABLE', 'BLOCKED', 'BAD_PROXY']);
+const CHANGED = 'This sale was just changed by someone else. Look at it again.';
+const BUSY = 'This sale is being sent right now. Wait a moment and look again.';
+const pausedText = ms => `PRA could not be reached a moment ago, so sending is being given a rest. Try again in ${Math.max(1, Math.ceil(ms / 1000))} seconds.`;
+const lineFields = l => ({ itemId: l.itemId, itemCode: l.itemCode, itemName: l.itemName, pctCode: l.pctCode, quantity: l.quantity, unitPrice: l.unitPrice, discount: l.discount, taxRate: l.taxRate, saleValue: l.saleValue, taxCharged: l.taxCharged, totalAmount: l.totalAmount, refLineId: l.refLineId });
+// a whole number from the query string, kept inside limits (anything else gives the default)
+const whole = (v, dflt, min, max) => { const n = Math.trunc(Number(v)); return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : dflt; };
 
 function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker, now = () => new Date() }) {
     const emailOf = ctx => (ctx.req && ctx.req.user && ctx.req.user.email) || ctx.email || 'user';
@@ -172,8 +186,10 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     async function searchPct(q) {
         const s = note(q, 60);
         if (s.length < 2) return [];
+        // codes are stored as 9801.2000 (a dot after the 4th digit), so typed digits get the dot back before they are matched
+        const digits = '98' + s.replace(/\D/g, '').replace(/^98/, '');
         const where = /^[\d.\s]+$/.test(s)
-            ? { code: { startsWith: '98' + s.replace(/\D/g, '').replace(/^98/, '') } }
+            ? { code: { startsWith: digits.length > 4 ? `${digits.slice(0, 4)}.${digits.slice(4)}` : digits } }
             : { code: { startsWith: '98' }, AND: s.split(/\s+/).filter(w => w.length > 1).slice(0, 5).map(w => ({ description: { contains: w, mode: 'insensitive' } })) };
         const rows = await prisma.hsCode.findMany({ where, select: { code: true, description: true }, orderBy: { code: 'asc' }, take: 30 });
         return rows.map(r => ({ code: r.code, pctCode: r.code.replace(/\D/g, ''), description: r.description.replace(/^[\s-]+/, '') }));
@@ -199,10 +215,13 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     async function saleDetail(ctx, id) {
         await sweepInterrupted(ctx);
         const s = await loadSale(ctx, id, { events: { orderBy: { at: 'asc' } }, tries: { orderBy: { at: 'asc' } } });
-        const credits = s.invoiceType === 1 && s.state === 'FISCALIZED'
-            ? await prisma.posSale.findMany({ where: { tenantId: ctx.tenantId, refSaleId: s.id }, select: { id: true, usin: true, state: true, totalBill: true, fiscalNumber: true, createdAt: true }, orderBy: { createdAt: 'asc' } })
-            : [];
-        const returned = await returnedByLine(ctx.tenantId, s.id);
+        const canBeReturned = s.invoiceType === 1 && s.state === 'FISCALIZED'; // only a fiscalized sale has credit notes
+        const [credits, returned] = canBeReturned
+            ? await Promise.all([
+                prisma.posSale.findMany({ where: { tenantId: ctx.tenantId, refSaleId: s.id }, select: { id: true, usin: true, state: true, totalBill: true, fiscalNumber: true, createdAt: true }, orderBy: { createdAt: 'asc' } }),
+                returnedByLine(ctx.tenantId, s.id),
+            ])
+            : [[], new Map()];
         return {
             ...saleRow(s), counterPosId: s.counter.posId, buyer: { name: s.buyerName, pntn: s.buyerPntn, cnic: s.buyerCnic, phone: s.buyerPhone },
             totals: { quantity: num(s.totalQuantity), saleValue: num(s.totalSaleValue), discount: num(s.totalDiscount), tax: num(s.totalTax), bill: num(s.totalBill) },
@@ -214,8 +233,8 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         };
     }
     // How much of each sold line credit notes have already returned (a note that was rejected or cancelled returned nothing)
-    async function returnedByLine(tenantId, saleId) {
-        const rows = await prisma.posSaleLine.findMany({
+    async function returnedByLine(tenantId, saleId, db = prisma) {
+        const rows = await db.posSaleLine.findMany({
             where: { sale: { tenantId, refSaleId: saleId, state: { in: ['AWAITING_FISCALIZATION', 'OUTCOME_UNKNOWN', 'FISCALIZED'] } }, refLineId: { not: null } },
             select: { refLineId: true, quantity: true, discount: true, saleValue: true, taxCharged: true },
         });
@@ -228,16 +247,36 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         return m;
     }
 
+    // The one place a sale changes state. The update names the state it expects (and, in `guard`, anything else that must still be
+    // true, such as "not being sent"), so of two people acting at the same moment only one succeeds and the other gets a 409; the
+    // history line is written in the same transaction. to = the current state records a change that is not a move (a correction).
+    async function moveSale(ctx, sale, to, { data = {}, text = '', by, guard = {}, tx } = {}) {
+        if (to !== sale.state) assertMove(sale.state, to);
+        const run = async db => {
+            const r = await db.posSale.updateMany({ where: { id: sale.id, tenantId: ctx.tenantId, state: sale.state, ...guard }, data: { ...data, state: to } });
+            if (r.count !== 1) return false;
+            await db.posSaleEvent.create({ data: { saleId: sale.id, fromState: sale.state, toState: to, by: by || emailOf(ctx), note: note(text, 500) } });
+            return true;
+        };
+        if (!(tx ? await run(tx) : await prisma.$transaction(run))) throw new PosError(409, CHANGED);
+    }
+    // A return can only be checked fairly while no other return is being made: the business's USIN counter row is the lock
+    // (making a sale or a credit note takes it first thing), so two returns of the same line cannot both pass the check
+    const lockUsins = (tx, tenantId) => tx.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId} FOR UPDATE`;
+
     // A send that started but never ended (the server stopped while waiting): PRA may have recorded it
     async function sweepInterrupted(ctx) {
         const cutoff = new Date(now().getTime() - (pra.timeoutMs() + 15000));
         const stuck = await prisma.posSale.findMany({ where: { tenantId: ctx.tenantId, state: 'AWAITING_FISCALIZATION', respondedAt: null, submittedAt: { not: null, lt: cutoff } }, select: { id: true, usin: true } });
         for (const s of stuck) {
-            const r = await prisma.posSale.updateMany({ where: { id: s.id, state: 'AWAITING_FISCALIZATION', respondedAt: null }, data: { state: 'OUTCOME_UNKNOWN', lastError: 'The server stopped while waiting for PRA, so it is not known whether the sale was recorded.' } });
-            if (r.count) {
-                await prisma.posSaleEvent.create({ data: { saleId: s.id, fromState: 'AWAITING_FISCALIZATION', toState: 'OUTCOME_UNKNOWN', by: 'system', note: 'The send was interrupted before PRA answered' } });
-                await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.sale.unknown', entityType: 'PosSale', entityId: s.id, summary: `Sale ${s.usin}: the send to PRA was interrupted, outcome unknown: check PRA before doing anything` });
-            }
+            try {
+                // the send is over (nobody is waiting for PRA any more), so respondedAt is set: the sale can be sent again once it is sorted out
+                await moveSale(ctx, { id: s.id, state: 'AWAITING_FISCALIZATION' }, 'OUTCOME_UNKNOWN', {
+                    by: 'system', text: 'The send was interrupted before PRA answered', guard: { respondedAt: null, submittedAt: { not: null, lt: cutoff } },
+                    data: { respondedAt: now(), lastError: 'The server stopped while waiting for PRA, so it is not known whether the sale was recorded.' },
+                });
+            } catch (e) { if (e instanceof PosError && e.status === 409) continue; throw e; } // someone else got there first
+            await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.sale.unknown', entityType: 'PosSale', entityId: s.id, summary: `Sale ${s.usin}: the send to PRA was interrupted, outcome unknown: check PRA before doing anything` });
         }
     }
 
@@ -271,33 +310,71 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const found = await prisma.posSale.findFirst({ where: { tenantId: ctx.tenantId, clientRef: ref }, select: { id: true } });
         if (!found) return null;
         const sale = await saleDetail(ctx, found.id);
-        const inFlight = sale.state === 'AWAITING_FISCALIZATION' && sale.submittedAt && !sale.respondedAt;
-        const outcome = { FISCALIZED: 'FISCALIZED', REJECTED: 'REJECTED', OUTCOME_UNKNOWN: 'UNKNOWN', CANCELLED: 'CANCELLED' }[sale.state] || (inFlight ? 'IN_PROGRESS' : 'NOT_SENT');
+        const outcome = { FISCALIZED: 'FISCALIZED', REJECTED: 'REJECTED', OUTCOME_UNKNOWN: 'UNKNOWN', CANCELLED: 'CANCELLED' }[sale.state] || (inFlight(sale) ? 'IN_PROGRESS' : 'NOT_SENT');
         const message = outcome === 'FISCALIZED' ? 'This sale was already made and fiscalized.' : outcome === 'IN_PROGRESS' ? 'This sale is being sent to PRA right now.' : sale.lastError || 'This sale was already made.';
         return { sale, result: { outcome, message, fiscalNumber: sale.fiscalNumber, mock: sale.mock, duplicate: true } };
     }
-    // SRS 2.1 / FR-6.1: when PRA cannot be reached, new sales are blocked (no sale is made) with a clear message
+    // SRS 2.1 / FR-6.1: when PRA cannot be reached, new sales are blocked (no sale is made) with a clear message. After a rest the
+    // first caller is let through to try the connection, so this is asked once per sale, right before it is written.
     function assertConnected(counter) {
         if (breaker.allow(counter.id)) return;
         const secs = Math.max(1, Math.ceil(breaker.state(counter.id).retryInMs / 1000));
         throw new PosError(503, `Sales on this counter are paused: PRA could not be reached a moment ago, and a fiscal sale cannot be made without it. Check the internet connection and try again in ${secs} seconds.`);
     }
+    // Why this sale cannot go to PRA from this counter (null: it can). A sale keeps the environment and POS ID it was made with.
+    function refusal(sale, counter) {
+        if (!counter.active) return { reason: 'COUNTER_OFF', message: 'This counter is switched off, so the sale cannot be sent.' };
+        if (pra.isMock() && sale.env === 'PRODUCTION') return { reason: 'MOCK_PRODUCTION', message: 'This sale is for a Production counter, but the server is in test mode and sends nothing to PRA.' };
+        const madeWith = sale.payload && sale.payload.POSID;
+        if (sale.env !== counter.env || String(madeWith) !== String(counter.posId)) {
+            return { reason: 'COUNTER_CHANGED', message: `This sale was made when the counter was ${sale.env.toLowerCase()} with POS ID ${madeWith}, and the counter has been changed since, so nothing can be sent for it from here.` };
+        }
+        return null;
+    }
 
-    // Writes the sale (state AWAITING_FISCALIZATION) and sends it. input: { counterId, paymentMode, buyer, lines:[{itemId, quantity, unitPrice?, discount?, discountPercent?}] }
+    // Hands out the USIN and writes one invoice (state AWAITING_FISCALIZATION) with its lines and its first history line, all or
+    // nothing. `make` builds the invoice inside the transaction, once the USIN is known (and the business's USIN counter is locked).
+    // Two requests with the same key at the same moment: the second gets the first one's sale back ({ duplicate }).
+    async function insertSale(ctx, ref, make) {
+        try {
+            const sale = await prisma.$transaction(async tx => {
+                const usin = await allocateUsin(tx, ctx.tenantId);
+                const m = await make(tx, usin);
+                const problems = reconcile(m.payload);
+                if (problems.length) throw new PosError(500, `This ${m.what} does not add up (${problems[0]}) and was not saved.`);
+                return tx.posSale.create({
+                    data: {
+                        ...m.data, tenantId: ctx.tenantId, usin, clientRef: ref, state: 'AWAITING_FISCALIZATION', payload: m.payload, createdBy: emailOf(ctx), createdAt: m.at, finalizedAt: m.at,
+                        lines: { create: m.lines.map((l, i) => ({ sort: i, ...lineFields(l) })) },
+                        events: { create: [{ fromState: null, toState: 'AWAITING_FISCALIZATION', by: emailOf(ctx), note: m.event }] },
+                    },
+                });
+            });
+            return { sale };
+        } catch (e) {
+            if (e && e.code === 'P2002' && ref) { const duplicate = await sameSale(ctx, ref); if (duplicate) return { duplicate }; }
+            throw e;
+        }
+    }
+
+    // Writes the sale and sends it. input: { counterId, paymentMode, buyer, lines:[{itemId, quantity, unitPrice?, discount?, discountPercent?}] }
     async function createSale(ctx, input) {
         const ref = cleanRef(input.clientRef);
         const again = await sameSale(ctx, ref);
         if (again) return again;
-        const counter = await prisma.posCounter.findFirst({ where: { id: String(input.counterId || ''), tenantId: ctx.tenantId } });
-        if (!counter) throw new PosError(400, 'Choose the counter this sale is made on.');
-        await checkReady(ctx, counter);
-        assertConnected(counter);
         const paymentMode = V.cleanPaymentMode(input.paymentMode);
         const buyer = V.cleanBuyer(input.buyer || {});
         const wanted = Array.isArray(input.lines) ? input.lines : [];
         if (!wanted.length) throw new PosError(400, 'Add at least one item.');
         if (wanted.length > 200) throw new PosError(400, 'A sale can have 200 lines at most.');
-        const items = new Map((await prisma.posItem.findMany({ where: { tenantId: ctx.tenantId, id: { in: wanted.map(l => String(l.itemId || '')) } } })).map(i => [i.id, i]));
+        if (wanted.some(l => !l || typeof l !== 'object' || Array.isArray(l))) throw new PosError(400, 'A line in the sale is not valid.');
+        const [counter, found] = await Promise.all([
+            prisma.posCounter.findFirst({ where: { id: String(input.counterId || ''), tenantId: ctx.tenantId } }),
+            prisma.posItem.findMany({ where: { tenantId: ctx.tenantId, id: { in: wanted.map(l => String(l.itemId || '')) } } }),
+        ]);
+        if (!counter) throw new PosError(400, 'Choose the counter this sale is made on.');
+        await checkReady(ctx, counter);
+        const items = new Map(found.map(i => [i.id, i]));
         const named = [], calcInput = [];
         for (const l of wanted) {
             const item = items.get(String(l.itemId || ''));
@@ -315,56 +392,43 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         }
         const calc = C.calcSale(calcInput);
         const lines = calc.lines.map((l, i) => ({ ...named[i], ...l }));
+        const needBuyer = C.buyerProblem(calc.totals.saleValue, buyer);
+        if (needBuyer) throw new PosError(400, needBuyer);
         const at = now();
-        let sale;
-        try {
-          sale = await prisma.$transaction(async tx => {
-            const usin = await allocateUsin(tx, ctx.tenantId);
-            const payload = buildPayload({ posId: counter.posId, usin, dateTime: at, buyer, paymentMode, invoiceType: C.INVOICE_TYPES.NEW, lines, totals: calc.totals });
-            const problems = reconcile(payload);
-            if (problems.length) throw new PosError(500, `This sale does not add up (${problems[0]}) and was not saved.`);
-            return tx.posSale.create({
-                data: {
-                    tenantId: ctx.tenantId, counterId: counter.id, invoiceType: 1, usin, clientRef: ref, state: 'AWAITING_FISCALIZATION', env: counter.env, paymentMode,
-                    buyerName: buyer.name, buyerPntn: buyer.pntn, buyerCnic: buyer.cnic, buyerPhone: buyer.phone,
-                    totalQuantity: calc.totals.quantity, totalSaleValue: calc.totals.saleValue, totalDiscount: calc.totals.discount, totalTax: calc.totals.tax, totalBill: calc.totals.bill,
-                    payload, createdBy: emailOf(ctx), createdAt: at, finalizedAt: at,
-                    lines: { create: lines.map((l, i) => ({ sort: i, itemId: l.itemId, itemCode: l.itemCode, itemName: l.itemName, pctCode: l.pctCode, quantity: l.quantity, unitPrice: l.unitPrice, discount: l.discount, taxRate: l.taxRate, saleValue: l.saleValue, taxCharged: l.taxCharged, totalAmount: l.totalAmount })) },
-                    events: { create: [{ fromState: 'DRAFT', toState: 'AWAITING_FISCALIZATION', by: emailOf(ctx), note: 'Sale finalized' }] },
-                },
-            });
-          });
-        } catch (e) {
-            // two requests with the same key at the same moment: the second gets the first one's sale
-            if (e && e.code === 'P2002' && ref) { const dup = await sameSale(ctx, ref); if (dup) return dup; }
-            throw e;
-        }
-        return send(ctx, sale.id);
+        assertConnected(counter); // last, so a sale refused for any other reason never uses up the connection's one trial after a rest
+        const made = await insertSale(ctx, ref, async (tx, usin) => ({
+            what: 'sale', at, lines, event: 'Sale finalized',
+            payload: buildPayload({ posId: counter.posId, usin, dateTime: at, buyer, paymentMode, invoiceType: C.INVOICE_TYPES.NEW, lines, totals: calc.totals }),
+            data: {
+                counterId: counter.id, invoiceType: C.INVOICE_TYPES.NEW, env: counter.env, paymentMode, buyerName: buyer.name, buyerPntn: buyer.pntn, buyerCnic: buyer.cnic, buyerPhone: buyer.phone,
+                totalQuantity: calc.totals.quantity, totalSaleValue: calc.totals.saleValue, totalDiscount: calc.totals.discount, totalTax: calc.totals.tax, totalBill: calc.totals.bill,
+            },
+        }));
+        if (made.duplicate) return made.duplicate;
+        return send(ctx, made.sale.id, { gated: true });
     }
 
     // Sends one AWAITING sale to PRA and records how it ended. Never throws for a PRA problem: the outcome says what happened.
-    async function send(ctx, saleId) {
+    // gated: the caller has already been through the connection check (it holds the one trial given after a rest).
+    async function send(ctx, saleId, { gated = false } = {}) {
         const sale = await loadSale(ctx, saleId);
         const counter = sale.counter;
         const stop = async (message, reason) => {
             await prisma.posSale.update({ where: { id: sale.id }, data: { lastError: message } });
-            return { sale: await saleDetail(ctx, sale.id), result: { outcome: 'NOT_SENT', reason, message } };
+            return { sale: await saleDetail(ctx, sale.id), result: { outcome: 'NOT_SENT', reason, message, breaker: breaker.state(counter.id) } };
         };
         if (sale.state !== 'AWAITING_FISCALIZATION') throw new PosError(409, 'This sale is not waiting to be sent.');
-        if (!counter.active) return stop('This counter is switched off, so the sale cannot be sent.', 'COUNTER_OFF');
-        if (pra.isMock() && sale.env === 'PRODUCTION') return stop('This sale is for a Production counter, but the server is in test mode and sends nothing to PRA.', 'MOCK_PRODUCTION');
-        if (!breaker.allow(counter.id)) {
-            const s = Math.ceil(breaker.state(counter.id).retryInMs / 1000);
-            return stop(`The connection to PRA has failed several times in a row. It is being given a rest: try again in ${s} seconds.`, 'BREAKER_OPEN');
-        }
+        const refused = refusal(sale, counter);
+        if (refused) return stop(refused.message, refused.reason);
+        if (!gated && !breaker.allow(counter.id)) return stop(pausedText(breaker.state(counter.id).retryInMs), 'BREAKER_OPEN');
         const startedAt = now();
-        // Claim the send. In flight = submitted and not yet answered; only a sale that is not in flight can be claimed, and the
-        // claim itself marks it in flight, so of two requests at the same moment exactly one wins.
+        // Claim the send. Only a sale that is not in flight can be claimed, and the claim itself marks it in flight, so of two
+        // requests at the same moment exactly one wins.
         const claim = await prisma.posSale.updateMany({
-            where: { id: sale.id, state: 'AWAITING_FISCALIZATION', OR: [{ submittedAt: null }, { respondedAt: { not: null } }] },
+            where: { id: sale.id, state: 'AWAITING_FISCALIZATION', ...NOT_IN_FLIGHT },
             data: { attempts: { increment: 1 }, submittedAt: startedAt, respondedAt: null },
         });
-        if (claim.count !== 1) throw new PosError(409, 'This sale is being sent right now. Wait a moment and look again.');
+        if (claim.count !== 1) throw new PosError(409, BUSY);
 
         let token = null;
         if (counter.tokenEnc) { try { token = decrypt(counter.tokenEnc); } catch { token = null; } }
@@ -372,26 +436,44 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const endedAt = now();
 
         const connected = r.outcome === 'FISCALIZED' || r.outcome === 'REJECTED';
-        const failed = r.outcome === 'UNKNOWN' || (r.outcome === 'NOT_SENT' && (r.reason === 'NO_CONNECTION' || r.reason === 'SERVICE_UNAVAILABLE'));
+        const failed = r.outcome === 'UNKNOWN' || (r.outcome === 'NOT_SENT' && DOWN.has(r.reason));
         if (connected) breaker.record(counter.id, true); else if (failed) breaker.record(counter.id, false);
 
         const by = emailOf(ctx);
         await prisma.$transaction(async tx => {
             await tx.posAttempt.create({ data: { saleId: sale.id, at: startedAt, durationMs: r.durationMs ?? endedAt - startedAt, outcome: r.outcome, httpStatus: r.httpStatus ?? null, code: r.code ?? null, message: note(r.message, 500), mock: Boolean(r.mock) } });
             const common = { respondedAt: endedAt, lastCode: r.code ?? null, response: r.raw ?? undefined };
-            const move = async (to, data, text) => {
-                const done = await tx.posSale.updateMany({ where: { id: sale.id, state: 'AWAITING_FISCALIZATION' }, data: { ...common, ...data, state: to } });
-                if (done.count) await tx.posSaleEvent.create({ data: { saleId: sale.id, fromState: 'AWAITING_FISCALIZATION', toState: to, by, note: note(text) } });
+            const finish = async (to, data, text) => {
+                try { await moveSale(ctx, sale, to, { tx, by, text, data: { ...common, ...data } }); } catch (e) {
+                    if (!(e instanceof PosError && e.status === 409)) throw e;
+                    // nothing else touches a sale while PRA is answering, so this should not happen: if it does, PRA's answer is kept
+                    await tx.posSaleEvent.create({ data: { saleId: sale.id, fromState: null, toState: to, by, note: note(`PRA answered (${text}) but the sale had been changed meanwhile: check it.`, 500) } });
+                }
             };
-            if (r.outcome === 'FISCALIZED') await move('FISCALIZED', { fiscalNumber: r.invoiceNumber, fiscalizedAt: endedAt, lastError: null, mock: Boolean(r.mock) }, `PRA invoice no. ${r.invoiceNumber}${r.mock ? ' (test mode)' : ''}`);
-            else if (r.outcome === 'REJECTED') await move('REJECTED', { lastError: note(r.message, 500) }, r.message);
-            else if (r.outcome === 'UNKNOWN') await move('OUTCOME_UNKNOWN', { lastError: note(r.message, 500) }, r.message);
+            if (r.outcome === 'FISCALIZED') await finish('FISCALIZED', { fiscalNumber: r.invoiceNumber, fiscalizedAt: endedAt, lastError: null, mock: Boolean(r.mock) }, `PRA invoice no. ${r.invoiceNumber}${r.mock ? ' (test mode)' : ''}`);
+            else if (r.outcome === 'REJECTED') await finish('REJECTED', { lastError: note(r.message, 500) }, r.message);
+            else if (r.outcome === 'UNKNOWN') await finish('OUTCOME_UNKNOWN', { lastError: note(r.message, 500) }, r.message);
             else await tx.posSale.updateMany({ where: { id: sale.id, state: 'AWAITING_FISCALIZATION' }, data: { ...common, lastError: note(r.message, 500) } });
         });
         if (r.outcome === 'UNKNOWN') {
             await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.sale.unknown', entityType: 'PosSale', entityId: sale.id, summary: `Sale ${sale.usin}: PRA did not answer, outcome unknown: check PRA's report before doing anything` });
         }
-        return { sale: await saleDetail(ctx, sale.id), result: { outcome: r.outcome, message: r.message, fiscalNumber: r.invoiceNumber || null, mock: Boolean(r.mock) } };
+        return { sale: await saleDetail(ctx, sale.id), result: { outcome: r.outcome, message: r.message, fiscalNumber: r.invoiceNumber || null, mock: Boolean(r.mock), breaker: breaker.state(counter.id) } }; // breaker: so the screen need not reload everything to learn it
+    }
+
+    // A credit note PRA refused can be sent again only while the quantity it returns is still free: a newer note may have used it
+    async function assertReturnFits(db, tenantId, credit) {
+        const [orig, done] = await Promise.all([
+            db.posSaleLine.findMany({ where: { saleId: credit.refSaleId }, select: { id: true, quantity: true } }),
+            returnedByLine(tenantId, credit.refSaleId, db),
+        ]);
+        const sold = new Map(orig.map(l => [l.id, Math.round(Number(l.quantity) * 10000)]));
+        for (const l of credit.lines) {
+            const used = Math.round(((done.get(l.refLineId) || {}).quantity || 0) * 10000);
+            if (used + Math.round(Number(l.quantity) * 10000) > (sold.get(l.refLineId) || 0)) {
+                throw new PosError(409, `Part of what this note returns ("${l.itemName}") has been returned by another credit note since. Cancel this note and make a new return.`);
+            }
+        }
     }
 
     // Send again: for a sale that was never delivered, or one PRA rejected (after the buyer details were corrected). Never for OUTCOME_UNKNOWN.
@@ -400,16 +482,20 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const s = await loadSale(ctx, id);
         if (s.state === 'OUTCOME_UNKNOWN') throw new PosError(409, 'It is not known whether PRA recorded this sale. It is never sent again by itself: check PRA\'s report, then record what you found.');
         if (!['AWAITING_FISCALIZATION', 'REJECTED'].includes(s.state)) throw new PosError(409, 'This sale cannot be sent again.');
-        if (s.state === 'AWAITING_FISCALIZATION' && s.submittedAt && !s.respondedAt) throw new PosError(409, 'This sale is being sent right now. Wait a moment and look again.');
+        if (inFlight(s)) throw new PosError(409, BUSY);
         if (s.respondedAt && now().getTime() - s.respondedAt.getTime() < MIN_RETRY_GAP_MS) throw new PosError(429, 'Wait a few seconds before sending again.');
-        if (s.state === 'REJECTED') {
-            assertMove('REJECTED', 'AWAITING_FISCALIZATION');
-            await prisma.$transaction([
-                prisma.posSale.update({ where: { id }, data: { state: 'AWAITING_FISCALIZATION' } }),
-                prisma.posSaleEvent.create({ data: { saleId: id, fromState: 'REJECTED', toState: 'AWAITING_FISCALIZATION', by: emailOf(ctx), note: 'Sent again after correction' } }),
-            ]);
-        }
         await checkReady(ctx, s.counter);
+        if (s.state === 'REJECTED') {
+            // everything that could refuse the send is looked at first, so a refused "send again" changes nothing
+            const refused = refusal(s, s.counter);
+            if (refused) throw new PosError(409, refused.message);
+            const rest = breaker.state(s.counter.id);
+            if (rest.open) throw new PosError(503, pausedText(rest.retryInMs));
+            await prisma.$transaction(async tx => {
+                if (s.invoiceType === C.INVOICE_TYPES.CREDIT) { await lockUsins(tx, ctx.tenantId); await assertReturnFits(tx, ctx.tenantId, s); }
+                await moveSale(ctx, s, 'AWAITING_FISCALIZATION', { tx, guard: NOT_IN_FLIGHT, text: 'Sent again after correction' });
+            });
+        }
         return send(ctx, id);
     }
 
@@ -417,13 +503,10 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     async function updateBuyer(ctx, id, body) {
         const s = await loadSale(ctx, id);
         if (!['AWAITING_FISCALIZATION', 'REJECTED'].includes(s.state)) throw new PosError(409, 'Only a sale that has not been fiscalized can be corrected.');
-        if (s.state === 'AWAITING_FISCALIZATION' && s.submittedAt && !s.respondedAt) throw new PosError(409, 'This sale is being sent right now.');
+        if (inFlight(s)) throw new PosError(409, 'This sale is being sent right now.');
         const b = V.cleanBuyer(body || {});
         const payload = { ...s.payload, BuyerName: b.name, BuyerPNTN: b.pntn, BuyerCNIC: b.cnic, BuyerPhoneNumber: b.phone };
-        await prisma.$transaction([
-            prisma.posSale.update({ where: { id }, data: { buyerName: b.name, buyerPntn: b.pntn, buyerCnic: b.cnic, buyerPhone: b.phone, payload } }),
-            prisma.posSaleEvent.create({ data: { saleId: id, fromState: s.state, toState: s.state, by: emailOf(ctx), note: 'Buyer details corrected' } }),
-        ]);
+        await moveSale(ctx, s, s.state, { guard: NOT_IN_FLIGHT, text: 'Buyer details corrected', data: { buyerName: b.name, buyerPntn: b.pntn, buyerCnic: b.cnic, buyerPhone: b.phone, payload } });
         await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.sale.correct', entityType: 'PosSale', entityId: id, summary: `Sale ${s.usin}: buyer details corrected before sending again` });
     }
 
@@ -435,12 +518,8 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         if (why.length < 3) throw new PosError(400, 'Write why the sale is being cancelled.');
         if (s.state === 'OUTCOME_UNKNOWN') throw new PosError(409, 'It is not known whether PRA recorded this sale. Check PRA\'s report and record the result first.');
         if (s.state === 'FISCALIZED') throw new PosError(409, 'A fiscalized sale cannot be cancelled: make a credit note instead.');
-        if (s.state === 'AWAITING_FISCALIZATION' && s.submittedAt && !s.respondedAt) throw new PosError(409, 'This sale is being sent right now.');
-        assertMove(s.state, 'CANCELLED');
-        await prisma.$transaction([
-            prisma.posSale.update({ where: { id }, data: { state: 'CANCELLED', note: why } }),
-            prisma.posSaleEvent.create({ data: { saleId: id, fromState: s.state, toState: 'CANCELLED', by: emailOf(ctx), note: why } }),
-        ]);
+        if (inFlight(s)) throw new PosError(409, 'This sale is being sent right now.');
+        await moveSale(ctx, s, 'CANCELLED', { guard: NOT_IN_FLIGHT, text: why, data: { note: why } });
         await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.sale.cancel', entityType: 'PosSale', entityId: id, summary: `Sale ${s.usin} cancelled before fiscalization: ${why}` });
     }
 
@@ -450,26 +529,18 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         if (s.state !== 'OUTCOME_UNKNOWN') throw new PosError(409, 'This sale is not waiting for a manual check.');
         const why = note(text, 300);
         if (why.length < 5) throw new PosError(400, 'Write how you checked (for example: "found in the IMS Fiscal Report on 19 Oct").');
-        const by = emailOf(ctx);
+        const by = emailOf(ctx), at = now();
         if (result === 'FISCALIZED') {
             const n = note(fiscalNumber, 40);
-            if (!/^[A-Za-z0-9-]{6,40}$/.test(n)) throw new PosError(400, 'Enter the invoice number exactly as PRA\'s report shows it.');
+            if (!/^[A-Za-z0-9-]{6,30}$/.test(n)) throw new PosError(400, 'Enter the invoice number exactly as PRA\'s report shows it (letters and numbers, up to 30).');
             if (await prisma.posSale.count({ where: { tenantId: ctx.tenantId, fiscalNumber: n, id: { not: id } } })) throw new PosError(409, 'That PRA invoice number belongs to another sale.');
-            assertMove(s.state, 'FISCALIZED');
-            await prisma.$transaction([
-                prisma.posSale.update({ where: { id }, data: { state: 'FISCALIZED', fiscalNumber: n, fiscalizedAt: now(), lastError: null, resolvedBy: by, resolvedAt: now(), note: why } }),
-                prisma.posSaleEvent.create({ data: { saleId: id, fromState: s.state, toState: 'FISCALIZED', by, note: `Confirmed by hand: PRA invoice no. ${n}. ${why}` } }),
-            ]);
+            await moveSale(ctx, s, 'FISCALIZED', { by, text: `Confirmed by hand: PRA invoice no. ${n}. ${why}`, data: { fiscalNumber: n, fiscalizedAt: at, respondedAt: at, lastError: null, resolvedBy: by, resolvedAt: at, note: why } });
             await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.sale.resolve', entityType: 'PosSale', entityId: id, summary: `Sale ${s.usin} confirmed with PRA by hand as ${n}: ${why}` });
         } else if (result === 'NOT_FOUND') {
-            assertMove(s.state, 'REJECTED');
-            await prisma.$transaction([
-                prisma.posSale.update({ where: { id }, data: { state: 'REJECTED', lastError: 'Checked with PRA by hand: this sale was not recorded.', resolvedBy: by, resolvedAt: now(), note: why } }),
-                prisma.posSaleEvent.create({ data: { saleId: id, fromState: s.state, toState: 'REJECTED', by, note: `Not found at PRA. ${why}` } }),
-            ]);
+            await moveSale(ctx, s, 'REJECTED', { by, text: `Not found at PRA. ${why}`, data: { respondedAt: at, lastError: 'Checked with PRA by hand: this sale was not recorded.', resolvedBy: by, resolvedAt: at, note: why } });
             await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.sale.resolve', entityType: 'PosSale', entityId: id, summary: `Sale ${s.usin} not found at PRA: it can be sent again or cancelled. ${why}` });
         } else if (result === 'STILL_UNKNOWN') {
-            await prisma.posSaleEvent.create({ data: { saleId: id, fromState: s.state, toState: s.state, by, note: `Checked, still unknown. ${why}` } });
+            await moveSale(ctx, s, s.state, { by, text: `Checked, still unknown. ${why}`, data: { note: why } });
         } else {
             throw new PosError(400, 'Choose what the check showed.');
         }
@@ -483,58 +554,58 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const s = await loadSale(ctx, id);
         if (s.state !== 'FISCALIZED' || s.invoiceType !== 1) throw new PosError(409, 'Only a fiscalized sale can be returned.');
         await checkReady(ctx, s.counter);
-        assertConnected(s.counter);
+        const moved = refusal(s, s.counter);
+        if (moved) throw new PosError(409, moved.message);
         const why = note(reason, 300);
         if (why.length < 3) throw new PosError(400, 'Write the reason for the return.');
-        const wanted = (Array.isArray(lines) ? lines : []).filter(l => l && Number(l.quantity) > 0);
+        // a line with no quantity (or 0) is "not returned"; anything else must be a proper quantity
+        const wanted = (Array.isArray(lines) ? lines : []).filter(l => l && typeof l === 'object' && String(l.quantity === undefined || l.quantity === null ? '' : l.quantity).trim() !== '' && Number(l.quantity) !== 0);
         if (!wanted.length) throw new PosError(400, 'Choose what is being returned.');
-        const done = await returnedByLine(ctx.tenantId, s.id);
         const byId = new Map(s.lines.map(l => [l.id, l]));
-        const made = [];
-        for (const w of wanted) {
+        if (new Set(wanted.map(w => String(w.lineId || ''))).size !== wanted.length) throw new PosError(400, 'A line is listed twice.');
+        const none = { quantity: 0, discount: 0, saleValue: 0, taxCharged: 0 };
+        const creditLines = done => wanted.map(w => {
             const orig = byId.get(String(w.lineId || ''));
             if (!orig) throw new PosError(400, 'A returned line does not belong to this sale.');
-            if (made.some(m => m.refLineId === orig.id)) throw new PosError(400, 'A line is listed twice.');
-            const credit = C.creditLine(lineView(orig), w.quantity, done.get(orig.id) || { quantity: 0, discount: 0, saleValue: 0, taxCharged: 0 });
-            made.push({ ...credit, refLineId: orig.id, itemId: orig.itemId, itemCode: orig.itemCode, itemName: orig.itemName, pctCode: orig.pctCode });
-        }
-        const totals = C.totalsOf(made);
+            const credit = C.creditLine(lineView(orig), w.quantity, done.get(orig.id) || none);
+            return { ...credit, refLineId: orig.id, itemId: orig.itemId, itemCode: orig.itemCode, itemName: orig.itemName, pctCode: orig.pctCode };
+        });
+        creditLines(await returnedByLine(ctx.tenantId, s.id)); // mistakes are reported before the connection's one trial is used up
+        assertConnected(s.counter);
         const at = now();
-        let credit;
-        try {
-          credit = await prisma.$transaction(async tx => {
-            const usin = await allocateUsin(tx, ctx.tenantId);
-            const payload = buildPayload({
-                posId: s.counter.posId, usin, refUsin: s.usin, dateTime: at, buyer: { name: s.buyerName, pntn: s.buyerPntn, cnic: s.buyerCnic, phone: s.buyerPhone },
-                paymentMode: s.paymentMode, invoiceType: C.INVOICE_TYPES.CREDIT, lines: made, totals,
-            });
-            const problems = reconcile(payload);
-            if (problems.length) throw new PosError(500, `This credit note does not add up (${problems[0]}) and was not saved.`);
-            return tx.posSale.create({
+        const made = await insertSale(ctx, ref, async (tx, usin) => {
+            const credit = creditLines(await returnedByLine(ctx.tenantId, s.id, tx)); // read again under the lock: two returns at once cannot take the same quantity
+            const totals = C.totalsOf(credit);
+            return {
+                what: 'credit note', at, lines: credit, event: `Credit note for sale ${s.usin}: ${why}`,
+                payload: buildPayload({
+                    posId: s.counter.posId, usin, refUsin: s.usin, dateTime: at, buyer: { name: s.buyerName, pntn: s.buyerPntn, cnic: s.buyerCnic, phone: s.buyerPhone },
+                    paymentMode: s.paymentMode, invoiceType: C.INVOICE_TYPES.CREDIT, lines: credit, totals,
+                }),
                 data: {
-                    tenantId: ctx.tenantId, counterId: s.counterId, invoiceType: 3, usin, clientRef: ref, refUsin: s.usin, refSaleId: s.id, state: 'AWAITING_FISCALIZATION', env: s.counter.env, paymentMode: s.paymentMode,
+                    counterId: s.counterId, invoiceType: C.INVOICE_TYPES.CREDIT, refUsin: s.usin, refSaleId: s.id, env: s.env, paymentMode: s.paymentMode, note: why,
                     buyerName: s.buyerName, buyerPntn: s.buyerPntn, buyerCnic: s.buyerCnic, buyerPhone: s.buyerPhone,
                     totalQuantity: totals.quantity, totalSaleValue: totals.saleValue, totalDiscount: totals.discount, totalTax: totals.tax, totalBill: totals.bill,
-                    payload, note: why, createdBy: emailOf(ctx), createdAt: at, finalizedAt: at,
-                    lines: { create: made.map((l, i) => ({ sort: i, itemId: l.itemId, itemCode: l.itemCode, itemName: l.itemName, pctCode: l.pctCode, quantity: l.quantity, unitPrice: l.unitPrice, discount: l.discount, taxRate: l.taxRate, saleValue: l.saleValue, taxCharged: l.taxCharged, totalAmount: l.totalAmount, refLineId: l.refLineId })) },
-                    events: { create: [{ fromState: 'DRAFT', toState: 'AWAITING_FISCALIZATION', by: emailOf(ctx), note: `Credit note for sale ${s.usin}: ${why}` }] },
                 },
-            });
+            };
         });
-        } catch (e) {
-            if (e && e.code === 'P2002' && ref) { const dup = await sameSale(ctx, ref); if (dup) return dup; }
-            throw e;
-        }
-        await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.sale.credit', entityType: 'PosSale', entityId: credit.id, summary: `Credit note ${credit.usin} for sale ${s.usin}: ${why}` });
-        return send(ctx, credit.id);
+        if (made.duplicate) return made.duplicate;
+        await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.sale.credit', entityType: 'PosSale', entityId: made.sale.id, summary: `Credit note ${made.sale.usin} for sale ${s.usin}: ${why}` });
+        return send(ctx, made.sale.id, { gated: true });
     }
 
     // ---------- lists, receipts, monitoring ----------
-    // "from"/"to" are Pakistan calendar days (YYYY-MM-DD), both included
+    // "from"/"to" are Pakistan calendar days (YYYY-MM-DD), both included. A day that does not exist (2026-02-31, month 13) is refused.
+    const realDay = (text, what) => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(text).trim());
+        const d = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+        if (!d || d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) throw new PosError(400, `${what} must be a real date, written like 2026-10-19.`);
+        return m[0];
+    };
     const rangeWhere = ({ from, to }) => {
-        const range = {}, day = /^\d{4}-\d{2}-\d{2}$/;
-        if (from && day.test(from)) range.gte = new Date(`${from}T00:00:00+05:00`);
-        if (to && day.test(to)) range.lte = new Date(`${to}T23:59:59.999+05:00`);
+        const range = {};
+        if (from) range.gte = new Date(`${realDay(from, 'The "from" date')}T00:00:00+05:00`);
+        if (to) range.lte = new Date(`${realDay(to, 'The "to" date')}T23:59:59.999+05:00`);
         return Object.keys(range).length ? { createdAt: range } : {};
     };
     async function listSales(ctx, { from, to, state, q, counterId, limit = 100, offset = 0 } = {}) {
@@ -545,9 +616,9 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         Object.assign(where, rangeWhere({ from, to }));
         const s = note(q, 60);
         if (s) where.OR = [{ usin: { contains: s } }, { fiscalNumber: { contains: s, mode: 'insensitive' } }, { buyerName: { contains: s, mode: 'insensitive' } }];
-        const take = Math.min(Math.max(Number(limit) || 100, 1), 500);
+        const take = whole(limit, 100, 1, 500), skip = whole(offset, 0, 0, 1000000);
         const [rows, total] = await Promise.all([
-            prisma.posSale.findMany({ where, orderBy: { createdAt: 'desc' }, take, skip: Math.max(Number(offset) || 0, 0), include: BRIEF }),
+            prisma.posSale.findMany({ where, orderBy: { createdAt: 'desc' }, take, skip, include: BRIEF }),
             prisma.posSale.count({ where }),
         ]);
         return { total, sales: rows.map(saleRow) };
@@ -564,36 +635,47 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
             counter: { name: s.counter.name, posId: s.counter.posId },
             sale: {
                 usin: s.usin, fiscalNumber: s.fiscalNumber, verifyUrl: pra.verifyUrl(s.fiscalNumber), invoiceType: s.invoiceType, refUsin: s.refUsin, paymentMode: s.paymentMode,
-                mock: s.mock, env: s.env, at: s.finalizedAt || s.createdAt, cashier: s.createdBy, buyer: { name: s.buyerName, pntn: s.buyerPntn, cnic: s.buyerCnic, phone: s.buyerPhone },
+                mock: s.mock, env: s.env, at: s.finalizedAt || s.createdAt, cashier: String(s.createdBy || '').split('@')[0].slice(0, 24), buyer: { name: s.buyerName, pntn: s.buyerPntn, cnic: s.buyerCnic, phone: s.buyerPhone },
                 totals: { quantity: num(s.totalQuantity), saleValue: num(s.totalSaleValue), discount: num(s.totalDiscount), tax: num(s.totalTax), bill: num(s.totalBill) },
                 lines: s.lines.map(lineView),
             },
         };
     }
 
+    // Figures cover one kind of sale at a time, so test sales never mix with real ones: the test (Sandbox) sales while the server
+    // is in test mode, the real (Production) sales once it is live. Everything stays in the sales list and the CSV.
+    const figuresEnv = () => (pra.isMock() ? 'SANDBOX' : 'PRODUCTION');
+
+    // What needs a person (one query, cheap enough for the alert strip to ask every minute)
+    async function attention(ctx) {
+        await sweepInterrupted(ctx);
+        const rows = await prisma.posSale.groupBy({ by: ['state'], where: { tenantId: ctx.tenantId, state: { in: ['AWAITING_FISCALIZATION', 'REJECTED', 'OUTCOME_UNKNOWN'] } }, _count: { _all: true } });
+        const count = st => (rows.find(r => r.state === st) || { _count: { _all: 0 } })._count._all;
+        return { awaiting: count('AWAITING_FISCALIZATION'), rejected: count('REJECTED'), outcomeUnknown: count('OUTCOME_UNKNOWN') };
+    }
+
     // SRS 4.7: pending items, outcome-unknown count, last fiscalization, connection state
     async function overview(ctx) {
-        await sweepInterrupted(ctx);
         const today = pktDay(now());
         const dayStart = new Date(`${today}T00:00:00+05:00`);
-        const [byState, todayOk, last, branches, profile, answered] = await Promise.all([
-            prisma.posSale.groupBy({ by: ['state'], where: { tenantId: ctx.tenantId, state: { in: ['AWAITING_FISCALIZATION', 'REJECTED', 'OUTCOME_UNKNOWN'] } }, _count: { _all: true } }),
-            prisma.posSale.groupBy({ by: ['invoiceType'], where: { tenantId: ctx.tenantId, state: 'FISCALIZED', fiscalizedAt: { gte: dayStart } }, _count: { _all: true }, _sum: { totalBill: true, totalTax: true } }),
-            prisma.posSale.findFirst({ where: { tenantId: ctx.tenantId, state: 'FISCALIZED' }, orderBy: { fiscalizedAt: 'desc' }, select: { fiscalizedAt: true, fiscalNumber: true } }),
+        const env = figuresEnv();
+        const [needs, todayOk, last, branches, profile, answered] = await Promise.all([
+            attention(ctx),
+            prisma.posSale.groupBy({ by: ['invoiceType'], where: { tenantId: ctx.tenantId, state: 'FISCALIZED', env, fiscalizedAt: { gte: dayStart } }, _count: { _all: true }, _sum: { totalBill: true, totalTax: true } }),
+            prisma.posSale.findFirst({ where: { tenantId: ctx.tenantId, state: 'FISCALIZED', env }, orderBy: { fiscalizedAt: 'desc' }, select: { fiscalizedAt: true, fiscalNumber: true } }),
             listBranches(ctx.tenantId),
             getProfile(ctx.tenantId),
-            prisma.posAttempt.findMany({ where: { sale: { tenantId: ctx.tenantId }, mock: false, outcome: { in: ['FISCALIZED', 'REJECTED'] } }, orderBy: { at: 'desc' }, take: 100, select: { durationMs: true } }),
+            // how fast PRA answers means nothing in test mode (nothing is sent), so it is not even looked up there
+            pra.isMock() ? [] : prisma.posAttempt.findMany({ where: { sale: { tenantId: ctx.tenantId }, mock: false, outcome: { in: ['FISCALIZED', 'REJECTED'] } }, orderBy: { at: 'desc' }, take: 100, select: { durationMs: true } }),
         ]);
         const ms = answered.map(a => a.durationMs).sort((a, b) => a - b);
-        const count = st => (byState.find(r => r.state === st) || { _count: { _all: 0 } })._count._all;
         const t1 = todayOk.find(r => r.invoiceType === 1), t3 = todayOk.find(r => r.invoiceType === 3);
         return {
-            testMode: pra.isMock(), today,
-            awaiting: count('AWAITING_FISCALIZATION'), rejected: count('REJECTED'), outcomeUnknown: count('OUTCOME_UNKNOWN'),
+            testMode: pra.isMock(), today, ...needs,
             todaySales: { count: t1 ? t1._count._all : 0, total: t1 ? num(t1._sum.totalBill) : 0, tax: t1 ? num(t1._sum.totalTax) : 0 },
             todayReturns: { count: t3 ? t3._count._all : 0, total: t3 ? num(t3._sum.totalBill) : 0 },
             lastFiscalizedAt: last ? last.fiscalizedAt : null,
-            responseTimes: !pra.isMock() && ms.length ? { calls: ms.length, avgMs: Math.round(ms.reduce((t, x) => t + x, 0) / ms.length), p95Ms: ms[Math.min(ms.length - 1, Math.floor(ms.length * 0.95))], maxMs: ms[ms.length - 1] } : null,
+            responseTimes: ms.length ? { calls: ms.length, avgMs: Math.round(ms.reduce((t, x) => t + x, 0) / ms.length), p95Ms: ms[Math.min(ms.length - 1, Math.floor(ms.length * 0.95))], maxMs: ms[ms.length - 1] } : null,
             profileComplete: profile.complete,
             counters: branches.flatMap(b => b.counters.map(c => ({ id: c.id, name: c.name, branch: b.name, env: c.env, active: c.active, hasToken: c.hasToken, pending: c.pending, breaker: c.breaker }))),
         };
@@ -602,12 +684,14 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     // Totals for a date range (managers): fiscalized sales and returns, by payment mode and by item, and what is not fiscalized
     const money2 = n => Math.round(Number(n || 0) * 100) / 100;
     async function salesReport(ctx, filters = {}) {
-        const where = { tenantId: ctx.tenantId, ...rangeWhere(filters) };
-        const [fis, other, sold, back] = await Promise.all([
+        const inRange = { tenantId: ctx.tenantId, ...rangeWhere(filters) };
+        const where = { ...inRange, env: figuresEnv() };
+        const [fis, other, sold, back, left] = await Promise.all([
             prisma.posSale.groupBy({ by: ['invoiceType', 'paymentMode'], where: { ...where, state: 'FISCALIZED' }, _count: { _all: true }, _sum: { totalSaleValue: true, totalDiscount: true, totalTax: true, totalBill: true } }),
             prisma.posSale.groupBy({ by: ['state'], where: { ...where, state: { not: 'FISCALIZED' } }, _count: { _all: true } }),
             prisma.posSaleLine.groupBy({ by: ['itemCode', 'itemName'], where: { sale: { ...where, state: 'FISCALIZED', invoiceType: 1 } }, _sum: { quantity: true, totalAmount: true } }),
             prisma.posSaleLine.groupBy({ by: ['itemCode', 'itemName'], where: { sale: { ...where, state: 'FISCALIZED', invoiceType: 3 } }, _sum: { quantity: true, totalAmount: true } }),
+            prisma.posSale.count({ where: { ...inRange, state: 'FISCALIZED', env: { not: figuresEnv() } } }), // fiscalized, but of the other kind: not in these figures
         ]);
         const blank = () => ({ count: 0, saleValue: 0, discount: 0, tax: 0, bill: 0 });
         const sales = blank(), returns = blank(), byPay = new Map();
@@ -629,7 +713,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const fix = t => Object.fromEntries(Object.entries(t).map(([k, v]) => [k, k === 'count' ? v : money2(v)]));
         const notFis = st => (other.find(o => o.state === st) || { _count: { _all: 0 } })._count._all;
         return {
-            from: filters.from || null, to: filters.to || null, testMode: pra.isMock(),
+            from: filters.from || null, to: filters.to || null, testMode: pra.isMock(), scope: pra.isMock() ? 'TEST' : 'LIVE', leftOut: left,
             sales: fix(sales), returns: fix(returns),
             net: { saleValue: money2(sales.saleValue - returns.saleValue), tax: money2(sales.tax - returns.tax), bill: money2(sales.bill - returns.bill) },
             byPayment: [...byPay.values()].sort((a, b) => a.mode - b.mode).map(r => ({ ...r, sales: money2(r.sales), returns: money2(r.returns), net: money2(r.sales - r.returns) })),
@@ -646,14 +730,22 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const where = { tenantId: ctx.tenantId, ...rangeWhere({ from, to }) };
         if (state && ['AWAITING_FISCALIZATION', 'OUTCOME_UNKNOWN', 'FISCALIZED', 'REJECTED', 'CANCELLED'].includes(state)) where.state = state;
         const perLine = detail === 'lines';
-        const rows = await prisma.posSale.findMany({ where, orderBy: { createdAt: 'asc' }, take: 20000, include: { counter: { select: { name: true, posId: true } }, ...(perLine ? { lines: { orderBy: { sort: 'asc' } } } : {}) } });
-        const head = ['Date and time (Pakistan)', 'Invoice no. (USIN)', 'Type', 'Status', 'PRA invoice no.', 'Returns invoice (RefUSIN)', 'Counter', 'POS ID', 'Cashier', 'Paid by', 'Buyer name', 'Buyer PNTN', 'Buyer CNIC', 'Buyer phone'];
+        const rows = await prisma.posSale.findMany({
+            where, orderBy: { createdAt: 'asc' }, take: 20000,
+            select: {
+                finalizedAt: true, createdAt: true, usin: true, invoiceType: true, state: true, env: true, fiscalNumber: true, refUsin: true, createdBy: true, paymentMode: true,
+                buyerName: true, buyerPntn: true, buyerCnic: true, buyerPhone: true, totalSaleValue: true, totalDiscount: true, totalTax: true, totalBill: true, mock: true, note: true,
+                counter: { select: { name: true, posId: true } },
+                ...(perLine ? { lines: { orderBy: { sort: 'asc' }, select: { itemCode: true, itemName: true, pctCode: true, quantity: true, unitPrice: true, discount: true, taxRate: true, saleValue: true, taxCharged: true, totalAmount: true } } } : {}),
+            },
+        });
+        const head = ['Date and time (Pakistan)', 'Invoice no. (USIN)', 'Type', 'Status', 'Environment', 'PRA invoice no.', 'Returns invoice (RefUSIN)', 'Counter', 'POS ID', 'Cashier', 'Paid by', 'Buyer name', 'Buyer PNTN', 'Buyer CNIC', 'Buyer phone'];
         const lineHead = ['Item code', 'Item', 'PCT code', 'Quantity', 'Unit price', 'Discount', 'Tax %', 'Value', 'Tax', 'Line total'];
         const totalHead = ['Sale value', 'Discount', 'Sales tax', 'Total', 'Test mode', 'Note'];
         const out = [(perLine ? [...head, ...lineHead] : [...head, ...totalHead]).map(csvText).join(',')];
         const mode = id => (C.PAYMENT_MODES.find(m => m.id === id) || {}).label || id;
         for (const r of rows) {
-            const base = [praDateTime(r.finalizedAt || r.createdAt), r.usin, r.invoiceType === 3 ? 'Credit note' : r.invoiceType === 2 ? 'Debit note' : 'Sale', r.state, r.fiscalNumber, r.refUsin, r.counter.name, r.counter.posId, r.createdBy, mode(r.paymentMode), r.buyerName, r.buyerPntn, r.buyerCnic, r.buyerPhone].map(csvText);
+            const base = [praDateTime(r.finalizedAt || r.createdAt), r.usin, r.invoiceType === 3 ? 'Credit note' : r.invoiceType === 2 ? 'Debit note' : 'Sale', r.state, r.env === 'PRODUCTION' ? 'Production' : 'Sandbox / test', r.fiscalNumber, r.refUsin, r.counter.name, r.counter.posId, r.createdBy, mode(r.paymentMode), r.buyerName, r.buyerPntn, r.buyerCnic, r.buyerPhone].map(csvText);
             if (!perLine) out.push([...base, csvNum(r.totalSaleValue), csvNum(r.totalDiscount), csvNum(r.totalTax), csvNum(r.totalBill), r.mock ? 'yes' : '', csvText(r.note)].join(','));
             else for (const l of r.lines) out.push([...base, csvText(l.itemCode), csvText(l.itemName), l.pctCode, Number(l.quantity), csvNum(l.unitPrice), csvNum(l.discount), Number(l.taxRate), csvNum(l.saleValue), csvNum(l.taxCharged), csvNum(l.totalAmount)].join(','));
         }
@@ -672,7 +764,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     return {
         getProfile, saveProfile, listBranches, createBranch, updateBranch, createCounter, updateCounter, setToken, decommission,
         listItems, createItem, updateItem, searchPct, createSale, retry, updateBuyer, cancel, resolve, creditNote,
-        listSales, saleDetail, receipt, overview, cashierSetup, sweepInterrupted, salesReport, salesCsv,
+        listSales, saleDetail, receipt, overview, attention, cashierSetup, sweepInterrupted, salesReport, salesCsv,
     };
 }
 

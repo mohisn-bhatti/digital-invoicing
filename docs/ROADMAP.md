@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last updated: 2026-10-07 (CA feedback)_ · summary: [GUIDE.md](GUIDE.md)
+_Last updated: 2026-10-19 (Point of Sale reviewed and finished in test mode)_ · summary: [GUIDE.md](GUIDE.md)
 
 ## Done
 **Phase 1: filing invoices with FBR**
@@ -98,8 +98,10 @@ _Last updated: 2026-10-07 (CA feedback)_ · summary: [GUIDE.md](GUIDE.md)
 
 ## Later phases
 - **Point of Sale (PRA)** (a second product; a client with more than one picks at login): a cashier screen for restaurants,
-  banquet halls and other Punjab service businesses, every sale sent to PRA's eIMS. Built and tested in test mode on branch
-  `pos-module`; still to do: a run against PRA's sandbox, going live, reports. See [POS_MODULE.md](POS_MODULE.md).
+  banquet halls and other Punjab service businesses, every sale sent to PRA's eIMS. Built, independently reviewed and tested in
+  test mode on branch `pos-module` (sales, credit notes, reports and CSV, receipts, roles, the PRA-unreachable rules); still to do:
+  a run against PRA's sandbox and PRA's answers (discount reading, product catalogue, mixed payments), an outage procedure, going
+  live. See [POS_MODULE.md](POS_MODULE.md) and [POS_COMPLIANCE.md](POS_COMPLIANCE.md).
 - **Stock:** CSV import of purchases; refund (Annex-H) specifics for exporters, once the CA confirms who needs them.
 - **Subscription billing** for clients.
 - **Offline POS** for retail counters. This is a separate, larger product.

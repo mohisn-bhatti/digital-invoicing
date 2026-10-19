@@ -126,15 +126,18 @@
        cut off long invoices after page 1 */
     body > *:not(#receiptModal):not(#posReceiptModal) { display: none !important; }
     html, body { background: #fff !important; }
+    /* only the receipt that is open takes part: body.print-pos is set while the Point of Sale receipt is open (pos.js); the other
+       receipt window, and whatever is left in it from earlier, is not laid out at all */
+    body.print-pos #receiptModal, body:not(.print-pos) #posReceiptModal { display: none !important; }
     #receiptModal, #receiptModal > div, #receiptModal .overflow-x-auto, #posReceiptModal, #posReceiptModal > div, #posReceiptModal .overflow-x-auto { position: static !important; overflow: visible !important;
       display: block !important; max-height: none !important; height: auto !important; padding: 0 !important; margin: 0 !important;
       background: none !important; box-shadow: none !important; border: 0 !important; }
     body.print-a4 #invoiceA4 { border: 0 !important; box-shadow: none !important; padding: 0 !important; }
     body * { visibility: hidden; }
-    body:not(.print-a4) #receipt, body:not(.print-a4) #receipt * { visibility: visible; }
-    body:not(.print-a4) #receipt { position: absolute; left: 0; top: 0; }
-    body.print-a4 #invoiceA4, body.print-a4 #invoiceA4 * { visibility: visible; }
-    body.print-a4 #invoiceA4 { position: absolute; left: 0; top: 0; }
+    body:not(.print-a4):not(.print-pos) #receipt, body:not(.print-a4):not(.print-pos) #receipt * { visibility: visible; }
+    body:not(.print-a4):not(.print-pos) #receipt { position: absolute; left: 0; top: 0; }
+    body.print-a4:not(.print-pos) #invoiceA4, body.print-a4:not(.print-pos) #invoiceA4 * { visibility: visible; }
+    body.print-a4:not(.print-pos) #invoiceA4 { position: absolute; left: 0; top: 0; }
     body.print-pos #posReceipt, body.print-pos #posReceipt * { visibility: visible; }
     body.print-pos #posReceipt { position: absolute; left: 0; top: 0; }
     body.print-a4 #invoiceA4 thead { display: table-header-group; } /* repeat the item header on every page */
@@ -177,7 +180,7 @@
   <div id="navBackdrop" class="hidden fixed inset-0 bg-black/40 z-30 lg:hidden" onclick="toggleNav(false)"></div>
   <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-60 bg-slate-900 text-slate-200 flex flex-col -translate-x-full lg:translate-x-0 transition-transform">
     <a href="/" class="flex items-center gap-2.5 px-5 h-16 text-white border-b border-white/10">
-      <img src="/logo.svg" alt="" class="w-9 h-9"><span class="leading-tight"><span class="block text-xl font-extrabold tracking-wide"><span class="text-emerald-400">E</span>TAX</span><span class="block text-[10px] font-medium tracking-wider text-slate-400 uppercase">FBR Digital Invoicing</span></span>
+      <img src="/logo.svg" alt="" class="w-9 h-9"><span class="leading-tight"><span class="block text-xl font-extrabold tracking-wide"><span class="text-emerald-400">E</span>TAX</span><span id="brandSub" class="block text-[10px] font-medium tracking-wider text-slate-400 uppercase">FBR Digital Invoicing</span></span>
     </a>
     <nav id="nav" class="flex-1 overflow-y-auto py-3 text-sm"></nav>
     <div class="border-t border-white/10 p-4 text-xs">
@@ -1270,11 +1273,21 @@ function syncModules() {
   return false;
 }
 
+// Windows, timers and half-made sales of the last login, module or workspace must not carry over to the next
+function resetScreen() {
+  $('#receiptModal').classList.add('hidden');
+  document.body.classList.remove('print-a4', 'print-pos');
+  if (typeof posReset === 'function') posReset();
+}
 function show() {
+  resetScreen();
   for (const id of ['loginView', 'moduleView', 'adminView', 'clientView', 'shell']) $('#' + id).classList.add('hidden');
   if (!S.token) return $('#loginView').classList.remove('hidden');
   if (needsModuleChoice()) { showModuleChooser(); return; }
   $('#shell').classList.remove('hidden');
+  const posOpen = S.role !== 'SUPER_ADMIN' && S.module === 'POS'; // the name under the logo and the tab follow the product that is open
+  $('#brandSub').textContent = posOpen ? 'Point of Sale (PRA)' : 'FBR Digital Invoicing';
+  document.title = posOpen ? 'ETAX — Point of Sale' : 'ETAX — FBR Digital Invoicing';
   $('#companyName').textContent = S.company;
   $('#userLine').textContent = S.adminSession ? 'Admin workspace' : (S.role === 'SUPER_ADMIN' ? 'Super admin' : `${S.name || ''} · ${(S.tenantRole || 'OWNER').toLowerCase()}`);
   $('#pwLink').classList.toggle('hidden', Boolean(S.adminSession));
@@ -1921,6 +1934,7 @@ async function openWorkspace() {
 function exitWorkspace() {
   if (!S.adminSession) return;
   Object.assign(S, S.adminSession); S.adminSession = null;
+  S.modules = S.module = null; // the administrator's own screen: nothing of the client's module stays
   saveSession(); show();
 }
 

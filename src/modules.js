@@ -10,7 +10,10 @@ const DEFAULT_MODULES = ['INVOICING'];
 // Only known modules, no repeats, always in the order above
 const cleanModules = list => MODULE_IDS.filter(id => (Array.isArray(list) ? list : []).map(String).includes(id));
 
-// What a client has switched on (older rows and the administrator have none stored: invoicing)
-const tenantModules = tenant => (tenant && tenant.modules && tenant.modules.length ? cleanModules(tenant.modules) : DEFAULT_MODULES);
+// What a client has switched on. A row with nothing usable stored (older rows, the administrator, ids that no longer exist) gets invoicing.
+const tenantModules = tenant => {
+    const list = cleanModules(tenant && tenant.modules);
+    return list.length ? list : DEFAULT_MODULES;
+};
 
 module.exports = { MODULES, MODULE_IDS, DEFAULT_MODULES, cleanModules, tenantModules };

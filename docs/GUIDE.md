@@ -74,15 +74,19 @@ Every sale is sent to PRA (Punjab Revenue Authority) and the receipt carries PRA
 
 | Menu | Who | What it does |
 |---|---|---|
-| New Sale | everyone | Touch screen: tap items, quantity buttons, discount in rupees or %, pay mode (cash, card, gift voucher, loyalty card, mixed, cheque), optional buyer details, **Finalize & send to PRA** |
-| Sales & Receipts | everyone | Every sale and its status; reprint a receipt (never re-sent); send again, correct the buyer; managers also cancel, return items (credit note) and record a manual PRA check |
+| New Sale | everyone | Touch screen: tap items (or scan a barcode), quantity buttons, discount in rupees or %, pay mode (cash, card, gift voucher, loyalty card, mixed, cheque; card, mobile wallet and QR are all *Card*), buyer details (required above Rs 50,000 before tax: name and CNIC or NTN), **Finalize & send to PRA** |
+| Sales & Receipts | everyone | Every sale and its status; reprint a receipt (never re-sent); send again, correct the buyer; managers also see totals for the dates chosen, download a CSV, cancel, return items (credit note, or everything that is left) and record a manual PRA check |
 | Dashboard | manager, owner | Today's sales and returns, what needs attention (unknown outcome, refused, waiting), the connection to PRA per counter |
 | Items | manager, owner | Services with their PCT code (9801.xxxx), tax rate, an optional rate for card payments, price |
 | Settings | owner | Business details printed on receipts, branches, counters (POS ID + PRA token, sandbox or production), the server IP to give PRA |
 
 It runs in **test mode** until the server has `PRA_MOCK=false`: nothing is sent to PRA and receipts say they are not fiscal invoices.
-A sale whose answer from PRA is lost is never sent again by itself: a manager checks PRA's report and records the result.
-Details, decisions and what is still open: [POS_MODULE.md](POS_MODULE.md).
+While PRA cannot be reached, new sales are blocked for a few seconds with a clear message. A sale whose answer from PRA is lost is
+never sent again by itself: a manager checks PRA's report and records the result. The rates follow the Second Schedule (from 1 July
+2026 restaurants pay 16%, or 8% on card, wallet or QR payments); the owner enters them per item.
+To show it to a client: `node scripts/seed-pos-demo.js` makes a demo restaurant with sales (test mode only).
+Details, decisions and what is still open: [POS_MODULE.md](POS_MODULE.md). The build against the SRS and the code review:
+[POS_COMPLIANCE.md](POS_COMPLIANCE.md).
 
 ### Invoice statuses
 - **SUBMITTED:** FBR accepted it (it has an FBR number).

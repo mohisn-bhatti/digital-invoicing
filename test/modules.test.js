@@ -17,6 +17,12 @@ test('modules: a client with none stored (older rows) has Digital Invoicing', ()
     assert.deepStrictEqual(tenantModules({ modules: ['POS', 'INVOICING'] }), ['INVOICING', 'POS']);
 });
 
+test('modules: ids that are not in the registry leave nothing usable, so the client has Digital Invoicing (never an empty list)', () => {
+    assert.deepStrictEqual(tenantModules({ modules: ['TRADING'] }), DEFAULT_MODULES);
+    assert.deepStrictEqual(tenantModules({ modules: ['pos'] }), DEFAULT_MODULES, 'ids are exact');
+    assert.deepStrictEqual(tenantModules({ modules: ['BOGUS', 'POS'] }), ['POS'], 'the unknown one is dropped, the rest stays');
+});
+
 test('modules: every product has a name and a one-line description for the chooser', () => {
     for (const m of MODULES) assert.ok(m.id && m.label && m.blurb, m.id);
 });

@@ -80,7 +80,7 @@ model Tenant {
   // As chosen in IRIS: decides the sandbox scenarios to pass (DI spec §10)
   businessActivities String[]  @default([])
   sectors            String[]  @default([]) // IRIS lets several be ticked
-  modules            String[]  @default(["INVOICING"]) // products this client may use: INVOICING, TRADING (src/modules.js)
+  modules            String[]  @default(["INVOICING"]) // products this client may use: INVOICING, POS (src/modules.js)
   // Internal invoice number printed next to the FBR number, e.g. INV-{YYYY}-{NNNN} → INV-2026-0042
   invoiceNumberFormat String   @default("INV-{YYYY}-{NNNN}")
   softwareRegNo      String    @default("") // software registration no. from PRAL/FBR, printed on receipts
@@ -617,7 +617,7 @@ model PosSale {
 
   @@unique([tenantId, usin])
   @@unique([tenantId, clientRef])
-  @@index([tenantId, state])
+  @@index([tenantId, state, fiscalizedAt]) // the alert counts, today's figures and "last fiscalized"
   @@index([tenantId, createdAt])
   @@index([refSaleId])
 }
@@ -672,4 +672,5 @@ model PosAttempt {
   mock       Boolean  @default(false) // answered by test mode, not by PRA
 
   @@index([saleId])
+  @@index([at]) // the latest answers, for the response-time figures
 }
