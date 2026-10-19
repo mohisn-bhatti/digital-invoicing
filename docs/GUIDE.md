@@ -38,7 +38,7 @@ so the first page can take about a minute to load.
 | Menu | What it does |
 |---|---|
 | Dashboard | Go-live progress for the clients that use Digital Invoicing, this month's invoices and Point of Sale sales, invoices and POS sales that need attention, and every client whose **access period** is ending, in grace or over |
-| Clients | Add a client (business details, its first login, its **plan**, and how long it may use the application). The list shows each client's plan, **integration date and a countdown of the days left**, and can be **filtered** (search, status, access period, product, plan, FBR environment) and **sorted** (newest, name, integration date, days left, most active, latest invoice or sale). Open a client to manage it |
+| Clients | Add a client (business details, its first login, its **plan**, and how long it may use the application). The list shows each client's plan, its **integration date and the period it was allowed**, and an **Expiry** column with **the days left and the last day** (amber in the last 30 days, orange in the grace days, red when over; a client with no time limit has a *Set expiry…* link that opens its Overview), and can be **filtered** (search, status, access period, product, plan, FBR environment) and **sorted** (newest, name, integration date, days left, most active, latest invoice or sale). Open a client to manage it |
 | Client page (Manage) | Tabs, so only what applies shows: **Overview** (access period, plan & limits, modules), **Digital Invoicing** (only if the client has it: FBR settings in three groups, Business Nature / Sector → scenarios, go-live checklist, invoice settings), **Point of Sale** (only if the client has it: this month, what needs attention, counters and tokens, read-only), **Users** |
 | Workspace (inside a client) | "Enter" the client's account for 2 hours, e.g. to run sandbox scenarios on their behalf |
 | Reports | Annex-C (sales) CSV and Annex-H1 (stock statement) per client and month |
@@ -64,8 +64,9 @@ a phone they stack. Every feature a plan includes is shown with a tick; one that
 SDC/IMS set-up for PRA) is left out of that product's table. The Get Started buttons open the contact form with the product and plan
 already chosen, and the choice is written at the top of the enquiry message you see under *Enquiries*.
 
-**Plan and limits (enforced).** Each client can be given a plan when it is registered, or later under *Manage → Overview → Plan &
-limits*, which also shows what the client uses against each limit (full or over the limit shows in amber or red) and, before you
+**Plan and limits (enforced).** Each client can be given a plan when it is registered (plans are annual, so choosing one sets the
+access period to **1 year**, which you can change or take off before pressing Create), or later under *Manage → Overview → Plan &
+limits* (changing the plan there does not touch the access period; it tells you when the client has no time limit), which also shows what the client uses against each limit (full or over the limit shows in amber or red) and, before you
 save, what the chosen plan means for what the client already has. The numbers are the ones on the website, read from
 `public/plans.js`: **Starter** 1 branch, 2 terminals (counters), 1,000 products, 3 users; **Pro** 5, 10, 10,000, 15; **Enterprise**
 no limits. A client with **no plan has no limits** (every client from before plans existed). A limit is checked when something is

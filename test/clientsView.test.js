@@ -32,6 +32,14 @@ test('the access column: a countdown while running, a warning near the end, grac
     assert.strictEqual(V.accessLabel({}).text, 'No time limit', 'a row without the figures is shown as no limit');
 });
 
+test('the period allowed: "1 year", "6 months", nothing when there is no time limit', () => {
+    assert.strictEqual(V.periodText({ accessUnit: 'YEAR', accessCount: 1 }), '1 year');
+    assert.strictEqual(V.periodText({ accessUnit: 'YEAR', accessCount: 2 }), '2 years');
+    assert.strictEqual(V.periodText({ accessUnit: 'MONTH', accessCount: 1 }), '1 month');
+    assert.strictEqual(V.periodText({ accessUnit: 'MONTH', accessCount: 6 }), '6 months');
+    for (const none of [{}, { accessUnit: null, accessCount: null }, { accessUnit: 'YEAR' }, { accessCount: 3 }, null, undefined]) assert.strictEqual(V.periodText(none), '');
+});
+
 const LIST = () => {
     n = 0;
     return [

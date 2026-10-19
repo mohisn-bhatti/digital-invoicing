@@ -22,6 +22,9 @@
         }
     }
 
+    // "1 year", "6 months": how long the client was allowed to use the application (empty when there is no time limit)
+    const periodText = c => (c && c.accessUnit && c.accessCount ? plural(c.accessCount, c.accessUnit === 'YEAR' ? 'year' : 'month') : '');
+
     const ACCESS_FILTERS = {
         unlimited: ['UNLIMITED'], running: ['RUNNING'], ending: ['ENDING'], grace: ['GRACE'], expired: ['EXPIRED'],
         attention: ['ENDING', 'GRACE', 'EXPIRED'], // anything that needs the administrator's eye
@@ -70,5 +73,5 @@
         return rows.map((c, i) => [c, i]).sort((a, b) => compare(a[0], b[0]) || (key === 'name' ? 0 : byName(a[0], b[0])) || a[1] - b[1]).map(x => x[0]);
     }
 
-    return { accessLabel, matches, filterClients, sortClients, SORTS, ACCESS_FILTERS, monthCount, modulesOf, has };
+    return { accessLabel, periodText, matches, filterClients, sortClients, SORTS, ACCESS_FILTERS, monthCount, modulesOf, has };
 });

@@ -271,7 +271,7 @@
     </div>
     <div class="overflow-x-auto">
     <table class="w-full text-sm">
-      <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Company</th><th>Login &amp; mobile</th><th>Status</th><th>Integrated &amp; access</th><th>FBR set-up</th><th class="text-right">This month</th><th>Last invoice</th><th></th></tr></thead>
+      <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Company</th><th>Login &amp; mobile</th><th>Status</th><th>Integrated</th><th>FBR set-up</th><th class="text-right">This month</th><th>Expiry</th><th>Last invoice</th><th></th></tr></thead>
       <tbody id="clientRows"></tbody>
     </table>
     </div>
@@ -1475,13 +1475,14 @@ function renderClients() {
       <td class="text-xs"><div class="break-all">${esc(c.emails.join(', '))}</div>${c.mobile ? `<div class="font-mono text-slate-600 whitespace-nowrap mt-0.5">${esc(c.mobile)}</div>` : ''}</td>
       <td class="text-xs whitespace-nowrap">${chip(c.active ? 'emerald' : 'red', c.active ? 'Active' : 'Inactive')}${ended ? '<div class="text-slate-500 whitespace-normal">period ended</div>' : ''}
         <div>${ended ? `<button type="button" class="mt-1 underline text-emerald-700" onclick="manageClient('${c.id}', 'overview')">Renew…</button>` : `<button type="button" class="mt-1 underline text-slate-600" onclick="setClientActive('${c.id}', ${!c.active})">${c.active ? 'Make inactive' : 'Make active'}</button>`}</div></td>
-      <td class="text-xs"><div class="whitespace-nowrap text-slate-600">Since ${fmtDay(c.integratedAt)}</div>${chip(lab.tone, esc(lab.text), 'mt-1')}${lab.date ? `<div class="mt-0.5 text-slate-500 whitespace-nowrap">${lab.dateLabel} ${fmtDay(lab.date)}</div>` : ''}</td>
+      <td class="text-xs"><div class="whitespace-nowrap text-slate-600">Since ${fmtDay(c.integratedAt)}</div>${ClientsView.periodText(c) ? `<div class="mt-0.5 text-slate-500 whitespace-nowrap">${ClientsView.periodText(c)} allowed</div>` : ''}</td>
       <td class="text-xs">${di ? `<div>${esc(c.fbrEnv)} · ${c.fbrTokenMasked ? 'token ✔' : '<span class="text-amber-700">no token</span>'}</div><div class="mt-1">${chip(live ? 'emerald' : 'amber', live ? 'Live' : `${ob.done}/${ob.total} steps`)}</div>
         <div class="mt-0.5 text-slate-600">Scenarios ${ob.scenariosPassed}/${ob.scenariosAssigned || '?'}</div>` : pos ? `<span class="text-slate-600">${n(c.pos.counters, 'counter')}</span>` : '<span class="text-slate-300">—</span>'}</td>
       <td class="text-right text-xs">${month}</td>
+      <td class="text-xs">${chip(lab.tone, esc(lab.text))}${lab.date ? `<div class="mt-0.5 text-slate-500 whitespace-nowrap">${lab.dateLabel} ${fmtDay(lab.date)}</div>` : `<div><button type="button" class="mt-0.5 underline text-emerald-700 whitespace-nowrap" onclick="manageClient('${c.id}', 'overview')">Set expiry…</button></div>`}</td>
       <td class="text-xs">${last || '<span class="text-slate-300">—</span>'}</td>
       <td class="text-right whitespace-nowrap"><button class="bg-emerald-700 text-white rounded px-3 py-1 text-xs" onclick="manageClient('${c.id}')">Manage</button>${di ? `<div><button class="text-slate-600 underline text-xs mt-1" onclick="showClientHistory('${c.id}')">History</button></div>` : ''}</td></tr>`;
-  }).join('') || `<tr><td colspan="8" class="py-4 text-slate-500">${all.length ? 'No client matches these filters. <button type="button" class="underline text-emerald-700" onclick="resetClientFilters()">Clear filters</button>' : 'No clients yet.'}</td></tr>`;
+  }).join('') || `<tr><td colspan="9" class="py-4 text-slate-500">${all.length ? 'No client matches these filters. <button type="button" class="underline text-emerald-700" onclick="resetClientFilters()">Clear filters</button>' : 'No clients yet.'}</td></tr>`;
 }
 // Shared by the client card and the admin grid. clickable = scenario chips pick the scenario in the invoice form.
 function checklistHtml(ob, clickable) {
@@ -2098,12 +2099,19 @@ function syncRegisterAccess() {
     note.className = 'sm:col-span-1 text-xs text-slate-600 pb-2'; note.textContent = `Last day ${fmtDay(ends)}, then ${Access.GRACE_DAYS[d.accessUnit]} days of grace.`;
   } catch (err) { note.className = 'sm:col-span-1 text-xs text-red-700 pb-2'; note.textContent = err.message; }
 }
-$('#rcUnit').addEventListener('change', syncRegisterAccess); $('#rcCount').addEventListener('input', syncRegisterAccess); syncRegisterAccess();
-// the plan box: what the chosen plan allows (a client with no plan has no limits)
+// (a change made by hand is remembered, so choosing a plan never overrides it: see syncRegisterPlan)
+$('#rcUnit').addEventListener('change', () => { S.rcAuto = false; S.rcHand = true; syncRegisterAccess(); });
+$('#rcCount').addEventListener('input', () => { S.rcAuto = false; S.rcHand = true; syncRegisterAccess(); });
+syncRegisterAccess();
+// the plan box: what the chosen plan allows (a client with no plan has no limits). Plans are annual, so choosing one sets the access period
+// to 1 year (shown beside it, with the last day) unless the period was chosen by hand; taking the plan off puts back what it replaced.
 function syncRegisterPlan() {
-  const sel = $('#rcPlan');
+  const sel = $('#rcPlan'), unit = $('#rcUnit');
   if (!sel.options.length) sel.innerHTML = planOptions('No plan (no limits)');
   const plan = Plans.plan(sel.value);
+  if (plan && !unit.value && !S.rcHand) { unit.value = 'YEAR'; $('#rcCount').value = 1; S.rcAuto = true; }
+  else if (!plan && S.rcAuto) { unit.value = ''; S.rcAuto = false; }
+  syncRegisterAccess();
   $('#rcPlanNote').textContent = plan ? `${plan.name}: ${Plans.limitsSentence(plan)}. You can change the plan later under Manage.` : 'No plan: this client can add as much as it likes. You can choose a plan later under Manage.';
 }
 $('#rcPlan').addEventListener('change', syncRegisterPlan); syncRegisterPlan();
@@ -2113,7 +2121,7 @@ $('#clientForm').addEventListener('submit', async e => {
     const body = Object.fromEntries(new FormData(e.target));
     if (!body.accessUnit) delete body.accessCount; // no time limit
     await api('/api/admin/clients', { method: 'POST', body });
-    e.target.reset(); syncRegisterAccess(); syncRegisterPlan(); toast('Client created', true); loadClients();
+    e.target.reset(); S.rcAuto = S.rcHand = false; syncRegisterAccess(); syncRegisterPlan(); toast('Client created', true); loadClients();
   } catch (err) { toast(err.message); }
 });
 
@@ -2298,8 +2306,9 @@ function renderPlanUsage() {
 // What the plan in the picker means for this client, before it is saved: its limits, and anything the client already has above them
 function syncPlanNote() {
   const note = $('#mpPlanNote'), d = Plans.planNote(Plans.plan($('#mpPlanSel').value), S.mpUsage && S.mpUsage.rows);
+  const noEnd = Plans.plan($('#mpPlanSel').value) && S.managed && !S.managed.accessEndsAt; // plans are annual, yet this client has no expiry
   note.className = `basis-full text-xs pb-1 ${d.warn ? 'text-amber-700' : 'text-slate-600'}`;
-  note.textContent = d.text;
+  note.textContent = d.text + (noEnd ? ' Plans are annual, but this client has no time limit: set its access period above.' : '');
 }
 $('#mpPlanSel').addEventListener('change', syncPlanNote);
 $('#planForm').addEventListener('submit', async e => {
@@ -2307,7 +2316,7 @@ $('#planForm').addEventListener('submit', async e => {
   try {
     S.managed = await api(`/api/admin/clients/${S.manageId}/plan`, { method: 'PUT', body: { plan: $('#mpPlanSel').value } });
     fillSettings(S.managed); loadClients();
-    toast(S.managed.plan ? `${planName(S.managed.plan)} plan saved` : 'Plan removed: no limits', true);
+    toast(S.managed.plan ? `${planName(S.managed.plan)} plan saved${S.managed.accessEndsAt ? '' : '. This client has no expiry date yet: set the access period above.'}` : 'Plan removed: no limits', true);
   } catch (err) { toast(err.message); }
 });
 function fillAccess(s) {
