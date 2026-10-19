@@ -185,6 +185,13 @@ the same way to the sales list, its spreadsheet, the totals and every report. **
 - **Sales analysis** by day, month, day of the week, hour, item, category, cashier, counter, branch, payment way, tax rate or
   customer, with each group's share, returns taken off, a spreadsheet and a print.
 - **Tax summary**: value and sales tax by rate with returns taken off, for the monthly return.
+- **Invoices behind a figure:** every row of the analysis (by day, month, item, category, cashier, counter, branch, payment way, tax rate
+  or customer; not the hour or the weekday of a sale, which the list cannot be narrowed by) and of the tax summary has an *Invoices ›*
+  link. It opens Sales & Receipts with the report's own filters, that row's group, *Fiscalized* and the kind of sale (test or real) the
+  figures cover, so the list holds exactly the invoices the row counted. The filters the page has no box for show as chips (item,
+  category, tax rate, branch, test or real) that can be taken away one at a time; the totals and the spreadsheet above the list follow.
+  A test checks, for every grouping and seven sets of filters, that the list's invoices are the row's invoices (and, for rows that add
+  up whole invoices, that they add up to the row's net total).
 The reports use **Pakistan calendar days**, cover test or real sales only (see above), count at the line level (an invoice with two
 items is one invoice), allow 400 days at most in one report, and add money exactly (a year of 150,000 sales answers in under a
 second). Each spreadsheet is noted in the activity trail, and text Excel could read as a formula is defused.

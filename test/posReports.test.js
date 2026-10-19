@@ -315,3 +315,68 @@ run('reports: the report as a spreadsheet', async () => {
     assert.ok(W.audits.some(a => /pos\.export: Exported the report by item \(2026-10-01 to 2026-10-31\)/.test(a)));
     await W.rejects(W.svc.reportCsv(W.ctx, 'item', { from: '2026-10-01' }), 400, /Choose the dates/);
 });
+
+// ---------- from a report row to the invoices behind it ----------
+const Drill = require('../public/pos-drill');
+
+run('reports: a row\'s invoices are exactly the invoices the row counted, for every way of grouping and with filters carried over', async () => {
+    const drillable = ['day', 'month', 'item', 'category', 'cashier', 'counter', 'branch', 'payment', 'taxRate', 'customer'];
+    const wholeInvoice = new Set(['day', 'month', 'cashier', 'counter', 'branch', 'payment', 'customer']); // the row adds up whole invoices (not just some lines of each)
+    let rows = 0;
+    for (const [label, extra] of [['everything', {}], ['sales only', { invoiceType: 'sale' }], ['returns only', { invoiceType: 'return' }], ['drinks only', { category: 'Drinks' }], ['one cashier', { cashier: 'ali@test' }], ['bills of 1,000 and more', { minAmount: '1000' }], ['the 16% lines', { taxRate: '16' }]]) {
+        for (const g of drillable) {
+            const rep = await by(g, extra);
+            const range = { from: rep.filters.from, to: rep.filters.to };
+            for (const row of rep.rows) {
+                const mine = Drill.forRow(g, row, range);
+                assert.ok(mine, `${label} / ${g} / ${row.label}: there is a list for every row`);
+                // what the Sales page sends: the report's own filters, then the row's group, then "fiscalized" and the kind of sale the figures cover
+                const list = await W.svc.listSales(W.ctx, { ...rep.filters, ...mine, state: 'FISCALIZED', env: 'SANDBOX', limit: 500 });
+                assert.strictEqual(list.total, row.sales + row.returns, `${label} / ${g} / ${row.label}: the list has ${list.total} invoices, the row counted ${row.sales + row.returns}`);
+                assert.strictEqual(list.sales.length, list.total);
+                if (wholeInvoice.has(g) && !extra.category && !extra.taxRate) {
+                    const net = list.sales.reduce((t, s) => t + (s.invoiceType === 3 ? -1 : 1) * s.totalBill, 0);
+                    near(net, row.netBill, `${label} / ${g} / ${row.label}: the invoices add up to the row's net total`);
+                }
+                rows++;
+            }
+        }
+    }
+    assert.ok(rows > 100, `a good many rows were checked (${rows})`);
+});
+
+run('reports: without the kind of sale a row\'s list takes in the other kind too, which is why the link says it', async () => {
+    const rep = await by('item');
+    const lunch = rep.rows.find(r => r.label === 'Lunch buffet');
+    const mine = Drill.forRow('item', lunch, { from: rep.filters.from, to: rep.filters.to });
+    const base = { ...rep.filters, ...mine, state: 'FISCALIZED', limit: 500 };
+    const kind = await W.svc.listSales(W.ctx, { ...base, env: 'SANDBOX' }), both = await W.svc.listSales(W.ctx, base), real = await W.svc.listSales(W.ctx, { ...base, env: 'production' });
+    assert.strictEqual(kind.total, lunch.sales + lunch.returns);
+    assert.strictEqual(real.total, 1, 'the one real sale of the lunch (counter "Live till")');
+    assert.strictEqual(both.total, kind.total + real.total);
+    await W.rejects(W.svc.listSales(W.ctx, { env: 'banana' }), 400, /test \(sandbox\) or real \(production\)/);
+    await W.rejects(W.svc.reportBy(W.ctx, 'item', { from: '2026-10-01', to: '2026-10-31', env: ['SANDBOX', 'x'] }), 400, /test \(sandbox\) or real \(production\)/);
+});
+
+run('reports: the item filter works by code, in the list, the totals and the reports, and a closing sheet ignores it', async () => {
+    const { lunch } = W.items;
+    const q = { from: '2026-10-01', to: '2026-10-31', itemCode: lunch.code, state: 'FISCALIZED', env: 'SANDBOX', limit: 500 };
+    const list = await W.svc.listSales(W.ctx, q);
+    assert.ok(list.total > 0);
+    const rep = await inTestMode(() => W.svc.reportBy(W.ctx, 'item', { from: '2026-10-01', to: '2026-10-31', itemCode: lunch.code }));
+    assert.deepStrictEqual(rep.rows.map(r => r.label), ['Lunch buffet'], 'only that item is in the report');
+    assert.strictEqual(rep.totals.sales + rep.totals.returns, list.total);
+    assert.strictEqual((await W.svc.listSales(W.ctx, { ...q, itemCode: 'NO-SUCH-ITEM' })).total, 0);
+    assert.strictEqual((await W.svc.listSales(W.ctx, { ...q, itemCode: lunch.code.toLowerCase() })).total, 0, 'a code is matched as it is stored');
+    for (const hostile of ["x' OR '1'='1", '%', '_', 'ITM%']) assert.strictEqual((await W.svc.listSales(W.ctx, { ...q, itemCode: hostile })).total, 0, hostile);
+    // the spreadsheet and the totals take the same filter
+    const csv = await W.svc.salesCsv(W.ctx, { ...q, detail: 'lines' });
+    assert.strictEqual(csv.rows, list.total, 'the spreadsheet has the same invoices as the list (each with all of its lines)');
+    assert.ok(csv.csv.includes('Lunch buffet'));
+    const totals = await inTestMode(() => W.svc.salesReport(W.ctx, { from: '2026-10-01', to: '2026-10-31', itemCode: lunch.code }));
+    assert.strictEqual(totals.sales.count + totals.returns.count, list.total);
+    // the closing sheet is the whole till for the day, whatever else is asked
+    const sheet = await inTestMode(() => W.svc.reportClosing(W.ctx, { date: '2026-10-18' }));
+    const same = await inTestMode(() => W.svc.reportClosing(W.ctx, { date: '2026-10-18', itemCode: lunch.code, env: 'PRODUCTION', category: 'Food' }));
+    assert.deepStrictEqual(same.totals, sheet.totals);
+});

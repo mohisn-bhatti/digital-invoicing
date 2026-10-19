@@ -75,7 +75,7 @@ _Last updated: 2026-10-19 (Point of Sale phase 2 built on branch `pos-phase2`, n
 - Scanning: item barcodes, a barcode scanner or the camera adds an item with the price and tax rate it is set to; a receipt's QR
   opens the sale; QR labels to print; the server answers `GET /api/pos/lookup`
 - Reports with filters: daily closing (day-end sheet, a cashier sees only their own), sales analysis by twelve groupings, tax
-  summary; filters on the sales list; spreadsheets; Pakistan calendar days
+  summary; filters on the sales list; spreadsheets; Pakistan calendar days; every report row opens the invoices behind it
 - Defaults and receipt settings (how a sale starts, 58 or 80 mm paper, header, cashier on or off, what a new item starts with) and
   a quick-rate list for the usual kinds of business
 - Migrations `0044` and `0045` only add; to go live they need the safe production procedure (fingerprint, rehearsal, no seed), and

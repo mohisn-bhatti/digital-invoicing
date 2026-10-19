@@ -43,6 +43,12 @@ function cleanFilters(raw) {
     if (given('to')) f.to = realDay(r.to, 'The "to" date');
     if (f.from && f.to && f.from > f.to) throw new PosError(400, 'The "from" date is after the "to" date.');
     for (const k of ['counterId', 'branchId', 'customerId', 'itemId']) if (given(k)) f[k] = text(r[k], 64);
+    if (given('itemCode')) f.itemCode = text(r.itemCode, 50); // what a report row is keyed by (an item's code is on every sale line)
+    if (given('env')) { // test (sandbox) or real (production) sales: what a report row counted is only one of the two
+        const e = String(r.env).trim().toUpperCase();
+        if (e !== 'SANDBOX' && e !== 'PRODUCTION') throw new PosError(400, 'Choose test (sandbox) or real (production) sales.');
+        f.env = e;
+    }
     if (given('cashier')) f.cashier = text(r.cashier, 120);
     if (given('category')) f.category = text(r.category, 60); // '__none' = items with no category
     if (given('paymentMode')) {
@@ -80,6 +86,7 @@ function saleWhere(tenantId, f) {
     if (f.to) range.lte = dayEnd(f.to);
     if (Object.keys(range).length) where.createdAt = range;
     if (f.state) where.state = f.state;
+    if (f.env) where.env = f.env;
     if (f.counterId) where.counterId = f.counterId;
     if (f.branchId) where.counter = { branchId: f.branchId };
     if (f.cashier) where.createdBy = ciEquals(f.cashier);
@@ -89,6 +96,7 @@ function saleWhere(tenantId, f) {
     if (f.minAmount !== undefined || f.maxAmount !== undefined) where.totalBill = { ...(f.minAmount !== undefined ? { gte: f.minAmount } : {}), ...(f.maxAmount !== undefined ? { lte: f.maxAmount } : {}) };
     const line = {};
     if (f.itemId) line.itemId = f.itemId;
+    if (f.itemCode) line.itemCode = f.itemCode;
     if (f.category !== undefined) line.category = f.category === '__none' ? '' : f.category;
     if (f.taxRate !== undefined) line.taxRate = f.taxRate;
     if (Object.keys(line).length) where.lines = { some: line };
@@ -99,6 +107,7 @@ function saleWhere(tenantId, f) {
 // ---------- the same filters as SQL (the reports), over PosSaleLine l joined to PosSale s ----------
 function sqlConditions(tenantId, f, env) {
     const c = [Prisma.sql`s."tenantId" = ${tenantId}`, Prisma.sql`s."state" = 'FISCALIZED'::"PosSaleState"`, Prisma.sql`s."env" = ${env}::"PosEnv"`];
+    if (f.env) c.push(Prisma.sql`s."env" = ${f.env}::"PosEnv"`); // (and the report's own, above: asking for the other kind gives nothing)
     if (f.from) c.push(Prisma.sql`s."createdAt" >= ${utcText(dayStart(f.from))}::timestamp`);
     if (f.to) c.push(Prisma.sql`s."createdAt" <= ${utcText(dayEnd(f.to))}::timestamp`);
     if (f.counterId) c.push(Prisma.sql`s."counterId" = ${f.counterId}`);
@@ -110,6 +119,7 @@ function sqlConditions(tenantId, f, env) {
     if (f.minAmount !== undefined) c.push(Prisma.sql`s."totalBill" >= ${f.minAmount}`);
     if (f.maxAmount !== undefined) c.push(Prisma.sql`s."totalBill" <= ${f.maxAmount}`);
     if (f.itemId) c.push(Prisma.sql`l."itemId" = ${f.itemId}`);
+    if (f.itemCode) c.push(Prisma.sql`l."itemCode" = ${f.itemCode}`);
     if (f.category !== undefined) c.push(Prisma.sql`l."category" = ${f.category === '__none' ? '' : f.category}`);
     if (f.taxRate !== undefined) c.push(Prisma.sql`l."taxRate" = ${f.taxRate}`);
     return Prisma.join(c, ' AND ');
@@ -232,7 +242,7 @@ function createReports({ prisma, pra, getProfile, listBranches }) {
     async function closing(ctx, raw) {
         const f = cleanFilters({ ...raw, to: raw && raw.date ? raw.date : raw && raw.to, from: raw && raw.date ? raw.date : raw && raw.from });
         if (!f.from || f.from !== f.to) throw new PosError(400, 'Choose the day to close.');
-        for (const k of ['itemId', 'category', 'taxRate', 'minAmount', 'maxAmount', 'state', 'q', 'invoiceType']) delete f[k]; // a closing sheet is the whole till for the day, never narrowed by what was sold
+        for (const k of ['itemId', 'itemCode', 'category', 'taxRate', 'minAmount', 'maxAmount', 'state', 'q', 'invoiceType', 'env']) delete f[k]; // a closing sheet is the whole till for the day, never narrowed by what was sold
         const header = saleWhere(ctx.tenantId, f);
         const [pay, rate, cashier, counter] = await Promise.all(['payment', 'taxRate', 'cashier', 'counter'].map(d => aggregate(ctx.tenantId, f, d)));
         const totals = pay.totals;

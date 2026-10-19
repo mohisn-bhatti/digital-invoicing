@@ -4,10 +4,17 @@
    PAGE_ENTER, NAV, renderNav, syncModules) until a function runs. The money maths is /pos-calc.js (PosCalc), the same file the
    server uses, so the preview always matches what is sent. */
 
+// The filters of the Sales & Receipts list, none chosen. Dates: null = not chosen yet (today), '' = all dates. The last nine have no box on
+// the page: they come from a report row (or the customers page) and show as chips that can be taken away one by one.
+const posBlankSales = (over = {}) => ({
+  from: null, to: null, state: '', q: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '',
+  customerId: '', customerName: '', itemCode: '', itemName: '', category: '', taxRate: '', branchId: '', branchName: '', env: '', ...over,
+});
+
 const POS = {
   setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, modePicked: false, buyer: { name: '', pntn: '', cnic: '', phone: '' }, customer: null, saveCustomer: false,
   cat: '', q: '', busy: false, result: null, detail: null, settings: null, receiptWidth: 80, cashiers: null,
-  sales: { from: null, to: null, state: '', q: '', customerId: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null, pctTimer: null, // dates: null = not chosen yet (today), '' = all dates
+  sales: posBlankSales(), reportKey: null, items: [], itemQ: '', branches: [], profile: null, pctTimer: null,
   ref: null, refSig: null, creditRef: null, alerts: null, alertTimer: null, tick: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false, watching: false,
 };
 // Pages that the other Point of Sale scripts add (customers, reports, accounts ...): each pushes { id, html(), enter() } and gets its
@@ -20,7 +27,7 @@ function posReset() {
   clearInterval(POS.alertTimer); clearInterval(POS.tick); clearTimeout(POS.pctTimer);
   Object.assign(POS, {
     setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, modePicked: false, buyer: posBlankBuyer(), customer: null, saveCustomer: false, cat: '', q: '', busy: false, result: null, detail: null, settings: null, receiptWidth: 80, cashiers: null,
-    sales: { from: null, to: null, state: '', q: '', customerId: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null,
+    sales: posBlankSales(), reportKey: null, items: [], itemQ: '', branches: [], profile: null,
     ref: null, refSig: null, creditRef: null, alerts: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false,
   });
   posCloseModal(); posCloseReceipt();
@@ -546,7 +553,7 @@ function posCloseReceipt() {
 async function posEnterSales() {
   posPollAlerts();
   if (POS.sales.from === null) POS.sales.from = POS.sales.to = pkDate(); // first visit: today. Empty dates mean all dates (the alert links ask for that).
-  $('#psFrom').value = POS.sales.from; $('#psTo').value = POS.sales.to; $('#psState').value = POS.sales.state; $('#psQ').value = POS.sales.q; posRenderSalesCustomer();
+  $('#psFrom').value = POS.sales.from; $('#psTo').value = POS.sales.to; $('#psState').value = POS.sales.state; $('#psQ').value = POS.sales.q; posRenderSalesChips();
   if (!POS.setup) { try { await posLoadSetup(); } catch { /* the list still loads */ } }
   await posFillSalesFilters();
   await posLoadSales();
@@ -555,7 +562,8 @@ async function posEnterSales() {
 async function posFillSalesFilters() {
   const o = (v, t, cur) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(t)}</option>`, f = POS.sales;
   const counters = POS.setup ? POS.setup.counters : [], modes = POS.setup ? POS.setup.paymentModes : [];
-  $('#psCounter').innerHTML = o('', 'All counters', f.counterId) + counters.map(c => o(c.id, `${c.branch} · ${c.name}`, f.counterId)).join('');
+  // (a counter that is switched off is not in the list, but a report row can point at it: it is shown rather than hidden behind "All counters")
+  $('#psCounter').innerHTML = o('', 'All counters', f.counterId) + counters.map(c => o(c.id, `${c.branch} · ${c.name}`, f.counterId)).join('') + (f.counterId && !counters.some(c => c.id === f.counterId) ? o(f.counterId, 'A counter that is switched off', f.counterId) : '');
   $('#psPay').innerHTML = o('', 'Any way', f.paymentMode) + modes.map(m => o(m.id, m.label, f.paymentMode)).join('');
   $('#psType').value = f.invoiceType; $('#psMin').value = f.minAmount; $('#psMax').value = f.maxAmount;
   if (canManage()) {
@@ -574,29 +582,48 @@ function posSalesFilter() {
   const was = POS.sales;
   // a receipt's address (what its QR holds) typed or scanned into the search box means its invoice number
   POS.sales = {
-    from: $('#psFrom').value, to: $('#psTo').value, state: $('#psState').value, q: PosScan.parse($('#psQ').value).invoice || $('#psQ').value.trim(), customerId: was.customerId || '', customerName: was.customerName || '',
+    ...was, // (what has no box here, the chips, stays)
+    from: $('#psFrom').value, to: $('#psTo').value, state: $('#psState').value, q: PosScan.parse($('#psQ').value).invoice || $('#psQ').value.trim(),
     counterId: $('#psCounter').value, cashier: $('#psCashier').value || '', paymentMode: $('#psPay').value, invoiceType: $('#psType').value, minAmount: $('#psMin').value.trim(), maxAmount: $('#psMax').value.trim(),
   };
   posCountSalesFilters();
   posLoadSales(posSalesTotalsKey() !== POS.reportKey); // the totals change with the dates and the filters, not with the search or the status
 }
 // What the totals above the list depend on (everything but the word searched for and the status)
-const posSalesTotalsKey = () => JSON.stringify(['from', 'to', 'customerId', 'counterId', 'cashier', 'paymentMode', 'invoiceType', 'minAmount', 'maxAmount'].map(k => POS.sales[k] || ''));
+const posSalesTotalsKey = () => JSON.stringify(['from', 'to', 'customerId', 'counterId', 'cashier', 'paymentMode', 'invoiceType', 'minAmount', 'maxAmount', 'itemCode', 'category', 'taxRate', 'branchId', 'env'].map(k => POS.sales[k] || ''));
 // The filters as the query string the server takes
 function posSalesQuery(extra = {}, skip = []) {
   const q = new URLSearchParams();
-  for (const k of ['from', 'to', 'state', 'q', 'customerId', 'counterId', 'cashier', 'paymentMode', 'invoiceType', 'minAmount', 'maxAmount']) if (POS.sales[k] && !skip.includes(k)) q.set(k, POS.sales[k]);
+  for (const k of ['from', 'to', 'state', 'q', 'customerId', 'counterId', 'cashier', 'paymentMode', 'invoiceType', 'minAmount', 'maxAmount', 'itemCode', 'category', 'taxRate', 'branchId', 'env']) if (POS.sales[k] && !skip.includes(k)) q.set(k, POS.sales[k]);
   for (const [k, v] of Object.entries(extra)) q.set(k, v);
   return q;
 }
 let posSalesTimer = null;
 function posSalesSearch() { clearTimeout(posSalesTimer); posSalesTimer = setTimeout(posSalesFilter, 350); }
-function posSalesToday() { POS.sales = { from: pkDate(), to: pkDate(), state: '', q: '', customerId: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }; posEnterSales(); }
+function posSalesToday() { POS.sales = posBlankSales({ from: pkDate(), to: pkDate() }); posEnterSales(); }
 // narrow the list to one customer (from the customers page), or take that back
-function posSalesCustomer(id, name) { POS.sales = { from: '', to: '', state: '', q: '', customerId: id || '', customerName: name || '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }; if (S.page === 'p-sales') posEnterSales(); else go('p-sales'); }
-function posRenderSalesCustomer() {
+function posSalesCustomer(id, name) { POS.sales = posBlankSales({ from: '', to: '', customerId: id || '', customerName: name || '' }); if (S.page === 'p-sales') posEnterSales(); else go('p-sales'); }
+// The filters that have no box on this page, as chips: [key, what, which]. Each can be taken away on its own.
+function posSalesChips() {
+  const f = POS.sales, out = [];
+  if (f.customerId) out.push(['customerId', 'Customer', f.customerId === 'none' ? 'No saved customer' : f.customerName || 'selected']);
+  if (f.itemCode) out.push(['itemCode', 'Item', f.itemName || f.itemCode]);
+  if (f.category) out.push(['category', 'Category', f.category === '__none' ? 'No category' : f.category]);
+  if (f.taxRate !== '') out.push(['taxRate', 'Tax rate', `${Number(f.taxRate)}%`]);
+  if (f.branchId) out.push(['branchId', 'Branch', f.branchName || 'selected']);
+  if (f.env) out.push(['env', 'Showing', f.env === 'SANDBOX' ? 'test sales only' : 'real sales only']);
+  return out;
+}
+function posRenderSalesChips() {
   const el = $('#psCust'); if (!el) return;
-  el.innerHTML = POS.sales.customerId ? `<span class="inline-flex items-center gap-2 text-sm bg-emerald-50 border border-emerald-200 rounded-full pl-3 pr-1 py-0.5">Customer: <b>${esc(POS.sales.customerName || 'selected')}</b><button type="button" onclick="posSalesCustomer('')" class="w-8 h-8 text-slate-500 hover:text-red-600 text-lg leading-none" aria-label="Show every customer">×</button></span>` : '';
+  const chips = posSalesChips();
+  el.innerHTML = chips.length ? `<div class="flex flex-wrap gap-2">${chips.map(([key, what, which]) => `<span data-chip="${key}" class="inline-flex items-center gap-2 text-sm bg-emerald-50 border border-emerald-200 rounded-full pl-3 pr-1 py-0.5">${what}: <b>${esc(which)}</b><button type="button" onclick="posSalesDrop('${key}')" class="w-8 h-8 text-slate-500 hover:text-red-600 text-lg leading-none" aria-label="Stop filtering by ${esc(what.toLowerCase())}">×</button></span>`).join('')}</div>` : '';
+}
+// Take one of those filters away (the names that went with it go too), and show the list and its totals again
+function posSalesDrop(key) {
+  const names = { customerId: ['customerName'], itemCode: ['itemName'], branchId: ['branchName'] }[key] || [];
+  POS.sales = { ...POS.sales, [key]: '', ...Object.fromEntries(names.map(n => [n, ''])) };
+  posRenderSalesChips(); posLoadSales(true);
 }
 async function posLoadReport() {
   const el = $('#psReport'); if (!el) return;
@@ -886,7 +913,7 @@ function posRenderDash(o) {
             <div class="text-xs text-slate-500">Token ${c.hasToken ? 'saved' : '<span class="text-red-700">missing</span>'}${c.pending ? ` · <span class="text-amber-700">${c.pending} waiting for PRA</span>` : ''}</div></div>
           <div class="text-sm">${c.breaker.open ? `<span class="text-amber-700">connection resting (${Math.ceil(c.breaker.retryInMs / 1000)} s)</span>` : c.breaker.fails ? `<span class="text-amber-700">${c.breaker.fails} failed in a row</span>` : '<span class="text-emerald-700">connection ok</span>'}</div></div>`).join('') || '<div class="border-t py-4 text-center text-slate-500 text-sm">No counter yet. The account owner adds one in Settings.</div>'}</div></div></div>`;
 }
-function posShowState(state) { POS.sales = { from: '', to: '', state, q: '', customerId: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }; go('p-sales'); }
+function posShowState(state) { POS.sales = posBlankSales({ from: '', to: '', state }); go('p-sales'); }
 
 /* ---------- settings (account owner) ---------- */
 async function posEnterSettings() {

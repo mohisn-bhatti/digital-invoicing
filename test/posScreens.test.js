@@ -42,7 +42,7 @@ function page(overrides = {}) {
     box.self = box; box.window.document = box.document;
     const ctx = vm.createContext(box);
     // the same scripts, in the same order, as app.html loads them
-    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos-rates.js', 'pos.js', 'pos-camera.js', 'pos-customers.js', 'pos-reports.js']) vm.runInContext(pub(f), ctx, { filename: f });
+    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos-rates.js', 'pos-drill.js', 'pos.js', 'pos-camera.js', 'pos-customers.js', 'pos-reports.js']) vm.runInContext(pub(f), ctx, { filename: f });
     vm.runInContext(`
         const S = { token: 't', module: 'POS', tenantRole: 'OWNER' }, PAGE_ENTER = {};
         const showPlanHint = () => {}; // (the plan-limit hint under a list: not what these tests are about)
@@ -836,4 +836,153 @@ test('POS screen: the cashier names of one login are not the next login\'s', () 
     p.run("POS.cashiers = [{ email: 'old@business.pk', name: 'Old Staff' }]");
     p.run('posReset()');
     assert.strictEqual(p.run('POS.cashiers'), null);
+});
+
+// ---------- from a report row to its invoices ----------
+const repRow = (key, label, over = {}) => ({ key, label, sales: 2, returns: 0, quantity: 3, returnQuantity: 0, saleValue: 300, discount: 0, tax: 48, bill: 348, returnValue: 0, returnTax: 0, returnBill: 0, netQuantity: 3, netValue: 300, netTax: 48, netBill: 348, share: 50, ...over });
+const repData = (groupBy, rows, over = {}) => ({ groupBy, title: groupBy, scope: 'LIVE', leftOut: 0, filters: { from: '2026-10-05', to: '2026-11-20' }, rows, totals: repRow('Total', { sales: 4 }), ...over });
+const drillPage = (groupBy, rows, over = {}, opts = {}) => {
+    const p = page(opts);
+    p.run(SETUP);
+    p.run(`S.page = 'p-reports'; posRep.opts = { branches: [{ id: 'b1', name: 'Main branch', counters: [] }, { id: 'b2', name: 'Annex', counters: [] }] }; posRep.last = { kind: 'analysis', groupBy: ${JSON.stringify(groupBy)}, data: ${JSON.stringify(repData(groupBy, rows, over))} }`);
+    return p;
+};
+const salesNow = p => JSON.parse(p.run('JSON.stringify(POS.sales)'));
+
+test('POS screen: a blank set of sales filters has every filter in it, and a new one can be added to', () => {
+    const p = page();
+    const blank = JSON.parse(p.run('JSON.stringify(posBlankSales())'));
+    assert.deepStrictEqual(Object.keys(blank).sort(), ['branchId', 'branchName', 'cashier', 'category', 'counterId', 'customerId', 'customerName', 'env', 'from', 'invoiceType', 'itemCode', 'itemName', 'maxAmount', 'minAmount', 'paymentMode', 'q', 'state', 'taxRate', 'to'].sort());
+    assert.strictEqual(blank.from, null, 'a first visit is not a date');
+    assert.deepStrictEqual(JSON.parse(p.run("JSON.stringify(posBlankSales({ from: '', env: 'SANDBOX' }))")), { ...blank, from: '', env: 'SANDBOX' });
+    assert.deepStrictEqual(salesNow(p), blank, 'and that is how the list starts');
+});
+
+test('POS screen: a report row opens its invoices with the report\'s own filters, its group, "fiscalized" and the kind of sale the figures cover', () => {
+    // an item row of a test-mode report that was narrowed to one category, one cashier and a size of bill
+    let p = drillPage('item', [repRow('ITM0001', 'Lunch buffet <b>')], { scope: 'TEST', filters: { from: '2026-10-05', to: '2026-11-20', category: 'Food', cashier: 'ali@test', minAmount: 1000, taxRate: 16, invoiceType: 'sale', paymentMode: 2, counterId: 'c9' } });
+    p.run('posRepDrill(0)');
+    assert.deepStrictEqual(p.log.went, ['p-sales']);
+    assert.deepStrictEqual(salesNow(p), { ...JSON.parse(p.run('JSON.stringify(posBlankSales())')), from: '2026-10-05', to: '2026-11-20', state: 'FISCALIZED', env: 'SANDBOX', counterId: 'c9', cashier: 'ali@test', paymentMode: '2', invoiceType: 'sale', minAmount: '1000', category: 'Food', taxRate: '16', itemCode: 'ITM0001', itemName: 'Lunch buffet <b>' });
+    // a live report says real sales
+    p = drillPage('cashier', [repRow('sara@test', 'Sara')], { scope: 'LIVE' });
+    p.run('posRepDrill(0)');
+    assert.deepStrictEqual([salesNow(p).env, salesNow(p).cashier, salesNow(p).from, salesNow(p).to], ['PRODUCTION', 'sara@test', '2026-10-05', '2026-11-20']);
+});
+
+test('POS screen: every way of grouping that has a list opens the right one, and the others have no link', () => {
+    const open = (groupBy, key, label = 'x', over) => { const p = drillPage(groupBy, [repRow(key, label)], over); p.run('posRepDrill(0)'); return { went: p.log.went, sales: salesNow(p) }; };
+    const pick = (o, ...ks) => Object.fromEntries(ks.map(k => [k, o.sales[k]]));
+    assert.deepStrictEqual(pick(open('day', '2026-10-19'), 'from', 'to'), { from: '2026-10-19', to: '2026-10-19' });
+    assert.deepStrictEqual(pick(open('month', '2026-10'), 'from', 'to'), { from: '2026-10-05', to: '2026-10-31' }, 'only the days of the month that the report covers');
+    assert.deepStrictEqual(pick(open('month', '2026-11'), 'from', 'to'), { from: '2026-11-01', to: '2026-11-20' });
+    assert.deepStrictEqual(pick(open('category', 'Food'), 'category'), { category: 'Food' });
+    assert.deepStrictEqual(pick(open('category', '', 'No category'), 'category'), { category: '__none' });
+    assert.deepStrictEqual(pick(open('counter', 'c1', 'Main · Till 1'), 'counterId'), { counterId: 'c1' });
+    assert.deepStrictEqual(pick(open('branch', 'b2', 'Annex'), 'branchId', 'branchName'), { branchId: 'b2', branchName: 'Annex' });
+    assert.deepStrictEqual(pick(open('payment', '2', 'Card'), 'paymentMode'), { paymentMode: '2' });
+    assert.deepStrictEqual(pick(open('taxRate', '16.00', '16%'), 'taxRate'), { taxRate: '16.00' });
+    assert.deepStrictEqual(pick(open('customer', 'cu1', 'Khan Events (CUS0001)'), 'customerId', 'customerName'), { customerId: 'cu1', customerName: 'Khan Events (CUS0001)' });
+    assert.deepStrictEqual(pick(open('customer', '', 'No saved customer'), 'customerId'), { customerId: 'none' });
+    // the hour and the weekday of a sale cannot narrow the list: nothing opens
+    for (const g of ['hour', 'weekday']) { const o = open(g, '12'); assert.deepStrictEqual(o.went, [], g); }
+    // a row that is not there, or a report that is not showing, does nothing
+    const p = drillPage('item', [repRow('A', 'A')]);
+    p.run('posRepDrill(7)'); p.run('posRep.last = null; posRepDrill(0)'); p.run("posRep.last = { kind: 'closing', data: {} }; posRepDrill(0)");
+    assert.deepStrictEqual(p.log.went, []);
+});
+
+test('POS screen: from the Sales page itself a report row refreshes the list instead of navigating', async () => {
+    const p = drillPage('item', [repRow('ITM0001', 'Lunch buffet')]);
+    p.run("S.page = 'p-sales'");
+    p.run('posRepDrill(0)'); await sleep(50);
+    assert.deepStrictEqual(p.log.went, []);
+    const asked = p.log.api.find(u => u.startsWith('/api/pos/sales?'));
+    assert.ok(asked && /itemCode=ITM0001/.test(asked) && /state=FISCALIZED/.test(asked) && /env=PRODUCTION/.test(asked) && /from=2026-10-05/.test(asked), asked);
+});
+
+test('POS screen: the report rows carry an Invoices link for the ways of grouping that have a list', () => {
+    const p = page();
+    const rows = [repRow('ITM0001', 'Lunch'), repRow('ITM0002', 'Tea')];
+    const links = html => [...html.matchAll(/data-drill="(\d+)" onclick="posRepDrill\(\1\)"/g)].map(m => Number(m[1]));
+    assert.deepStrictEqual(links(p.run(`posAnalysisHtml(${JSON.stringify(repData('item', rows))})`)), [0, 1, 0, 1], 'one in the table and one on the card of each row');
+    assert.deepStrictEqual(links(p.run(`posAnalysisHtml(${JSON.stringify(repData('hour', rows))})`)), [], 'the hour has none');
+    assert.deepStrictEqual(links(p.run(`posAnalysisHtml(${JSON.stringify(repData('weekday', rows))})`)), []);
+    assert.deepStrictEqual(links(p.run(`posTaxHtml(${JSON.stringify(repData('taxRate', [repRow('16.00', '16%'), repRow('5.00', '5%')]))})`)), [0, 1], 'the tax summary has one on each rate');
+    // the table has a column for it (its header and its cell in the total row), so the columns line up
+    const html = p.run(`posAnalysisHtml(${JSON.stringify(repData('item', rows))})`);
+    const head = /<thead[\s\S]*?<\/thead>/.exec(html)[0], foot = /border-t-2[\s\S]*?<\/tr>/.exec(html)[0];
+    assert.strictEqual((head.match(/<th[ >]/g) || []).length, (foot.match(/<td[ >]/g) || []).length, 'a cell for every column in the total row');
+    assert.strictEqual((head.match(/<th[ >]/g) || []).length, 11, 'ten columns and the link');
+    const hourHtml = p.run(`posAnalysisHtml(${JSON.stringify(repData('hour', rows))})`);
+    assert.strictEqual((/<thead[\s\S]*?<\/thead>/.exec(hourHtml)[0].match(/<th[ >]/g) || []).length, 10, 'no extra column where there is no link');
+});
+
+test('POS screen: the filters that have no box show as chips, text is only text, and each chip can be taken away alone', async () => {
+    const p = page();
+    p.run(SETUP);
+    p.run("POS.sales = posBlankSales({ from: '2026-10-01', to: '2026-10-31', state: 'FISCALIZED', cashier: 'ali@test', customerId: 'cu1', customerName: 'Khan <img src=x onerror=alert(1)>', itemCode: 'ITM1', itemName: 'Lunch', category: 'Food', taxRate: '16', branchId: 'b1', branchName: 'Main', env: 'SANDBOX' })");
+    p.run('posRenderSalesChips()');
+    const html = p.$('#psCust').innerHTML;
+    assert.ok(!html.includes('<img src=x'), 'a name is text');
+    const text = decode(html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ');
+    for (const need of ['Customer: Khan <img src=x onerror=alert(1)>', 'Item: Lunch', 'Category: Food', 'Tax rate: 16%', 'Branch: Main', 'Showing: test sales only']) assert.ok(text.includes(need), `says "${need}": ${text}`);
+    assert.deepStrictEqual([...html.matchAll(/data-chip="(\w+)"/g)].map(m => m[1]), ['customerId', 'itemCode', 'category', 'taxRate', 'branchId', 'env']);
+    // none of them: nothing at all
+    p.run('POS.sales = posBlankSales(); posRenderSalesChips()');
+    assert.strictEqual(p.$('#psCust').innerHTML, '');
+    // the special values are worded
+    p.run("POS.sales = posBlankSales({ customerId: 'none', category: '__none', env: 'PRODUCTION' }); posRenderSalesChips()");
+    const words = decode(p.$('#psCust').innerHTML.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ');
+    assert.ok(/Customer: No saved customer/.test(words) && /Category: No category/.test(words) && /Showing: real sales only/.test(words), words);
+    // taking one away: only that one (and the name that went with it), then the list and its totals are asked for again with what is left
+    p.run("POS.sales = posBlankSales({ from: '2026-10-01', to: '2026-10-31', state: 'FISCALIZED', customerId: 'cu1', customerName: 'Khan', itemCode: 'ITM1', itemName: 'Lunch', category: 'Food', env: 'SANDBOX' })");
+    p.log.api.length = 0;
+    p.run("posSalesDrop('itemCode')"); await sleep(30);
+    assert.deepStrictEqual([salesNow(p).itemCode, salesNow(p).itemName, salesNow(p).category, salesNow(p).customerName, salesNow(p).env, salesNow(p).from], ['', '', 'Food', 'Khan', 'SANDBOX', '2026-10-01']);
+    const list = p.log.api.find(u => u.startsWith('/api/pos/sales?')), totals = p.log.api.find(u => u.startsWith('/api/pos/report?'));
+    assert.ok(list && !/itemCode/.test(list) && /category=Food/.test(list) && /customerId=cu1/.test(list) && /env=SANDBOX/.test(list) && /state=FISCALIZED/.test(list), list);
+    assert.ok(totals && !/itemCode/.test(totals) && /category=Food/.test(totals) && !/state=/.test(totals), totals);
+    p.run("posSalesDrop('customerId')");
+    assert.deepStrictEqual([salesNow(p).customerId, salesNow(p).customerName, salesNow(p).from], ['', '', '2026-10-01'], 'the dates stay when a customer chip goes');
+    assert.deepStrictEqual([...p.$('#psCust').innerHTML.matchAll(/data-chip="(\w+)"/g)].map(m => m[1]), ['category', 'env']);
+});
+
+test('POS screen: the Sales list asks for its chips, keeps them while the boxes change, and "Today" starts clean', async () => {
+    const p = page();
+    p.run(SETUP);
+    p.run("POS.sales = posBlankSales({ from: '2026-10-01', to: '2026-10-31', itemCode: 'ITM1', itemName: 'Lunch', category: 'Food', taxRate: '16', branchId: 'b1', env: 'SANDBOX', customerId: 'cu1', customerName: 'Khan' })");
+    const q = p.run('posSalesQuery().toString()');
+    for (const part of ['itemCode=ITM1', 'category=Food', 'taxRate=16', 'branchId=b1', 'env=SANDBOX', 'customerId=cu1']) assert.ok(q.includes(part), part);
+    assert.ok(!/itemName|customerName|branchName/.test(q), 'only the filters, not the words for the chips');
+    const key = p.run('posSalesTotalsKey()');
+    p.run("POS.sales.itemCode = 'ITM2'");
+    assert.notStrictEqual(p.run('posSalesTotalsKey()'), key, 'a chip changes what the totals depend on');
+    // typing in a box keeps the chips
+    p.run("POS.sales.itemCode = 'ITM1'");
+    p.$('#psFrom').value = '2026-10-02'; p.$('#psTo').value = '2026-10-30'; p.$('#psState').value = 'FISCALIZED'; p.$('#psQ').value = 'x'; p.$('#psCounter').value = ''; p.$('#psPay').value = ''; p.$('#psType').value = ''; p.$('#psMin').value = ''; p.$('#psMax').value = ''; p.$('#psCashier').value = '';
+    p.run('posSalesFilter()'); await sleep(30);
+    const kept = salesNow(p);
+    assert.deepStrictEqual([kept.itemCode, kept.itemName, kept.category, kept.taxRate, kept.branchId, kept.env, kept.customerId, kept.customerName, kept.from, kept.q], ['ITM1', 'Lunch', 'Food', '16', 'b1', 'SANDBOX', 'cu1', 'Khan', '2026-10-02', 'x']);
+    // Today and the other ways in start clean
+    p.run('posSalesToday()'); await sleep(30);
+    const clean = salesNow(p);
+    assert.deepStrictEqual([clean.itemCode, clean.category, clean.taxRate, clean.branchId, clean.env, clean.customerId, clean.state], ['', '', '', '', '', '', '']);
+    p.run("posShowState('REJECTED')");
+    assert.deepStrictEqual([salesNow(p).state, salesNow(p).from, salesNow(p).env], ['REJECTED', '', '']);
+    // the customers page: that customer, every date, and the chip's cross takes the customer away and nothing else
+    p.run("posSalesCustomer('cu9', 'Walk-in')");
+    assert.deepStrictEqual([salesNow(p).customerId, salesNow(p).customerName, salesNow(p).from, salesNow(p).to], ['cu9', 'Walk-in', '', '']);
+});
+
+test('POS screen: a counter that is switched off is shown, not hidden behind "All counters", when a report row points at it', async () => {
+    const p = page();
+    p.run(SETUP);
+    p.run("POS.sales = posBlankSales({ from: '', to: '', counterId: 'gone' }); POS.cashiers = []");
+    await p.run('posFillSalesFilters()');
+    const html = p.$('#psCounter').innerHTML;
+    assert.ok(/<option value="gone" selected>A counter that is switched off<\/option>/.test(html), html);
+    p.run("POS.sales = posBlankSales({ from: '', to: '', counterId: 'c1' })");
+    await p.run('posFillSalesFilters()');
+    assert.ok(!/switched off/.test(p.$('#psCounter').innerHTML), 'a counter that is in use is just itself');
 });

@@ -116,3 +116,33 @@ run('reports API: a customer filter and a branch filter in the list', async () =
     const branchId = (await get('/api/pos/branches', 'manager')).json[0].id;
     assert.strictEqual((await get(`/api/pos/sales?${q}&branchId=${branchId}`, 'cashier')).json.total, 5);
 });
+
+run('reports API: a report row\'s invoices through the list: the item code and the kind of sale are filters, and agree with the report', async () => {
+    const q = `from=${today()}&to=${today()}`;
+    const rep = await get(`/api/pos/reports/by/item?${q}`, 'manager');
+    const chai = rep.json.rows.find(r => r.label === 'Chai');
+    assert.ok(chai, JSON.stringify(rep.json.rows.map(r => r.label)));
+    for (const who of ['manager', 'cashier']) { // the list is everyone's; the report is the manager's
+        const list = await get(`/api/pos/sales?${q}&itemCode=${chai.key}&state=FISCALIZED&env=SANDBOX`, who);
+        assert.strictEqual(list.status, 200, list.text);
+        assert.strictEqual(list.json.total, chai.sales + chai.returns, who);
+    }
+    const real = await get(`/api/pos/sales?${q}&itemCode=${chai.key}&env=PRODUCTION`, 'manager');
+    assert.strictEqual(real.json.total, 0, 'the server is in test mode: there are no real sales');
+    // the totals above the list and the spreadsheet take the same filters
+    const totals = await get(`/api/pos/report?${q}&itemCode=${chai.key}`, 'manager');
+    assert.strictEqual(totals.json.sales.count + totals.json.returns.count, chai.sales + chai.returns);
+    const csv = await get(`/api/pos/export/sales?${q}&itemCode=${chai.key}&state=FISCALIZED`, 'manager');
+    assert.strictEqual(csv.text.trim().split('\r\n').length - 1, chai.sales + chai.returns);
+    // bad input is a 400 with words
+    for (const bad of ['env=banana', 'env=', 'itemCode=%00']) {
+        const r = await get(`/api/pos/sales?${q}&${bad}`, 'manager');
+        if (bad === 'env=') assert.strictEqual(r.status, 200, 'an empty box is no filter');
+        else assert.strictEqual(r.status, 400, `${bad}: ${r.text}`);
+    }
+    const odd = await get(`/api/pos/sales?${q}&itemCode=${encodeURIComponent("x' OR '1'='1")}`, 'manager');
+    assert.deepStrictEqual([odd.status, odd.json.total], [200, 0]);
+    // a closing sheet is the whole till: those filters do not narrow it
+    const full = await get(`/api/pos/reports/closing?date=${today()}`, 'manager'), narrowed = await get(`/api/pos/reports/closing?date=${today()}&itemCode=${chai.key}&env=PRODUCTION`, 'manager');
+    assert.deepStrictEqual(narrowed.json.totals, full.json.totals);
+});
