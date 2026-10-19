@@ -22,6 +22,7 @@ const importer = require('./src/importer');
 const stock = require('./src/stock');
 const { createAudit } = require('./src/audit');
 const { BUSINESS_ACTIVITIES, SECTORS } = require('./src/activityScenarios');
+const { MODULES, tenantModules, cleanModules } = require('./src/modules');
 const { SCENARIOS, PROVINCES, UOMS, RATES } = require('./src/scenarios');
 
 for (const k of ['DATABASE_URL', 'JWT_SECRET', 'ENCRYPTION_KEY']) {
@@ -133,6 +134,7 @@ function publicTenant(t) {
         tokenExpiring: Boolean(t.tokenIssuedAt && Date.now() > new Date(t.tokenIssuedAt).setFullYear(new Date(t.tokenIssuedAt).getFullYear() + 5) - 60 * 86400000),
         businessActivities: t.businessActivities,
         sectors: t.sectors,
+        modules: tenantModules(t),
         invoiceNumberFormat: t.invoiceNumberFormat,
         softwareRegNo: t.softwareRegNo,
         authLetterRef: t.authLetterRef,
@@ -220,6 +222,7 @@ function loginPayload(user) {
         name: user.name || user.email,
         mustChangePassword: user.mustChangePassword,
         companyName: user.tenant ? user.tenant.companyName : 'Super Admin',
+        modules: user.role === 'CLIENT_USER' ? tenantModules(user.tenant) : [], // the user picks one after logging in when there are several
     };
 }
 
@@ -294,7 +297,7 @@ app.get('/api/meta', authenticateToken, (req, res) => {
     res.json({
         scenarios: SCENARIOS, provinces: PROVINCES, uoms: UOMS, rates: RATES, mock: process.env.FBR_MOCK === 'true',
         debitReasons: DEBIT_REASONS, editWindowHours: IRIS_EDIT_WINDOW_HOURS, debitNoteMaxDays: DEBIT_NOTE_MAX_DAYS,
-        businessActivities: BUSINESS_ACTIVITIES, sectors: SECTORS, wholeNumberUoms: [...WHOLE_NUMBER_UOMS],
+        businessActivities: BUSINESS_ACTIVITIES, sectors: SECTORS, modules: MODULES, wholeNumberUoms: [...WHOLE_NUMBER_UOMS],
     });
 });
 
@@ -706,7 +709,7 @@ app.get('/api/admin/egress-ip', authenticateToken, requireRole('SUPER_ADMIN'), a
 // Read-only for clients; only the super admin changes FBR settings
 app.get('/api/client/settings', authenticateToken, requireTenant, async (req, res) => {
     const t = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId } });
-    res.json({ ...clientTenant(t), workspace: Boolean(req.user.impersonatedBy), tenantRole: req.user.tenantRole,
+    res.json({ ...clientTenant(t), modules: tenantModules(t), workspace: Boolean(req.user.impersonatedBy), tenantRole: req.user.tenantRole,
         nextInvoiceNo: formatInvoiceNo(t.invoiceNumberFormat, t.invoiceSeq + 1, todayPKT()) }); // shown on the form; taken only when the invoice is created
 });
 
@@ -718,7 +721,7 @@ app.get('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
 
 const SETTING_LABELS = {
     mobile: 'Mobile number', active: 'Status', sellerNtn: 'Seller NTN', sellerCnic: 'Seller CNIC', sellerNtnCnic: 'Seller number sent to FBR', sellerStrn: 'STRN', sellerBusinessName: 'Business name', sellerProvince: 'Province',
-    sellerAddress: 'Address', fbrEnv: 'Environment', furtherTaxRate: 'Further tax %', businessActivities: 'Business nature', sectors: 'Sector',
+    sellerAddress: 'Address', fbrEnv: 'Environment', furtherTaxRate: 'Further tax %', businessActivities: 'Business nature', sectors: 'Sector', modules: 'Modules',
     invoiceNumberFormat: 'Invoice number format', softwareRegNo: 'Software reg. no.', authLetterRef: 'Authorization letter ref', authLetterAt: 'Authorization letter date',
 };
 app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
@@ -773,6 +776,11 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
         const list = Array.isArray(b.businessActivities) ? [...new Set(b.businessActivities.map(String))] : [];
         if (list.some(a => !BUSINESS_ACTIVITIES.includes(a))) throw new HttpError(400, 'Unknown business nature.');
         data.businessActivities = list;
+    }
+    if (b.modules !== undefined) {
+        const list = cleanModules(b.modules);
+        if (!list.length) throw new HttpError(400, 'Switch on at least one module for the client.');
+        data.modules = list;
     }
     if (b.sectors !== undefined) {
         const list = Array.isArray(b.sectors) ? [...new Set(b.sectors.map(String))] : [];

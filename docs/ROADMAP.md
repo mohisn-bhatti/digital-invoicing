@@ -97,6 +97,8 @@ _Last updated: 2026-10-07 (CA feedback)_ · summary: [GUIDE.md](GUIDE.md)
 - Remove the brother's GitHub account from this Mac when it's no longer needed (`gh auth logout -u mohisn-bhatti`).
 
 ## Later phases
+- **Trading & Accounts module** (a second product; a client with more than one picks at login). Phase 0 (module switch,
+  chooser, menu) is on branch `trading-module`; findings, plan and open questions: [TRADING_MODULE.md](TRADING_MODULE.md).
 - **Stock:** CSV import of purchases; refund (Annex-H) specifics for exporters, once the CA confirms who needs them.
 - **Subscription billing** for clients.
 - **Offline POS** for retail counters. This is a separate, larger product.

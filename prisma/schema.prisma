@@ -80,6 +80,7 @@ model Tenant {
   // As chosen in IRIS: decides the sandbox scenarios to pass (DI spec §10)
   businessActivities String[]  @default([])
   sectors            String[]  @default([]) // IRIS lets several be ticked
+  modules            String[]  @default(["INVOICING"]) // products this client may use: INVOICING, TRADING (src/modules.js)
   // Internal invoice number printed next to the FBR number, e.g. INV-{YYYY}-{NNNN} → INV-2026-0042
   invoiceNumberFormat String   @default("INV-{YYYY}-{NNNN}")
   softwareRegNo      String    @default("") // software registration no. from PRAL/FBR, printed on receipts

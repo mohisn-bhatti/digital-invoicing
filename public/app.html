@@ -156,6 +156,18 @@
   </form>
 </section>
 
+<!-- After login: a client with more than one module picks which one to open -->
+<section id="moduleView" class="hidden min-h-screen flex items-center justify-center px-4 py-10">
+  <div class="w-full max-w-2xl">
+    <a href="/" class="flex items-center gap-2.5 mb-6"><img src="/logo.svg" alt="" class="w-9 h-9"><span class="text-xl font-extrabold tracking-wide text-slate-900"><span class="text-emerald-600">E</span>TAX</span></a>
+    <h1 class="text-2xl font-semibold">What would you like to use?</h1>
+    <p id="moduleWho" class="text-sm text-slate-500 mt-1"></p>
+    <div id="moduleCards" class="grid sm:grid-cols-2 gap-4 mt-6"></div>
+    <p class="text-xs text-slate-500 mt-4">You can switch any time from the menu on the left.</p>
+    <button type="button" onclick="logout()" class="mt-4 text-sm text-slate-500 underline">Log out</button>
+  </div>
+</section>
+
 <!-- App shell: left menu + page area -->
 <div id="shell" class="hidden">
   <div id="navBackdrop" class="hidden fixed inset-0 bg-black/40 z-30 lg:hidden" onclick="toggleNav(false)"></div>
@@ -261,6 +273,11 @@
     <button type="button" class="stepper-item" data-go="mpS5"><span class="step-no">5</span><span><b>Settings &amp; users</b><small data-mp-text="5"></small></span></button>
   </nav>
   <form id="settingsForm" class="space-y-5">
+    <section id="mpModules" class="step-card bg-white rounded-xl shadow">
+      <div class="step-head"><div class="flex-1"><h3 class="font-semibold text-base">Modules</h3><p class="text-xs text-slate-500">What this client can use. With more than one switched on, the user picks which to open after logging in.</p></div></div>
+      <div id="moduleBoxes" class="flex flex-wrap gap-x-8 gap-y-3 text-sm"></div>
+      <div class="mt-4"><button class="bg-emerald-700 text-white rounded px-4 py-2">Save settings</button></div>
+    </section>
     <section id="mpS1" class="step-card bg-white rounded-xl shadow">
       <div class="step-head"><span class="step-no">1</span><div class="flex-1"><h3 class="font-semibold text-base">Client profile (as in IRIS)</h3><p class="text-xs text-slate-500">Copy from the client's IRIS profile. Fields marked <span class="fbr-sent">(Sent to FBR)</span> go on every invoice — FBR rejects the invoice if they differ from IRIS.</p></div><span class="step-state" data-mp="1"></span></div>
       <div class="grid sm:grid-cols-3 gap-3">
@@ -1055,11 +1072,11 @@ async function api(path, opts = {}) {
 }
 
 function saveSession() {
-  try { localStorage.setItem('fbrSession', JSON.stringify({ token: S.token, role: S.role, company: S.company, tenantRole: S.tenantRole || null, name: S.name || '', adminSession: S.adminSession || null })); } catch {}
+  try { localStorage.setItem('fbrSession', JSON.stringify({ token: S.token, role: S.role, company: S.company, tenantRole: S.tenantRole || null, name: S.name || '', modules: S.modules || null, module: S.module || null, adminSession: S.adminSession || null })); } catch {}
 }
 function logout() {
   if (S.token) fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + S.token } }).catch(() => {});
-  S.token = S.role = null; S.adminSession = null;
+  S.token = S.role = null; S.adminSession = null; S.modules = S.module = null;
   try { localStorage.removeItem('fbrSession'); } catch {}
   show();
 }
@@ -1097,6 +1114,22 @@ const NAV = {
     { id: 'c-help', label: 'Help & feedback', icon: 'chat', crumb: 'Help' },
     // CA: Bulk Import, Stock and Users are not shown to clients (users are managed by the admin under Clients)
   ],
+  // Trading & Accounts (second module). The menu follows the planned screens; each is built one at a time.
+  trading: [
+    { id: 't-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
+    { id: 't-sale', label: 'Sale Invoice', icon: 'plus', crumb: 'Sales', group: 'tsales',
+      blurb: 'Pick a customer or a walk-in, add items by name or barcode, discount and sales tax on each line, pay by cash, bank or on credit; print on 80mm or A4.' },
+    { id: 't-salereturn', label: 'Sale Return', icon: 'draft', crumb: 'Sales', group: 'tsales', blurb: 'Take goods back against a sale: stock and the customer account are corrected.' },
+    { id: 't-receipts', label: 'Receive Cash', icon: 'list', crumb: 'Sales', group: 'tsales', blurb: 'Receive cash or bank payments from customers, with cash and account statements.' },
+    { id: 't-purchase', label: 'Purchase Invoice', icon: 'plus', crumb: 'Purchases', group: 'tbuy', blurb: 'Record what you buy from vendors: stock comes in, with discount and tax, and purchase reports by category and company.' },
+    { id: 't-payments', label: 'Pay Cash to Vendor', icon: 'list', crumb: 'Purchases', group: 'tbuy', blurb: 'Pay vendors by cash or bank, with vendor account statements.' },
+    { id: 't-items', label: 'Items & Stock', icon: 'box', crumb: 'Stock', roles: ['OWNER', 'ACCOUNTANT'],
+      blurb: 'Items with category, company, unit, sale and purchase price, opening and minimum stock and HS code; stock position and rate list.' },
+    { id: 't-parties', label: 'Customers & Vendors', icon: 'users', crumb: 'Accounts', roles: ['OWNER', 'ACCOUNTANT'], blurb: 'Customers and vendors with phone, address and opening balance (Dr / Cr).' },
+    { id: 't-accounts', label: 'Cash & Bank', icon: 'building', crumb: 'Accounts', roles: ['OWNER', 'ACCOUNTANT'], blurb: 'Cash and bank accounts with their opening balances.' },
+    { id: 't-reports', label: 'Reports', icon: 'chart', crumb: 'Reports', blurb: 'Stock and short stock, sales by category and company, sales tax report, account, invoice and cash statements, edited and deleted transactions.' },
+    { id: 't-settings', label: 'Settings', icon: 'cog', crumb: 'Settings', roles: ['OWNER'], blurb: 'Who may change an invoice date, edit or delete an invoice, or change a price; discount, service charge and tax defaults; print size.' },
+  ],
   admin: [
     { id: 'a-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
     { id: 'a-clients', label: 'Clients', icon: 'building', crumb: 'Clients' },
@@ -1117,10 +1150,10 @@ const PAGE_ENTER = {
   'a-dashboard': () => loadAdminDash(), 'a-clients': () => loadClients(), 'a-reports': () => fillReportClients(),
   'a-itemrules': () => loadItemBank(), 'a-activity': () => loadAudit('a'), 'a-leads': () => loadLeads(), 'a-system': () => loadSystem(),
 };
-const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : NAV.client.filter(n => !n.roles || n.roles.includes(S.tenantRole || 'OWNER'));
+const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : (S.module === 'TRADING' ? NAV.trading : NAV.client).filter(n => !n.roles || n.roles.includes(S.tenantRole || 'OWNER'));
 const canManage = () => ['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER'); // cashier can't
 // Menu groups that open and close (remembered per browser); a group opens by itself when one of its pages is shown
-const NAV_GROUPS = { sales: { label: 'Sales / Revenue', icon: 'sales' } };
+const NAV_GROUPS = { sales: { label: 'Sales / Revenue', icon: 'sales' }, tsales: { label: 'Sales', icon: 'sales' }, tbuy: { label: 'Purchases', icon: 'box' } };
 const navOpen = id => { try { return localStorage.getItem('navGroup:' + id) !== 'closed'; } catch { return true; } };
 function renderNav() {
   const svg = icon => `<svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[icon]}"/></svg>`;
@@ -1136,6 +1169,10 @@ function renderNav() {
         ${svg(g.icon)}<span class="flex-1">${esc(g.label)}</span><span class="nav-caret text-xs transition-transform ${open ? 'rotate-90' : ''}">▶</span></button>
       <div class="nav-group-items ${open ? '' : 'hidden'} border-l border-white/10 ml-5">${items.filter(x => x.group === n.group).map(x => link(x, true)).join('')}</div></div>`);
   }
+  if (hasModuleChoice()) html.unshift(`<div class="mx-3 mb-2 pb-2 border-b border-white/10">
+    <div class="px-3 text-[10px] uppercase tracking-wider text-slate-400">Using</div>
+    <button type="button" onclick="switchModule()" title="Switch module" class="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg hover:bg-white/10 text-left">
+      <span class="font-medium text-white truncate">${esc(moduleLabel(S.module))}</span><span class="text-xs text-emerald-400 whitespace-nowrap">Switch ⇄</span></button></div>`);
   $('#nav').innerHTML = html.join('');
 }
 function setNavGroup(id, open) {
@@ -1156,13 +1193,13 @@ function toggleNav(open) {
 }
 function go(id) { if (location.hash === '#/' + id) route(); else location.hash = '/' + id; }
 function route() {
-  if (!S.token) return;
+  if (!S.token || needsModuleChoice()) return;
   const list = navList(), view = S.role === 'SUPER_ADMIN' ? '#adminView' : '#clientView';
   let id = location.hash.replace(/^#\/?/, '');
   if (id === 'c-taxrules') { id = 'c-products'; history.replaceState(null, '', '#/c-products'); } // merged into Items with Tax Rules
   const meta = list.find(n => n.id === id);
   if (!meta || !document.querySelector(`${view} [data-page="${id}"]`) || (id === 'a-client' && !S.manageId)) {
-    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : (S.adminSession ? 'c-new' : 'c-dashboard');
+    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : (S.module === 'TRADING' ? 't-dashboard' : (S.adminSession ? 'c-new' : 'c-dashboard'));
     history.replaceState(null, '', '#/' + id);
   }
   const m = list.find(n => n.id === id);
@@ -1189,9 +1226,56 @@ function route() {
 }
 window.addEventListener('hashchange', route);
 
+// A client can have several modules (Digital Invoicing, Trading & Accounts…): the user picks one after logging in
+const myModules = () => (S.modules && S.modules.length ? S.modules : ['INVOICING']);
+const hasModuleChoice = () => S.role !== 'SUPER_ADMIN' && !S.adminSession && myModules().length > 1;
+const moduleLabel = id => S.meta?.modules?.find(m => m.id === id)?.label || id;
+function needsModuleChoice() {
+  if (S.role === 'SUPER_ADMIN' || S.adminSession) return false;
+  const mods = myModules();
+  if (mods.length === 1) { S.module = mods[0]; return false; }
+  return !mods.includes(S.module);
+}
+async function showModuleChooser() {
+  try { if (!S.meta) S.meta = await api('/api/meta'); } catch (err) { if (S.token) toast(err.message); }
+  if (!S.token) return;
+  let last = null; try { last = localStorage.getItem('lastModule'); } catch {}
+  $('#moduleWho').textContent = `${S.company}${S.name ? ' · ' + S.name : ''}`;
+  $('#moduleCards').innerHTML = myModules().map(id => {
+    const m = S.meta?.modules?.find(x => x.id === id) || { label: id, blurb: '' };
+    return `<button type="button" onclick="pickModule('${id}')" class="text-left bg-white rounded-xl shadow p-5 border-2 ${id === last ? 'border-emerald-600' : 'border-transparent'} hover:border-emerald-600 focus:outline-none focus:border-emerald-600">
+      <div class="flex items-start justify-between gap-2"><span class="text-lg font-semibold">${esc(m.label)}</span>${id === last ? '<span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 whitespace-nowrap">Last used</span>' : ''}</div>
+      <p class="text-sm text-slate-600 mt-1">${esc(m.blurb)}</p></button>`;
+  }).join('');
+  $('#moduleView').classList.remove('hidden');
+}
+function pickModule(id) {
+  if (!myModules().includes(id)) return;
+  S.module = id; saveSession();
+  try { localStorage.setItem('lastModule', id); } catch { /* per-browser convenience only */ }
+  history.replaceState(null, '', location.pathname + location.search); // the module opens on its own dashboard
+  show();
+}
+function switchModule() {
+  S.module = null; saveSession();
+  history.replaceState(null, '', location.pathname + location.search);
+  show();
+}
+// The administrator may change a client's modules while someone is logged in: keep ours current.
+// true = the module that was open is no longer allowed (the user picks again)
+function syncModules() {
+  if (S.adminSession || !Array.isArray(S.settings?.modules)) return false;
+  const changed = JSON.stringify(S.modules) !== JSON.stringify(S.settings.modules);
+  S.modules = S.settings.modules;
+  if (S.module && !S.modules.includes(S.module)) { S.module = null; saveSession(); show(); return true; }
+  if (changed) { saveSession(); renderNav(); }
+  return false;
+}
+
 function show() {
-  for (const id of ['loginView', 'adminView', 'clientView', 'shell']) $('#' + id).classList.add('hidden');
+  for (const id of ['loginView', 'moduleView', 'adminView', 'clientView', 'shell']) $('#' + id).classList.add('hidden');
   if (!S.token) return $('#loginView').classList.remove('hidden');
+  if (needsModuleChoice()) { showModuleChooser(); return; }
   $('#shell').classList.remove('hidden');
   $('#companyName').textContent = S.company;
   $('#userLine').textContent = S.adminSession ? 'Admin workspace' : (S.role === 'SUPER_ADMIN' ? 'Super admin' : `${S.name || ''} · ${(S.tenantRole || 'OWNER').toLowerCase()}`);
@@ -1200,7 +1284,7 @@ function show() {
   $('#wsName').textContent = S.company;
   renderNav();
   if (S.role === 'SUPER_ADMIN') { $('#adminView').classList.remove('hidden'); $('#envBadge').classList.add('hidden'); initAdmin(); }
-  else { $('#clientView').classList.remove('hidden'); initClient(); }
+  else { $('#clientView').classList.remove('hidden'); S.module === 'TRADING' ? initTrading() : initClient(); }
 }
 
 $('#loginForm').addEventListener('submit', async e => {
@@ -1208,7 +1292,7 @@ $('#loginForm').addEventListener('submit', async e => {
   const f = new FormData(e.target);
   try {
     const d = await api('/api/auth/login', { method: 'POST', body: { email: f.get('email'), password: f.get('password') } });
-    Object.assign(S, { token: d.token, role: d.role, company: d.companyName, tenantRole: d.tenantRole, name: d.name });
+    Object.assign(S, { token: d.token, role: d.role, company: d.companyName, tenantRole: d.tenantRole, name: d.name, modules: d.modules || [], module: null });
     saveSession(); e.target.reset(); show();
     if (d.mustChangePassword) openPw(true);
   } catch (err) { toast(err.message); }
@@ -1242,7 +1326,7 @@ async function loadClients() {
     $('#clientRows').innerHTML = rows.map(c => {
       const ob = c.onboarding, live = ob.done === ob.total;
       return `<tr class="border-b align-top">
-      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc((c.sectors || []).join(', ') || 'sector not set')}</div></td>
+      <td class="py-2"><div class="font-medium">${esc(c.companyName)}</div><div class="text-xs text-slate-500">NTN ${esc(c.sellerNtnCnic || '—')} · ${esc((c.sectors || []).join(', ') || 'sector not set')}${(c.modules || []).includes('TRADING') ? ' · <span class="text-emerald-700">+ Trading</span>' : ''}</div></td>
       <td class="text-xs">${esc(c.emails.join(', '))}</td>
       <td class="text-xs font-mono whitespace-nowrap">${c.mobile ? esc(c.mobile) : '<span class="text-slate-300">—</span>'}</td>
       <td class="text-xs whitespace-nowrap"><span class="px-2 py-0.5 rounded ${c.active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}">${c.active ? 'Active' : 'Inactive'}</span>
@@ -1831,7 +1915,7 @@ async function openWorkspace() {
   try {
     const d = await api(`/api/admin/clients/${S.manageId}/workspace`, { method: 'POST' });
     S.adminSession = { token: S.token, role: S.role, company: S.company, tenantRole: S.tenantRole, name: S.name };
-    Object.assign(S, { token: d.token, role: 'CLIENT_USER', company: d.companyName, tenantRole: 'OWNER' });
+    Object.assign(S, { token: d.token, role: 'CLIENT_USER', company: d.companyName, tenantRole: 'OWNER', modules: ['INVOICING'], module: 'INVOICING' }); // the workspace is for sandbox testing: Digital Invoicing
     clientReady = false;
     saveSession(); show();
   } catch (err) { toast(err.message); }
@@ -1915,8 +1999,9 @@ function setupAudit(prefix) { // kept for compatibility; the activity page loads
 let clientReady = false;
 async function initClient() {
   try {
-    if (!S.meta) S.meta = await api('/api/meta');
+    if (!S.meta) { S.meta = await api('/api/meta'); renderNav(); }
     S.settings = await api('/api/client/settings');
+    if (syncModules()) return;
     if (S.settings.tenantRole && S.settings.tenantRole !== S.tenantRole) { S.tenantRole = S.settings.tenantRole; saveSession(); renderNav(); }
     await loadLists();
     S.saleTypes = (await api('/api/sale-types').catch(() => null))?.list || null;
@@ -1929,6 +2014,31 @@ async function initClient() {
     showNextInvoiceNo();
   } catch (err) { toast(err.message); }
   route(); // always: a failed request must not leave a blank page (or a page of the other role) showing
+}
+
+// Trading & Accounts: the pages are laid out from NAV.trading (each screen is built in turn; the rest say "coming soon")
+async function initTrading() {
+  try {
+    if (!S.meta) { S.meta = await api('/api/meta'); renderNav(); }
+    S.settings = await api('/api/client/settings');
+    if (syncModules()) return;
+    if (S.settings.tenantRole && S.settings.tenantRole !== S.tenantRole) { S.tenantRole = S.settings.tenantRole; saveSession(); renderNav(); }
+  } catch (err) { toast(err.message); }
+  $('#envBadge').classList.add('hidden'); // the FBR environment badge belongs to Digital Invoicing
+  const host = $('#clientView');
+  host.querySelectorAll('[data-page^="t-"]').forEach(el => el.remove());
+  host.insertAdjacentHTML('beforeend', NAV.trading.map(n => `<div data-page="${n.id}" class="page hidden space-y-6">${tradingPageHtml(n)}</div>`).join(''));
+  route();
+}
+function tradingPageHtml(n) {
+  if (n.id !== 't-dashboard') return `<div class="bg-white rounded-xl shadow p-6"><h2 class="text-lg font-semibold">${esc(n.label)}</h2>
+    <p class="text-sm text-slate-600 mt-1">${esc(n.blurb)}</p><p class="mt-4 inline-block text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800">Coming soon — not built yet</p></div>`;
+  const mine = NAV.trading.filter(x => x.id !== n.id && (!x.roles || x.roles.includes(S.tenantRole || 'OWNER')));
+  const other = myModules().find(id => id !== 'TRADING');
+  return `<div class="bg-white rounded-xl shadow p-6"><h2 class="text-lg font-semibold">Trading &amp; Accounts</h2>
+    <p class="text-sm text-slate-600 mt-1">Sales, purchases, stock and accounts in one place. This module is being built screen by screen; here is what is coming.</p>
+    <div class="grid sm:grid-cols-2 gap-3 mt-4">${mine.map(x => `<a href="#/${x.id}" class="border rounded-lg p-3 hover:border-emerald-600"><div class="font-medium">${esc(x.label)}</div><div class="text-xs text-slate-500 mt-0.5">${esc(x.blurb)}</div></a>`).join('')}</div>
+    ${other ? `<button type="button" onclick="switchModule()" class="mt-4 text-sm text-emerald-700 underline">Switch to ${esc(moduleLabel(other))}</button>` : ''}</div>`;
 }
 
 // FBR's province names are sent; the screen shows the names from the CA's list
@@ -1970,10 +2080,12 @@ function fillSettings(s) {
   f.fbrToken.value = '';
   if (!$('#bizActs').children.length) {
     $('#bizActs').innerHTML = S.meta.businessActivities.map(a => `<label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" name="businessActivities" value="${esc(a)}" style="width:auto"> ${esc(a)}</label>`).join('');
+    $('#moduleBoxes').innerHTML = S.meta.modules.map(m => `<label class="flex items-start gap-2 cursor-pointer max-w-sm"><input type="checkbox" name="modules" value="${esc(m.id)}" style="width:auto" class="mt-1"><span><span class="font-medium">${esc(m.label)}</span><span class="block text-xs text-slate-500">${esc(m.blurb)}</span></span></label>`).join('');
     $('#sectorBoxes').innerHTML = S.meta.sectors.map(x => `<label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" name="sectors" value="${esc(x)}" style="width:auto"> ${esc(x)}</label>`).join('');
   }
   for (const cb of f.querySelectorAll('[name=businessActivities]')) cb.checked = (s.businessActivities || []).includes(cb.value);
   for (const cb of f.querySelectorAll('[name=sectors]')) cb.checked = (s.sectors || []).includes(cb.value);
+  for (const cb of f.querySelectorAll('[name=modules]')) cb.checked = (s.modules || ['INVOICING']).includes(cb.value);
   $('#tokenMasked').textContent = s.fbrTokenMasked ? `(saved for this client: ${s.fbrTokenMasked})` : '(not set for this client)';
   $('#tokenRemove').classList.toggle('hidden', !s.fbrTokenMasked);
   $('#sellerCheck').textContent = '';
@@ -2042,6 +2154,7 @@ $('#settingsForm').addEventListener('submit', async e => {
   const body = Object.fromEntries(fd);
   body.businessActivities = fd.getAll('businessActivities');
   body.sectors = fd.getAll('sectors');
+  body.modules = fd.getAll('modules');
   if (!body.fbrToken) delete body.fbrToken;
   if (body.fbrEnv === 'PRODUCTION' && S.managed.fbrEnv !== 'PRODUCTION' &&
       !confirm(`Switch ${S.managed.companyName} to PRODUCTION? Their invoices will be filed with FBR for real. Make sure you saved the production token.`)) return;
