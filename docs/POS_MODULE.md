@@ -315,7 +315,14 @@ fake camera that shows real QR codes and Code 128 barcodes, and with a keyboard-
    cashier, a counter, eight items, four sales (one cash, one card with a discount, a banquet booking with a buyer, one more cash
    sale) and a credit note. It only runs against a database on this computer and in test mode, and prints the password once (or
    uses `DEMO_PASSWORD`). `--reset` makes it again with fresh times (the dashboard counts today's sales).
-3. Or by hand: Admin → Clients → **Manage** a client → **Modules** → tick **Point of Sale** → Save settings. Log in as that
+3. **A client that already exists** (it needs the Point of Sale module): `node scripts/seed-demo-client.js --owner <the owner's e-mail>`
+   is a dry run; add `--yes` to make a fortnight of demo data (two branches, three counters, 23 menu items, five customers, about 80
+   sales across every way of paying, banquet bookings above Rs 50,000, returns, one refused and one cancelled sale), and a manager and
+   a cashier login (`manager@` and `cashier@` the client's name without spaces + `-demo.example.com`, with the password in
+   `DEMO_PASSWORD`). `--wipe --yes` removes exactly that (Point of Sale data and those two logins), so wipe and make it again to bring
+   the fortnight up to today. Everything goes through the real sale service in test mode; the invoice numbers run in the order of the
+   dates; it adds one line to the client's activity trail and nothing else outside the client.
+4. Or by hand: Admin → Clients → **Manage** a client → **Modules** → tick **Point of Sale** → Save settings. Log in as that
    client's owner; in **Settings** add the business details, a branch and a counter (any POS ID and token in test mode), then add
    items under **Items**, then sell from **New Sale**.
 

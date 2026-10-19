@@ -119,7 +119,11 @@ It runs in **test mode** until the server has `PRA_MOCK=false`: nothing is sent 
 While PRA cannot be reached, new sales are blocked for a few seconds with a clear message. A sale whose answer from PRA is lost is
 never sent again by itself: a manager checks PRA's report and records the result. The rates follow the Second Schedule (from 1 July
 2026 restaurants pay 16%, or 8% on card, wallet or QR payments); the owner enters them per item.
-To show it to a client: `node scripts/seed-pos-demo.js` makes a demo restaurant with sales (test mode only).
+To show it to a client: `node scripts/seed-pos-demo.js` makes a demo restaurant with sales (test mode only). To fill an **existing**
+client with a fortnight of demo data and a manager and a cashier login: `node scripts/seed-demo-client.js --owner <the owner's e-mail>` (a
+dry run: it says what it found and writes nothing; `--yes` does it; `--wipe --yes` takes it away again, so run those two before a demo to
+bring the dates up to today). It is test mode only, refuses a client that already has Point of Sale data, and writes to the database in
+`DATABASE_URL`, which for another database (production) has to be set on purpose for that run.
 Details, decisions and what is still open: [POS_MODULE.md](POS_MODULE.md). The build against the SRS and the code review:
 [POS_COMPLIANCE.md](POS_COMPLIANCE.md).
 
