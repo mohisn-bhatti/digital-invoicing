@@ -2369,7 +2369,9 @@ app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNT
     const { createBreaker } = require('./src/pos/breaker');
     const { createPosService } = require('./src/pos/service');
     const { registerPosRoutes } = require('./src/pos/routes');
-    const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker: createBreaker() });
+    // After this many failed calls in a row the counter's sales are paused for a short rest (SRS: new sales are blocked while PRA is unreachable)
+    const breaker = createBreaker({ threshold: Number(process.env.POS_BREAKER_FAILS) || 1, coolDownMs: (Number(process.env.POS_BREAKER_REST_SECONDS) || 15) * 1000 });
+    const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker });
     registerPosRoutes(app, { service: posService, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
 }
 

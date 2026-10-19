@@ -286,12 +286,14 @@ run('POS flow: a connection that keeps failing is given a rest', async () => {
     const own = createPosService({ prisma, audit, encrypt, decrypt, mask, pra: praApi, breaker: createBreaker({ threshold: 3, coolDownMs: 30000, now: () => clock }), now });
     const sell = () => own.createSale(ctx, { counterId: counter.id, paymentMode: 1, buyer: {}, lines: [{ itemId: items.drink.id, quantity: 1 }] });
     pra.calls.length = 0;
-    for (let i = 0; i < 3; i++) { clock += 10000; pra.queue.push(answer('NOT_SENT', 'Could not connect to PRA', { reason: 'NO_CONNECTION' })); assert.strictEqual((await sell()).result.outcome, 'NOT_SENT'); }
+    let waiting;
+    for (let i = 0; i < 3; i++) { clock += 10000; pra.queue.push(answer('NOT_SENT', 'Could not connect to PRA', { reason: 'NO_CONNECTION' })); const r = await sell(); assert.strictEqual(r.result.outcome, 'NOT_SENT'); waiting = r.sale; }
     assert.strictEqual(pra.calls.length, 3);
-    clock += 1000;
-    const blocked = await sell();
-    assert.strictEqual(blocked.result.reason, 'BREAKER_OPEN');
-    assert.match(blocked.result.message, /rest/);
+    clock += 4000; // past the 3-second limit between sends of one sale, still inside the 30-second rest
+    await rejects(sell(), 503, /paused/);                                  // a new sale is refused…
+    const again = await own.retry(ctx, waiting.id);                        // …and so is sending a waiting one again
+    assert.strictEqual(again.result.reason, 'BREAKER_OPEN');
+    assert.match(again.result.message, /rest/);
     assert.strictEqual(pra.calls.length, 3, 'nothing was sent while resting');
     assert.strictEqual((await own.cashierSetup(ctx)).counters[0].breaker.open, true);
     clock += 31000;
@@ -377,6 +379,123 @@ run('POS flow: the sales list filters, and the overview counts what needs attent
     const setup = await svc.cashierSetup(ctx);
     assert.ok(setup.counters.every(c => c.hasToken !== undefined) && setup.items.length >= 2);
     assert.ok(!JSON.stringify(setup).includes('production-token'));
+});
+
+run('POS flow: while PRA cannot be reached, new sales are blocked and none is made', async () => {
+    const own = createPosService({ prisma, audit, encrypt, decrypt, mask, pra: praApi, breaker: createBreaker({ threshold: 1, coolDownMs: 15000, now: () => clock }), now });
+    const sell = (over = {}) => own.createSale(ctx, { counterId: counter.id, paymentMode: 1, buyer: {}, lines: [{ itemId: items.lunch.id, quantity: 1 }], ...over });
+    clock += 60000;
+    pra.queue.push(answer('NOT_SENT', 'Could not connect to PRA', { reason: 'NO_CONNECTION' }));
+    const first = await sell();
+    assert.strictEqual(first.result.outcome, 'NOT_SENT');
+    const before = await prisma.posSale.count({ where: { tenantId } });
+    pra.calls.length = 0;
+    clock += 2000;
+    await rejects(sell(), 503, /paused.*try again in/);        // the cashier is told clearly…
+    await rejects(own.creditNote(ctx, first.sale.id, { lines: [], reason: 'x' }), 409);   // (a sale that is not fiscalized cannot be returned anyway)
+    assert.strictEqual(await prisma.posSale.count({ where: { tenantId } }), before, '…and no sale was made');
+    assert.strictEqual(pra.calls.length, 0, 'nothing was sent');
+    assert.strictEqual((await own.cashierSetup(ctx)).counters[0].breaker.open, true, 'the screen can show the pause');
+    clock += 15000;
+    assert.strictEqual((await sell()).result.outcome, 'FISCALIZED', 'after the rest, a sale goes through and ends the pause');
+    assert.strictEqual((await sell()).result.outcome, 'FISCALIZED');
+});
+
+run('POS flow: a retried or double-sent sale is made only once (the sale key)', async () => {
+    const key = 'key-' + crypto.randomBytes(6).toString('hex');
+    const body = { counterId: counter.id, paymentMode: 1, buyer: { name: 'Key Test' }, lines: [{ itemId: items.lunch.id, quantity: 1 }], clientRef: key };
+    clock += 20000;
+    pra.calls.length = 0;
+    const a = await svc.createSale(ctx, body);
+    assert.strictEqual(a.result.outcome, 'FISCALIZED');
+    assert.ok(!a.result.duplicate);
+    const b = await svc.createSale(ctx, body);                    // the answer was lost, the cashier pressed again
+    assert.strictEqual(b.sale.id, a.sale.id);
+    assert.strictEqual(b.result.duplicate, true);
+    assert.strictEqual(b.result.outcome, 'FISCALIZED');
+    assert.strictEqual(b.sale.fiscalNumber, a.sale.fiscalNumber);
+    assert.strictEqual(pra.calls.length, 1, 'PRA was asked once');
+    assert.strictEqual(await prisma.posSale.count({ where: { tenantId, clientRef: key } }), 1);
+    // two identical requests at the same moment
+    const key2 = 'key-' + crypto.randomBytes(6).toString('hex');
+    pra.calls.length = 0; pra.delay = 60;
+    const both = await Promise.all([svc.createSale(ctx, { ...body, clientRef: key2 }), svc.createSale(ctx, { ...body, clientRef: key2 })]);
+    pra.delay = 0;
+    assert.strictEqual(both[0].sale.id, both[1].sale.id, 'both got the same sale');
+    assert.strictEqual(pra.calls.length, 1, 'and PRA was asked once');
+    assert.strictEqual(await prisma.posSale.count({ where: { tenantId, clientRef: key2 } }), 1);
+    // a key from another business is a different key
+    await rejects(svc.createSale(ctx, { ...body, clientRef: 'no spaces allowed here' }), 400, /key is not valid/);
+    // the same key for a sale that never reached PRA tells the screen so
+    clock += 20000;
+    pra.queue.push(answer('NOT_SENT', 'Could not connect to PRA', { reason: 'NO_CONNECTION' }));
+    const key3 = 'key-' + crypto.randomBytes(6).toString('hex');
+    const c = await svc.createSale(ctx, { ...body, clientRef: key3 });
+    assert.strictEqual(c.result.outcome, 'NOT_SENT');
+    const d = await svc.createSale(ctx, { ...body, clientRef: key3 });
+    assert.strictEqual(d.result.outcome, 'NOT_SENT');
+    assert.strictEqual(d.result.duplicate, true);
+    assert.strictEqual(d.sale.id, c.sale.id);
+    // credit notes too
+    clock += 20000;
+    const sold = (await sellOne({ lines: [{ itemId: items.lunch.id, quantity: 2 }] })).sale;
+    const ckey = 'key-' + crypto.randomBytes(6).toString('hex');
+    clock += 20000;
+    const c1 = await svc.creditNote(ctx, sold.id, { lines: [{ lineId: sold.lines[0].id, quantity: 1 }], reason: 'One back', clientRef: ckey });
+    const c2 = await svc.creditNote(ctx, sold.id, { lines: [{ lineId: sold.lines[0].id, quantity: 1 }], reason: 'One back', clientRef: ckey });
+    assert.strictEqual(c2.sale.id, c1.sale.id);
+    assert.strictEqual((await svc.saleDetail(ctx, sold.id)).lines[0].returned.quantity, 1, 'only one was returned');
+});
+
+run('POS flow: absurd quantities and prices are refused before anything is saved', async () => {
+    const before = await prisma.posSale.count({ where: { tenantId } });
+    await rejects(sellOne({ lines: [{ itemId: items.lunch.id, quantity: 1000001 }] }), 400, /1,000,000/);
+    await rejects(sellOne({ lines: [{ itemId: items.hall.id, quantity: 1, unitPrice: '100000000' }] }), 400, /99,999,999\.99/);
+    await rejects(sellOne({ lines: Array.from({ length: 201 }, () => ({ itemId: items.lunch.id, quantity: 1 })) }), 400, /200 lines/);
+    await rejects(sellOne({ lines: [{ itemId: items.lunch.id, quantity: '1e3' }] }), 400, /number/);
+    await rejects(sellOne({ lines: [{ itemId: items.lunch.id, quantity: -2 }] }), 400, /number/);
+    assert.strictEqual(await prisma.posSale.count({ where: { tenantId } }), before);
+});
+
+run('POS flow: the sales report adds up, and the CSV export is safe to open in a spreadsheet', async () => {
+    clock += 20000;
+    const evil = await sellOne({ buyer: { name: '=HYPERLINK("http://example.com","click")' } });
+    assert.strictEqual(evil.result.outcome, 'FISCALIZED');
+    // the report against figures worked out separately from the database
+    const rep = await svc.salesReport(ctx, {});
+    const rows = await prisma.posSale.findMany({ where: { tenantId, state: 'FISCALIZED' }, select: { invoiceType: true, totalBill: true, totalTax: true, paymentMode: true } });
+    const sum = (t, k) => Math.round(rows.filter(r => r.invoiceType === t).reduce((a, r) => a + Number(r[k]), 0) * 100) / 100;
+    assert.strictEqual(rep.sales.count, rows.filter(r => r.invoiceType === 1).length);
+    assert.strictEqual(rep.returns.count, rows.filter(r => r.invoiceType === 3).length);
+    assert.strictEqual(rep.sales.bill, sum(1, 'totalBill'));
+    assert.strictEqual(rep.returns.bill, sum(3, 'totalBill'));
+    assert.strictEqual(rep.net.bill, Math.round((sum(1, 'totalBill') - sum(3, 'totalBill')) * 100) / 100);
+    assert.strictEqual(rep.net.tax, Math.round((sum(1, 'totalTax') - sum(3, 'totalTax')) * 100) / 100);
+    assert.strictEqual(Math.round(rep.byPayment.reduce((a, r) => a + r.net, 0) * 100) / 100, rep.net.bill, 'the payment modes add up to the net');
+    assert.ok(rep.items.length >= 2 && rep.items[0].bill >= rep.items[1].bill, 'items are listed biggest first');
+    assert.ok(rep.notFiscalized.unknown >= 0 && rep.notFiscalized.cancelled >= 1);
+    assert.strictEqual((await svc.salesReport(ctx, { from: '2001-01-01', to: '2001-01-02' })).sales.count, 0, 'an empty range is empty');
+    assert.strictEqual((await svc.salesReport(ctxOther, {})).sales.count, 0, 'another business sees nothing');
+    // the export
+    const out = await svc.salesCsv(ctx, {});
+    const lines = out.csv.trim().split('\r\n');
+    assert.strictEqual(lines.length, 1 + (await prisma.posSale.count({ where: { tenantId } })), 'a header and one row per sale');
+    assert.match(lines[0], /^Date and time \(Pakistan\),Invoice no\. \(USIN\),Type,Status,PRA invoice no\./);
+    assert.ok(out.csv.includes(`"'=HYPERLINK(""http://example.com"",""click"")"`), 'text that looks like a formula is defused and quoted: ' + lines.at(-1));
+    assert.ok(!/(^|,)=HYPERLINK/m.test(out.csv));
+    assert.match(out.filename, /^pos-sales-start-to-today\.csv$/);
+    const detail = await svc.salesCsv(ctx, { detail: 'lines', from: '2020-01-01', to: '2099-12-31' });
+    assert.match(detail.csv.split('\r\n')[0], /Item code,Item,PCT code,Quantity,Unit price/);
+    assert.ok(detail.rows >= 10 && detail.csv.split('\r\n').length > detail.rows, 'a row for each line');
+    assert.strictEqual((await svc.salesCsv(ctx, { state: 'FISCALIZED' })).csv.trim().split('\r\n').length - 1, rows.length, 'a status filter works');
+    assert.deepStrictEqual((await svc.salesCsv(ctxOther, {})).csv.trim().split('\r\n').length, 1, 'another business exports only a header');
+    assert.ok(audits.some(a => /^pos\.export/.test(a)), 'an export is logged');
+});
+
+run('POS flow: the overview reports how long PRA takes to answer', async () => {
+    const o = await svc.overview(ctx);
+    assert.ok(o.responseTimes && o.responseTimes.calls >= 5 && o.responseTimes.avgMs === 5 && o.responseTimes.p95Ms === 5 && o.responseTimes.maxMs === 5, JSON.stringify(o.responseTimes));
+    assert.strictEqual((await svc.overview(ctxOther)).responseTimes, null);
 });
 
 run('POS flow: the audit trail records the administrative actions and never a token', async () => {

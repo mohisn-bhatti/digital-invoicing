@@ -109,3 +109,14 @@ test('POS counters and tokens', () => {
     assert.strictEqual(V.cleanPaymentMode('2'), 2);
     assert.throws(() => V.cleanPaymentMode(7), /paid/);
 });
+
+test('POS maths: figures too big for the database are refused in plain words', () => {
+    const refuses = (lines, re) => assert.throws(() => C.calcSale(lines), e => e instanceof C.PosCalcError && re.test(e.message));
+    refuses([{ quantity: 1000001, unitPrice: 1, taxRate: 0 }], /1,000,000/);
+    refuses([{ quantity: 1, unitPrice: '100000000', taxRate: 0 }], /99,999,999\.99/);
+    refuses([{ quantity: 1000000, unitPrice: '99999999.99', taxRate: 0 }], /too much/);
+    refuses(Array.from({ length: 200 }, () => ({ quantity: 1000, unitPrice: '99999999.99', taxRate: 0 })), /too much for one invoice/);
+    // right at the limits is fine
+    assert.strictEqual(C.calcSale([{ quantity: 1000000, unitPrice: '99999.99', taxRate: 0 }]).totals.bill, 99999990000);
+    assert.strictEqual(C.calcSale([{ quantity: 1, unitPrice: '99999999.99', taxRate: 100 }]).totals.bill, 199999999.98);
+});

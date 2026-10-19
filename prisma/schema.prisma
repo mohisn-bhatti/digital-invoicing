@@ -580,6 +580,7 @@ model PosSale {
   counter        PosCounter     @relation(fields: [counterId], references: [id])
   invoiceType    Int            @default(1) // 1 New, 2 Debit, 3 Credit
   usin           String         // our own invoice number, handed out once and never reused (unique per business)
+  clientRef      String?        // sent by the screen with each new sale: the same key twice gives back the sale already made, never a second one
   refUsin        String?        // credit note: the USIN of the sale it returns
   refSaleId      String?
   state          PosSaleState   @default(DRAFT)
@@ -615,6 +616,7 @@ model PosSale {
   tries          PosAttempt[]
 
   @@unique([tenantId, usin])
+  @@unique([tenantId, clientRef])
   @@index([tenantId, state])
   @@index([tenantId, createdAt])
   @@index([refSaleId])
@@ -667,6 +669,7 @@ model PosAttempt {
   httpStatus Int?
   code       String?
   message    String   @default("")
+  mock       Boolean  @default(false) // answered by test mode, not by PRA
 
   @@index([saleId])
 }

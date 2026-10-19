@@ -141,7 +141,9 @@ test('PRA submit: test mode is the default and sends nothing; MOCK- buyer names 
         assert.match(ok.invoiceNumber, /^MOCK-\d{14}-\d{6}$/);
         assert.strictEqual(ok.mock, true);
         for (const [name, outcome] of [['mock-reject', 'REJECTED'], ['MOCK-TIMEOUT', 'UNKNOWN'], ['Mock-Offline', 'NOT_SENT']]) {
-            assert.strictEqual((await pra.submit({ env: 'SANDBOX', token: 't', payload: { BuyerName: name } }, { post: never })).outcome, outcome, name);
+            const r = await pra.submit({ env: 'SANDBOX', token: 't', payload: { BuyerName: name } }, { post: never });
+            assert.strictEqual(r.outcome, outcome, name);
+            assert.strictEqual(r.mock, true, `${name}: every answer in test mode is marked as a test`);
         }
     } finally { if (was === undefined) delete process.env.PRA_MOCK; else process.env.PRA_MOCK = was; }
 });
@@ -172,6 +174,14 @@ test('PRA submit: live mode posts to the right address with the Bearer token and
         process.env.POS_PRA_TIMEOUT_MS = '5';
         assert.strictEqual(pra.timeoutMs(), 8000);
     } finally { delete process.env.POS_PRA_TIMEOUT_MS; if (was === undefined) delete process.env.PRA_MOCK; else process.env.PRA_MOCK = was; }
+});
+
+test('PRA test mode: MOCK-SLOW is an accepted sale that takes three seconds', () => {
+    const r = pra.mockSubmit({ BuyerName: 'mock-slow' });
+    assert.strictEqual(r.outcome, 'FISCALIZED');
+    assert.strictEqual(r.delayMs, 3000);
+    assert.match(r.invoiceNumber, /^MOCK-/);
+    assert.strictEqual(pra.mockSubmit({ BuyerName: 'Ali' }).delayMs, undefined);
 });
 
 test('PRA receipt QR: PRA\'s verification page with the fiscal number', () => {

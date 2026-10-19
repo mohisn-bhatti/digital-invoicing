@@ -26,6 +26,11 @@
 
     class PosCalcError extends Error {}
 
+    // Limits that keep every figure inside what the database holds (a sale's total is under 100 billion rupees)
+    const MAX_QTY4 = 1000000n * 10000n;       // 1,000,000 units
+    const MAX_PRICE = 9999999999n;            // 99,999,999.99
+    const MAX_MONEY = 9999999999999n;         // 99,999,999,999.99: one line, and a whole sale
+
     // "12.345" → scaled integer, half-up on the first dropped digit. Only plain non-negative numbers are accepted.
     function scaled(value, scale, what) {
         const s = String(value === undefined || value === null ? '' : value).trim();
@@ -43,14 +48,18 @@
     function calcLine(l) {
         const qty4 = scaled(l.quantity, 4, 'Quantity');
         if (qty4 <= 0n) throw new PosCalcError('Quantity must be more than zero.');
+        if (qty4 > MAX_QTY4) throw new PosCalcError('Quantity cannot be more than 1,000,000.');
         const price = scaled(l.unitPrice, 2, 'Price');
+        if (price > MAX_PRICE) throw new PosCalcError('A price cannot be more than 99,999,999.99.');
         const gross = divRound(qty4 * price, 10000n);
+        if (gross > MAX_MONEY) throw new PosCalcError('This line comes to too much: check the quantity and the price.');
         const discount = scaled(l.discount === undefined || l.discount === null || l.discount === '' ? 0 : l.discount, 2, 'Discount');
         if (discount > gross) throw new PosCalcError('A discount cannot be more than the item amount.');
         const rateBp = scaled(l.taxRate === undefined || l.taxRate === null || l.taxRate === '' ? 0 : l.taxRate, 2, 'Tax rate');
         if (rateBp > 10000n) throw new PosCalcError('A tax rate cannot be more than 100%.');
         const net = gross - discount;
         const tax = divRound(net * rateBp, 10000n);
+        if (net + tax > MAX_MONEY) throw new PosCalcError('This line comes to too much: check the quantity and the price.');
         return { qty4, price, gross, discount, rateBp, net, tax, total: net + tax };
     }
 
@@ -70,6 +79,7 @@
             qty4 += c.qty4; net += c.net; discount += c.discount; tax += c.tax; total += c.total;
             return lineOut(c);
         });
+        if (total > MAX_MONEY) throw new PosCalcError('This sale comes to too much for one invoice: split it.');
         return { lines: out, totals: { quantity: qtyNum(qty4), saleValue: rupees(net), discount: rupees(discount), tax: rupees(tax), bill: rupees(total) } };
     }
 

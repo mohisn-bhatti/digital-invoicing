@@ -8,6 +8,7 @@ const POS = {
   setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, buyer: { name: '', pntn: '', cnic: '', phone: '' },
   cat: '', q: '', busy: false, result: null, detail: null,
   sales: { from: '', to: '', state: '', q: '' }, items: [], itemQ: '', branches: [], profile: null, pctTimer: null,
+  ref: null, refSig: null, creditRef: null, alerts: null, alertTimer: null, tick: null, setupAt: 0, lastLeft: -1, lost: false,
 };
 const POS_STATES = {
   AWAITING_FISCALIZATION: ['Waiting for PRA', 'bg-amber-100 text-amber-800'],
@@ -44,11 +45,13 @@ async function initPos() {
   host.insertAdjacentHTML('beforeend', posPagesHtml());
   posEnsureModals();
   Object.assign(PAGE_ENTER, { 'p-dashboard': posEnterDashboard, 'p-sale': posEnterSale, 'p-sales': posEnterSales, 'p-items': posEnterItems, 'p-settings': posEnterSettings });
+  clearInterval(POS.alertTimer); POS.alertTimer = setInterval(posPollAlerts, 60000);
+  posPollAlerts();
   route();
 }
 
 function posPagesHtml() {
-  const page = (id, inner) => `<div data-page="${id}" class="page hidden space-y-4">${inner}</div>`;
+  const page = (id, inner) => `<div data-page="${id}" class="page hidden space-y-4">${id === 'p-dashboard' ? '' : '<div class="posAlertSlot"></div>'}${inner}</div>`;
   return [
     page('p-dashboard', '<div id="pDash"></div>'),
     page('p-sale', `
@@ -57,7 +60,7 @@ function posPagesHtml() {
         <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-start">
           <section class="min-w-0 md:col-span-3 space-y-3">
             <div class="bg-white rounded-xl shadow p-3 space-y-2">
-              <input id="pSearch" type="search" placeholder="Search items…" autocomplete="off" oninput="posSearch(this.value)" class="!text-base">
+              <input id="pSearch" type="search" placeholder="Search items, or scan a barcode…" autocomplete="off" oninput="posSearch(this.value)" onkeydown="posSearchKey(event)" class="!text-base">
               <div id="pCats" class="flex flex-wrap gap-1.5"></div>
             </div>
             <div id="pGrid" class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2"></div>
@@ -103,6 +106,8 @@ function posPagesHtml() {
             <button type="button" onclick="posLoadSales()" class="flex-1 sm:flex-none px-3 min-h-[2.5rem] rounded border text-sm">Refresh</button></div>
           <label class="col-span-2 sm:flex-1 sm:min-w-[12rem]"><span>Search</span><input id="psQ" type="search" placeholder="Invoice no., PRA no. or buyer" oninput="posSalesSearch()" autocomplete="off"></label>
         </div>
+        ${posCan('OWNER', 'ACCOUNTANT') ? `<div id="psReport" class="mb-3"></div>
+        <div class="flex flex-wrap gap-2 mb-3">${posBtn('Download CSV', 'posDownloadCsv()')}${posBtn('Download CSV with items', "posDownloadCsv('lines')")}</div>` : ''}
         <div id="psNote" class="text-xs text-slate-500 mb-2"></div>
         <div id="psCards" class="md:hidden space-y-2"></div>
         <div class="hidden md:block overflow-x-auto"><table class="w-full text-sm">
@@ -139,12 +144,29 @@ function posEnsureModals() {
         <div class="flex justify-center overflow-x-auto"><div id="posReceipt"></div></div></div></div>`);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { posCloseReceipt(); posCloseModal(); } });
 }
+// Anything that needs a person (SRS 4.7: operators are alerted to unknown outcomes) shows at the top of every POS page
+async function posPollAlerts() {
+  if (!S.token || S.module !== 'POS') { clearInterval(POS.alertTimer); return; }
+  try { POS.alerts = await api('/api/pos/overview'); posRenderAlerts(); } catch { /* the page itself reports problems */ }
+}
+function posRenderAlerts() {
+  const o = POS.alerts; if (!o) return;
+  const mgr = posCan('OWNER', 'ACCOUNTANT'), bits = [];
+  if (o.outcomeUnknown) {
+    bits.push(`<div class="rounded-lg border-2 border-red-500 bg-red-50 text-red-900 p-3 text-sm flex flex-wrap items-center justify-between gap-2"><span><b>${o.outcomeUnknown} ${o.outcomeUnknown === 1 ? 'sale has' : 'sales have'} an unknown outcome.</b> PRA may or may not have ${o.outcomeUnknown === 1 ? 'it' : 'them'}. ${mgr ? "Check PRA's report and record what you find." : 'Tell a manager.'}</span>${mgr ? posBtn('Show', "posShowState('OUTCOME_UNKNOWN')", 'danger') : ''}</div>`);
+  }
+  const todo = o.rejected + o.awaiting;
+  if (todo) bits.push(posBanner('warn', `<b>${todo} ${todo === 1 ? 'sale is' : 'sales are'} not fiscalized yet</b> (${o.awaiting} waiting for PRA, ${o.rejected} refused). <a href="#" class="underline" onclick="event.preventDefault(); posShowState('${o.rejected ? 'REJECTED' : 'AWAITING_FISCALIZATION'}')">Open ${todo === 1 ? 'it' : 'them'}</a>.`));
+  document.querySelectorAll('.posAlertSlot').forEach(el => { el.innerHTML = bits.length ? `<div class="space-y-2">${bits.join('')}</div>` : ''; });
+}
+
 const posShowModal = html => { $('#posModalBody').innerHTML = html; $('#posModal').classList.remove('hidden'); };
 function posCloseModal() { const m = $('#posModal'); if (m) m.classList.add('hidden'); POS.detail = null; }
 
 /* ---------- the cashier ---------- */
 async function posLoadSetup() {
   POS.setup = await api('/api/pos/setup');
+  POS.setupAt = Date.now();
   POS.itemsById = new Map(POS.setup.items.map(i => [i.id, i]));
   if (!POS.setup.counters.some(c => c.id === POS.counterId)) {
     let last = null; try { last = localStorage.getItem('posCounter'); } catch { /* per-browser convenience only */ }
@@ -153,18 +175,31 @@ async function posLoadSetup() {
   POS.cart = POS.cart.filter(c => POS.itemsById.has(c.itemId));
 }
 async function posEnterSale() {
+  posPollAlerts();
   try { await posLoadSetup(); } catch (err) { return toast(err.message); }
   posRenderSale();
+  clearInterval(POS.tick); POS.tick = setInterval(posTick, 1000);
 }
 function posRenderSale() { posRenderBanner(); posRenderCounters(); posRenderCats(); posRenderGrid(); posRenderCart(); posRenderPay(); posRenderResult(); }
 const posCounter = () => (POS.setup ? POS.setup.counters.find(c => c.id === POS.counterId) : null);
 
+// How much of the connection's rest is left (the server told us at setupAt)
+const posPauseLeft = c => (c && c.breaker && c.breaker.open ? Math.max(0, c.breaker.retryInMs - (Date.now() - POS.setupAt)) : 0);
+function posTick() {
+  if (S.page !== 'p-sale' || S.module !== 'POS') { if (S.module !== 'POS') clearInterval(POS.tick); return; }
+  const left = Math.ceil(posPauseLeft(posCounter()) / 1000);
+  if (left !== POS.lastLeft) {
+    const was = POS.lastLeft; POS.lastLeft = left;
+    posRenderBanner(); posRenderGo();
+    if (left === 0 && was > 0) posLoadSetup().then(() => { posRenderBanner(); posRenderCounters(); posRenderGo(); }).catch(() => {});
+  }
+}
 function posRenderBanner() {
   const s = POS.setup, c = posCounter(), out = [];
   if (s.testMode) out.push(posBanner('warn', '<b>Test mode.</b> Sales are not sent to PRA and get fake invoice numbers (starting MOCK-). Nothing here is a real fiscal invoice.'));
   if (!s.counters.length) out.push(posBanner('bad', 'No counter is set up yet. Ask the account owner to add one in <b>Settings</b> (it needs the POS ID PRA gave you).'));
   else if (c && !c.hasToken && !s.testMode) out.push(posBanner('bad', `Counter <b>${esc(c.name)}</b> has no PRA token yet, so sales cannot be sent. Ask the account owner to add it in Settings.`));
-  if (c && c.breaker && c.breaker.open) out.push(posBanner('warn', `The connection to PRA has failed several times, so it is resting for about ${Math.ceil(c.breaker.retryInMs / 1000)} seconds.`));
+  if (c && posPauseLeft(c) > 0) out.push(posBanner('bad', `<b>Sales on this counter are paused for about ${Math.ceil(posPauseLeft(c) / 1000)} seconds.</b> PRA could not be reached a moment ago, and a fiscal sale cannot be made without it. Check the internet connection.`));
   if (!s.items.length) out.push(posBanner('info', 'There are no items yet. A manager adds them under <b>Items</b>.'));
   $('#pSaleBanner').innerHTML = out.join('');
 }
@@ -185,6 +220,16 @@ function posRenderCats() {
 }
 function posCategory(v) { POS.cat = v; posRenderCats(); posRenderGrid(); }
 function posSearch(v) { POS.q = v.trim().toLowerCase(); posRenderGrid(); }
+// A barcode scanner types the code and presses Enter: an exact code, or the only match, goes into the sale
+function posSearchKey(e) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const q = e.target.value.trim().toLowerCase(); if (!q) return;
+  const exact = POS.setup.items.filter(i => i.code.toLowerCase() === q);
+  const hits = exact.length === 1 ? exact : POS.setup.items.filter(i => (i.name + ' ' + i.code + ' ' + i.category).toLowerCase().includes(q));
+  if (hits.length === 1) { posAdd(hits[0].id); e.target.value = ''; POS.q = ''; posRenderGrid(); }
+  else toast(hits.length ? 'More than one item matches: tap the one you want.' : 'No item matches.');
+}
 function posRenderGrid() {
   const list = POS.setup.items.filter(i => (!POS.cat || (i.category || '__none') === POS.cat) && (!POS.q || (i.name + ' ' + i.code + ' ' + i.category).toLowerCase().includes(POS.q)));
   $('#pGrid').innerHTML = list.map(i => `<button type="button" onclick="posAdd('${i.id}')" class="text-left bg-white border rounded-xl p-3 min-h-[5rem] shadow-sm hover:border-emerald-600 active:bg-emerald-50">
@@ -276,42 +321,70 @@ const posToItems = () => window.scrollTo({ top: 0, behavior: 'smooth' });
 function posRenderGo() {
   const go = $('#pGo'); if (!go) return;
   const pv = POS.cart.length ? posPreview() : { ok: false };
-  go.disabled = POS.busy || !pv.ok || !POS.counterId;
-  go.textContent = POS.busy ? 'Sending to PRA…' : 'Finalize & send to PRA';
+  const paused = posPauseLeft(posCounter()) > 0;
+  go.disabled = POS.busy || !pv.ok || !POS.counterId || paused;
+  go.textContent = POS.busy ? 'Sending to PRA…' : paused ? `Paused ${Math.ceil(posPauseLeft(posCounter()) / 1000)} s` : 'Finalize & send to PRA';
+  // while a sale is being sent the cart and the items cannot be touched
+  for (const id of ['pCartPanel', 'pGrid']) { const el = $('#' + id); if (el) { el.classList.toggle('pointer-events-none', POS.busy); el.classList.toggle('opacity-60', POS.busy); } }
 }
 
+const posNewRef = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 14));
+const posNoNetwork = err => err.lost || /Failed to fetch|NetworkError|Load failed/i.test(err.message);
 async function posFinalize() {
   if (POS.busy) return;
   const pv = posPreview();
   if (!pv.ok || !POS.counterId) return;
-  POS.busy = true; posRenderGo();
+  const lines = POS.cart.map(c => {
+    const item = POS.itemsById.get(c.itemId), d = String(c.disc || '').trim();
+    return { itemId: c.itemId, quantity: c.qty, unitPrice: item.openPrice ? c.price : undefined, ...(d.endsWith('%') ? { discountPercent: d.slice(0, -1).trim() } : d ? { discount: d } : {}) };
+  });
+  const body = { counterId: POS.counterId, paymentMode: POS.mode, buyer: POS.buyer, lines };
+  // the same cart pressed again is the same sale: if an answer was lost, nothing is made twice
+  const sig = JSON.stringify(body);
+  if (POS.refSig !== sig) { POS.ref = posNewRef(); POS.refSig = sig; }
+  body.clientRef = POS.ref;
+  POS.busy = true; POS.lost = false; POS.result = null; posRenderResult(); posRenderGo();
+  let timer;
+  // the screen never waits for ever (SRS NFR-3): after 35 seconds it lets go and says what is safe to do
+  const watchdog = new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('The server did not answer in time.'), { lost: true })), 35000); });
   try {
-    const lines = POS.cart.map(c => {
-      const item = POS.itemsById.get(c.itemId), d = String(c.disc || '').trim();
-      return { itemId: c.itemId, quantity: c.qty, unitPrice: item.openPrice ? c.price : undefined, ...(d.endsWith('%') ? { discountPercent: d.slice(0, -1).trim() } : d ? { discount: d } : {}) };
-    });
-    const r = await api('/api/pos/sales', { method: 'POST', body: { counterId: POS.counterId, paymentMode: POS.mode, buyer: POS.buyer, lines } });
-    POS.cart = []; POS.buyer = posBlankBuyer(); POS.mode = 1;
+    const r = await Promise.race([api('/api/pos/sales', { method: 'POST', body }), watchdog]);
+    clearTimeout(timer);
+    POS.ref = POS.refSig = null;
+    POS.cart = []; POS.buyer = posBlankBuyer(); POS.mode = 1; POS.busy = false;
     for (const id of ['pbName', 'pbPntn', 'pbCnic', 'pbPhone']) $('#' + id).value = '';
     POS.result = r.result.outcome === 'FISCALIZED' ? null : r;
     posRenderPay(); posRenderCart(); posRenderResult();
-    if (r.result.outcome === 'FISCALIZED') { toast(`Sale ${r.sale.usin} fiscalized`, true); await posShowReceipt(r.sale.id); }
-    posLoadSetup().then(() => { posRenderBanner(); posRenderCounters(); }).catch(() => {});
-  } catch (err) { toast(err.message); }
+    if (r.result.outcome === 'FISCALIZED') { toast(r.result.duplicate ? `Sale ${r.sale.usin} had already been made: nothing was sent twice` : `Sale ${r.sale.usin} fiscalized`, true); await posShowReceipt(r.sale.id); }
+    posLoadSetup().then(() => { posRenderBanner(); posRenderCounters(); posRenderGo(); }).catch(() => {});
+    posPollAlerts();
+  } catch (err) {
+    clearTimeout(timer);
+    POS.busy = false;
+    if (posNoNetwork(err)) { POS.lost = true; posRenderResult(); }
+    else { toast(err.message); posLoadSetup().then(() => { posRenderBanner(); posRenderGo(); }).catch(() => {}); }
+  }
   POS.busy = false; posRenderGo();
 }
 
 // A sale that is made but not fiscalized stays on screen until someone deals with it
 function posRenderResult() {
   const el = $('#pResult'); if (!el) return;
+  if (POS.lost) {
+    el.innerHTML = `<div class="rounded-lg border-2 border-amber-400 bg-amber-50 p-3 text-sm space-y-2">
+      <div class="font-semibold">No answer from the server</div>
+      <div>The sale may already have been saved. Pressing <b>Finalize</b> again is safe: the same sale is never made twice. Or look in Sales &amp; Receipts first.</div>
+      <div class="flex flex-wrap gap-2">${posBtn('Check Sales & Receipts', "go('p-sales')")}</div></div>`;
+    return;
+  }
   const r = POS.result;
   if (!r) { el.innerHTML = ''; return; }
   const o = r.result.outcome, s = r.sale;
-  const head = { REJECTED: 'PRA refused this sale', NOT_SENT: 'Not sent to PRA', UNKNOWN: 'Outcome unknown: do not ring this sale up again' }[o] || 'Not fiscalized';
+  const head = { REJECTED: 'PRA refused this sale', NOT_SENT: 'Not sent to PRA', UNKNOWN: 'Outcome unknown: do not ring this sale up again', IN_PROGRESS: 'Still being sent to PRA', CANCELLED: 'This sale was cancelled' }[o] || 'Not fiscalized';
   const tone = o === 'UNKNOWN' || o === 'REJECTED' ? 'border-red-400 bg-red-50' : 'border-amber-300 bg-amber-50';
   el.innerHTML = `<div class="rounded-lg border-2 ${tone} p-3 text-sm space-y-2">
-    <div class="flex items-start justify-between gap-2"><div class="font-semibold">${esc(head)}</div><button type="button" onclick="POS.result = null; posRenderResult()" class="text-slate-400 text-lg leading-none px-1" aria-label="Dismiss">×</button></div>
-    <div>Invoice ${esc(s.usin)}, ${money(s.totalBill)}. ${esc(r.result.message)}</div>
+    <div class="flex items-start justify-between gap-2"><div class="font-semibold">${esc(head)}</div><button type="button" onclick="POS.result = null; posRenderResult()" class="text-slate-400 text-2xl leading-none px-2" aria-label="Dismiss">×</button></div>
+    <div>${r.result.duplicate ? 'This sale had already been made, so nothing was sent twice. ' : ''}Invoice ${esc(s.usin)}, ${money(s.totalBill)}. ${esc(r.result.message)}</div>
     ${o === 'UNKNOWN' ? '<div class="font-medium">PRA may already have this sale. Tell a manager: they check PRA\'s report and record what they find. It will not be sent again by itself.</div>' : ''}
     <div class="flex flex-wrap gap-2">${o === 'NOT_SENT' ? posBtn('Try again', `posRetry('${s.id}')`, 'primary') : ''}${o === 'REJECTED' ? posBtn('Correct and send again', `posOpenSale('${s.id}')`, 'primary') : ''}${posBtn('Open the sale', `posOpenSale('${s.id}')`)}</div></div>`;
 }
@@ -323,7 +396,10 @@ async function posShowReceipt(id) {
     posEnsureModals();
     $('#posReceipt').innerHTML = posReceiptHtml(rc);
     $('#posReceiptModal').classList.remove('hidden');
-    if (typeof QRCode !== 'undefined') new QRCode($('#posQr'), { text: rc.sale.verifyUrl, width: 96, height: 96, correctLevel: QRCode.CorrectLevel.L });
+    // the QR is drawn by a library from a CDN: if it cannot load, the address is printed instead so the receipt still carries it
+    let drawn = false;
+    if (typeof QRCode !== 'undefined') { try { new QRCode($('#posQr'), { text: rc.sale.verifyUrl, width: 96, height: 96, correctLevel: QRCode.CorrectLevel.L }); drawn = $('#posQr').children.length > 0; } catch { drawn = false; } }
+    if (!drawn) { $('#posQrText').classList.remove('hidden'); toast('The QR code could not be drawn. The verification address is printed instead.'); }
   } catch (err) { toast(err.message); }
 }
 function posReceiptHtml(rc) {
@@ -348,6 +424,7 @@ function posReceiptHtml(rc) {
     ${row(credit ? 'TOTAL RETURNED' : 'TOTAL', money(s.totals.bill), true)}${row('Paid by', esc(posModeName(s.paymentMode)))}${rule}
     <div style="text-align:center"><div id="posQr" class="posqr" style="display:inline-block;padding:.12in;background:#fff"></div>
       <div style="font-size:10px">Scan to verify this invoice with PRA</div>
+      <div id="posQrText" class="hidden" style="font-size:9px;word-break:break-all">${esc(s.verifyUrl)}</div>
       ${b.footer ? `<div style="margin-top:4px">${esc(b.footer)}</div>` : ''}</div>`;
 }
 function posPrintReceipt() {
@@ -355,13 +432,16 @@ function posPrintReceipt() {
   let st = document.getElementById('pageStyle');
   if (!st) { st = document.createElement('style'); st.id = 'pageStyle'; document.head.appendChild(st); }
   st.textContent = '@page { size: 80mm auto; margin: 3mm; }';
+  const done = () => document.body.classList.remove('print-pos');
+  window.addEventListener('afterprint', done, { once: true });
+  setTimeout(done, 120000);
   window.print();
-  setTimeout(() => document.body.classList.remove('print-pos'), 500);
 }
 function posCloseReceipt() { const m = $('#posReceiptModal'); if (m) m.classList.add('hidden'); }
 
 /* ---------- sales and receipts ---------- */
 async function posEnterSales() {
+  posPollAlerts();
   if (!POS.sales.from) POS.sales.from = POS.sales.to = posDay(new Date());
   $('#psFrom').value = POS.sales.from; $('#psTo').value = POS.sales.to; $('#psState').value = POS.sales.state; $('#psQ').value = POS.sales.q;
   if (!POS.setup) { try { await posLoadSetup(); } catch { /* the list still loads */ } }
@@ -371,7 +451,35 @@ function posSalesFilter() { POS.sales = { from: $('#psFrom').value, to: $('#psTo
 let posSalesTimer = null;
 function posSalesSearch() { clearTimeout(posSalesTimer); posSalesTimer = setTimeout(posSalesFilter, 350); }
 function posSalesToday() { POS.sales = { from: posDay(new Date()), to: posDay(new Date()), state: '', q: '' }; posEnterSales(); }
+async function posLoadReport() {
+  const el = $('#psReport'); if (!el) return;
+  try {
+    const f = POS.sales, r = await api('/api/pos/report?' + new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}) }));
+    const tile = (t, big, sub) => `<div class="border rounded-lg p-3"><div class="text-xs text-slate-500">${t}</div><div class="text-lg font-semibold break-words">${big}</div><div class="text-xs text-slate-500">${sub || ''}</div></div>`;
+    const nf = r.notFiscalized, pending = nf.waiting + nf.refused + nf.unknown;
+    el.innerHTML = `<div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        ${tile('Fiscalized sales', money(r.sales.bill), `${r.sales.count} ${r.sales.count === 1 ? 'invoice' : 'invoices'} · tax ${money(r.sales.tax)}`)}
+        ${tile('Returned', money(r.returns.bill), `${r.returns.count} credit ${r.returns.count === 1 ? 'note' : 'notes'}`)}
+        ${tile('Net total', money(r.net.bill), `value ${money(r.net.saleValue)}`)}
+        ${tile('Net sales tax', money(r.net.tax), '')}</div>
+      <div class="text-xs text-slate-600 mt-2">${r.byPayment.map(p => `${esc(p.label)} ${money(p.net)}`).join(' · ')}${pending ? ` · <b class="text-amber-800">not fiscalized: ${nf.waiting} waiting, ${nf.refused} refused, ${nf.unknown} unknown</b>` : ''}${nf.cancelled ? ` · ${nf.cancelled} cancelled` : ''}${r.testMode ? ' · <b>test mode: not real figures</b>' : ''}</div>
+      ${r.items.length ? `<details class="text-xs mt-2"><summary class="cursor-pointer text-slate-600">By item</summary><table class="w-full mt-1"><tbody>${r.items.map(i => `<tr class="border-t"><td class="py-1">${esc(i.itemName)}</td><td class="text-right">${i.quantity}</td><td class="text-right">${money(i.bill)}</td></tr>`).join('')}</tbody></table></details>` : ''}`;
+  } catch { el.innerHTML = ''; }
+}
+// The sales of the chosen dates as a spreadsheet. The request needs the login, so it is fetched and saved from here.
+async function posDownloadCsv(detail) {
+  const f = POS.sales;
+  try {
+    const res = await fetch('/api/pos/export/sales?' + new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}), ...(f.state ? { state: f.state } : {}), ...(detail ? { detail } : {}) }), { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || 'The download failed.');
+    const blob = await res.blob(), m = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: m ? m[1] : 'pos-sales.csv' });
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    toast('Downloaded', true);
+  } catch (err) { toast(err.message); }
+}
 async function posLoadSales() {
+  posLoadReport();
   try {
     const f = POS.sales, qs = new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}), ...(f.state ? { state: f.state } : {}), ...(f.q ? { q: f.q } : {}), limit: '200' });
     const r = await api('/api/pos/sales?' + qs);
@@ -491,6 +599,7 @@ async function posResolve(id) {
   } catch (err) { toast(err.message); }
 }
 function posCreditForm(id) {
+  POS.creditRef = posNewRef();
   const d = POS.detail;
   posForm(`<div class="border rounded-lg p-3 space-y-2"><div class="font-medium text-sm">Return items (credit note)</div>
     <table class="w-full text-sm"><thead class="text-left text-slate-500"><tr><th>Item</th><th class="text-right">Sold</th><th class="text-right">Already returned</th><th class="text-right">Return now</th></tr></thead><tbody>
@@ -505,14 +614,15 @@ async function posCredit(id) {
   if (!lines.length) return toast('Enter how many of each item are returned.');
   try {
     toast('Sending the credit note to PRA…', true);
-    const r = await api(`/api/pos/sales/${id}/credit-note`, { method: 'POST', body: { lines, reason: $('#fcnReason').value } });
+    const r = await api(`/api/pos/sales/${id}/credit-note`, { method: 'POST', body: { lines, reason: $('#fcnReason').value, clientRef: POS.creditRef } });
+    POS.creditRef = null;
     if (r.result.outcome === 'FISCALIZED') { toast(`Credit note ${r.sale.usin} fiscalized`, true); await posShowReceipt(r.sale.id); } else toast(`Credit note ${r.sale.usin}: ${r.result.message}`);
     posOpenSale(r.result.outcome === 'FISCALIZED' ? id : r.sale.id); if (S.page === 'p-sales') posLoadSales();
   } catch (err) { toast(err.message); }
 }
 
 /* ---------- items ---------- */
-async function posEnterItems() { await posLoadItems(); }
+async function posEnterItems() { posPollAlerts(); await posLoadItems(); }
 async function posLoadItems() {
   try { POS.items = await api('/api/pos/items' + (POS.itemQ ? '?q=' + encodeURIComponent(POS.itemQ) : '')); posRenderItems(); } catch (err) { toast(err.message); }
 }
@@ -536,6 +646,7 @@ function posItemForm(id) {
     <div class="font-medium">${id ? `Edit ${esc(i.name)} <span class="text-xs text-slate-500">(code ${esc(i.code)} stays the same)</span>` : 'Add an item'}</div>
     <div class="grid sm:grid-cols-4 gap-3">
       <label class="sm:col-span-2"><span>Name (printed on the receipt)</span><input id="fiName" value="${esc(i.name)}" maxlength="150" autocomplete="off"></label>
+      <label><span>Code / barcode ${id ? '' : '<span class="text-slate-400">(blank = automatic)</span>'}</span><input id="fiCode" value="${esc(i.code)}" maxlength="50" ${id ? 'disabled' : ''} autocomplete="off"></label>
       <label><span>Category</span><input id="fiCat" value="${esc(i.category)}" maxlength="60" list="fiCats" autocomplete="off"><datalist id="fiCats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
       <label><span>Price before tax</span><input id="fiPrice" value="${i.unitPrice === '' ? '' : esc(i.unitPrice)}" inputmode="decimal" ${i.openPrice ? 'disabled' : ''}></label>
       <label><span>PCT code (8 digits)</span><input id="fiPct" value="${esc(i.pctCode ? i.pctCode.slice(0, 4) + '.' + i.pctCode.slice(4) : '')}" placeholder="9801.2000" oninput="posPctSearch(this.value)" autocomplete="off"></label>
@@ -566,7 +677,7 @@ function posPctSearch(v) {
 function posPctPick(code) { $('#fiPct').value = code; $('#fiPctHits').innerHTML = ''; }
 async function posItemSave(id) {
   const body = {
-    name: $('#fiName').value, category: $('#fiCat').value, pctCode: $('#fiPct').value, taxRate: $('#fiRate').value, taxRateCard: $('#fiRateCard').value,
+    name: $('#fiName').value, ...(id ? {} : { code: $('#fiCode').value }), category: $('#fiCat').value, pctCode: $('#fiPct').value, taxRate: $('#fiRate').value, taxRateCard: $('#fiRateCard').value,
     unitPrice: $('#fiPrice').value, openPrice: $('#fiOpen').checked, active: $('#fiActive').checked,
   };
   try {
@@ -588,10 +699,11 @@ function posRenderDash(o) {
   if (o.testMode) alerts.push(posBanner('warn', '<b>Test mode.</b> Nothing is sent to PRA; receipts get fake invoice numbers. The server is set live when the business is ready.'));
   if (!o.profileComplete) alerts.push(posBanner('warn', 'The business name, address and PNTN are not complete. They are printed on every receipt and are needed before production sales. The account owner adds them in <b>Settings</b>.'));
   $('#pDash').innerHTML = `<div class="space-y-4">${alerts.join('')}
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
       ${card('Sales today', money(o.todaySales.total), `${o.todaySales.count} fiscal ${o.todaySales.count === 1 ? 'invoice' : 'invoices'}, tax ${money(o.todaySales.tax)}`)}
       ${card('Returns today', money(o.todayReturns.total), `${o.todayReturns.count} credit ${o.todayReturns.count === 1 ? 'note' : 'notes'}`)}
       ${card('Last fiscal invoice', o.lastFiscalizedAt ? esc(posWhen(o.lastFiscalizedAt)) : 'none yet', '').replace('text-xl sm:text-2xl', 'text-base')}
+      ${card('PRA response time', o.responseTimes ? `${o.responseTimes.avgMs} ms` : o.testMode ? 'test mode' : 'no calls yet', o.responseTimes ? `95% under ${o.responseTimes.p95Ms} ms · slowest ${o.responseTimes.maxMs} ms (last ${o.responseTimes.calls} calls)` : 'measured once real calls are made').replace('text-xl sm:text-2xl', 'text-base')}
       ${card('Needs attention', o.outcomeUnknown + o.rejected + o.awaiting, `${o.outcomeUnknown} unknown · ${o.rejected} refused · ${o.awaiting} waiting`, o.outcomeUnknown ? 'text-red-700' : o.rejected + o.awaiting ? 'text-amber-700' : 'text-emerald-700')}</div>
     <div class="bg-white rounded-xl shadow p-4"><div class="flex flex-wrap items-center justify-between gap-2 mb-2"><h2 class="font-semibold">Counters and the connection to PRA</h2>
       <div class="flex gap-2">${posBtn('New sale', "go('p-sale')", 'primary')}${posBtn('Sales & receipts', "go('p-sales')")}</div></div>
@@ -604,6 +716,7 @@ function posShowState(state) { POS.sales = { from: '', to: '', state, q: '' }; g
 
 /* ---------- settings (account owner) ---------- */
 async function posEnterSettings() {
+  posPollAlerts();
   try {
     [POS.profile, POS.branches] = await Promise.all([api('/api/pos/profile'), api('/api/pos/branches')]);
     posRenderSettings();
@@ -638,7 +751,8 @@ function posRenderSettings() {
         <li>Log in at <a class="underline text-emerald-700" href="https://reg.pra.punjab.gov.pk/" target="_blank" rel="noopener">reg.pra.punjab.gov.pk</a> and open <b>Registration → POS Client Registration</b>. Add the branch and the counter (its name must be unique).</li>
         <li><b>Testing:</b> generate a <i>Test POS ID</i> there and add it here as a <b>Sandbox</b> counter, with the token PRA shows for it.</li>
         <li><b>Live:</b> use the real POS ID and its token (POS Details tab), as a <b>Production</b> counter. Then email <a class="underline text-emerald-700" href="mailto:eims@pra.punjab.gov.pk">eims@pra.punjab.gov.pk</a> your PNTN, business name, POS ID, <b>server IP</b> and server location, so PRA whitelists this server.</li></ol>
-      <div>Server IP to give PRA: <span id="pIp" class="text-slate-500">checking…</span></div></div></div>`;
+      <div>Server IP to give PRA: <span id="pIp" class="text-slate-500">checking…</span></div>
+      <div class="text-xs text-slate-600">PRA support: <a class="underline text-emerald-700" href="mailto:eims@pra.punjab.gov.pk">eims@pra.punjab.gov.pk</a> (technical) · <a class="underline text-emerald-700" href="mailto:eSupport@pra.punjab.gov.pk">eSupport@pra.punjab.gov.pk</a> (general) · helpline 042-99205710 (eIMS). Quote the PNTN, the POS ID and a screenshot of the problem.</div></div></div>`;
 }
 async function posSaveProfile() {
   try {

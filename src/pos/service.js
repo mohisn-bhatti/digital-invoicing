@@ -9,7 +9,7 @@
 //  - a send is claimed atomically, so a double click or two screens cannot send the same sale twice
 const C = require('./calc');
 const V = require('./validate');
-const { buildPayload, reconcile } = require('./payload');
+const { buildPayload, reconcile, praDateTime } = require('./payload');
 const { assertMove } = require('./states');
 
 class PosError extends Error {
@@ -140,7 +140,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const where = { tenantId, ...(activeOnly ? { active: true } : {}) };
         const s = note(q, 60);
         if (s) where.OR = [{ name: { contains: s, mode: 'insensitive' } }, { code: { contains: s, mode: 'insensitive' } }, { category: { contains: s, mode: 'insensitive' } }];
-        return (await prisma.posItem.findMany({ where, orderBy: [{ category: 'asc' }, { name: 'asc' }], take: 1000 })).map(itemView);
+        return (await prisma.posItem.findMany({ where, orderBy: [{ category: 'asc' }, { name: 'asc' }], take: 5000 })).map(itemView);
     }
     async function nextItemCode(tenantId) {
         const rows = await prisma.posItem.findMany({ where: { tenantId, code: { startsWith: 'ITM' } }, select: { code: true } });
@@ -258,11 +258,40 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         return pad(t.posSeq, 6);
     }
 
+    // The screen sends a key with each new sale. If the answer is lost (a phone on a poor connection) and the cashier presses
+    // again, the same key gives back the sale that was already made: never a second one.
+    const cleanRef = v => {
+        const r = String(v === undefined || v === null ? '' : v).trim();
+        if (!r) return null;
+        if (!/^[A-Za-z0-9_-]{8,64}$/.test(r)) throw new PosError(400, 'The sale key is not valid. Reload the page and try again.');
+        return r;
+    };
+    async function sameSale(ctx, ref) {
+        if (!ref) return null;
+        const found = await prisma.posSale.findFirst({ where: { tenantId: ctx.tenantId, clientRef: ref }, select: { id: true } });
+        if (!found) return null;
+        const sale = await saleDetail(ctx, found.id);
+        const inFlight = sale.state === 'AWAITING_FISCALIZATION' && sale.submittedAt && !sale.respondedAt;
+        const outcome = { FISCALIZED: 'FISCALIZED', REJECTED: 'REJECTED', OUTCOME_UNKNOWN: 'UNKNOWN', CANCELLED: 'CANCELLED' }[sale.state] || (inFlight ? 'IN_PROGRESS' : 'NOT_SENT');
+        const message = outcome === 'FISCALIZED' ? 'This sale was already made and fiscalized.' : outcome === 'IN_PROGRESS' ? 'This sale is being sent to PRA right now.' : sale.lastError || 'This sale was already made.';
+        return { sale, result: { outcome, message, fiscalNumber: sale.fiscalNumber, mock: sale.mock, duplicate: true } };
+    }
+    // SRS 2.1 / FR-6.1: when PRA cannot be reached, new sales are blocked (no sale is made) with a clear message
+    function assertConnected(counter) {
+        if (breaker.allow(counter.id)) return;
+        const secs = Math.max(1, Math.ceil(breaker.state(counter.id).retryInMs / 1000));
+        throw new PosError(503, `Sales on this counter are paused: PRA could not be reached a moment ago, and a fiscal sale cannot be made without it. Check the internet connection and try again in ${secs} seconds.`);
+    }
+
     // Writes the sale (state AWAITING_FISCALIZATION) and sends it. input: { counterId, paymentMode, buyer, lines:[{itemId, quantity, unitPrice?, discount?, discountPercent?}] }
     async function createSale(ctx, input) {
+        const ref = cleanRef(input.clientRef);
+        const again = await sameSale(ctx, ref);
+        if (again) return again;
         const counter = await prisma.posCounter.findFirst({ where: { id: String(input.counterId || ''), tenantId: ctx.tenantId } });
         if (!counter) throw new PosError(400, 'Choose the counter this sale is made on.');
         await checkReady(ctx, counter);
+        assertConnected(counter);
         const paymentMode = V.cleanPaymentMode(input.paymentMode);
         const buyer = V.cleanBuyer(input.buyer || {});
         const wanted = Array.isArray(input.lines) ? input.lines : [];
@@ -287,14 +316,16 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const calc = C.calcSale(calcInput);
         const lines = calc.lines.map((l, i) => ({ ...named[i], ...l }));
         const at = now();
-        const sale = await prisma.$transaction(async tx => {
+        let sale;
+        try {
+          sale = await prisma.$transaction(async tx => {
             const usin = await allocateUsin(tx, ctx.tenantId);
             const payload = buildPayload({ posId: counter.posId, usin, dateTime: at, buyer, paymentMode, invoiceType: C.INVOICE_TYPES.NEW, lines, totals: calc.totals });
             const problems = reconcile(payload);
             if (problems.length) throw new PosError(500, `This sale does not add up (${problems[0]}) and was not saved.`);
             return tx.posSale.create({
                 data: {
-                    tenantId: ctx.tenantId, counterId: counter.id, invoiceType: 1, usin, state: 'AWAITING_FISCALIZATION', env: counter.env, paymentMode,
+                    tenantId: ctx.tenantId, counterId: counter.id, invoiceType: 1, usin, clientRef: ref, state: 'AWAITING_FISCALIZATION', env: counter.env, paymentMode,
                     buyerName: buyer.name, buyerPntn: buyer.pntn, buyerCnic: buyer.cnic, buyerPhone: buyer.phone,
                     totalQuantity: calc.totals.quantity, totalSaleValue: calc.totals.saleValue, totalDiscount: calc.totals.discount, totalTax: calc.totals.tax, totalBill: calc.totals.bill,
                     payload, createdBy: emailOf(ctx), createdAt: at, finalizedAt: at,
@@ -302,7 +333,12 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
                     events: { create: [{ fromState: 'DRAFT', toState: 'AWAITING_FISCALIZATION', by: emailOf(ctx), note: 'Sale finalized' }] },
                 },
             });
-        });
+          });
+        } catch (e) {
+            // two requests with the same key at the same moment: the second gets the first one's sale
+            if (e && e.code === 'P2002' && ref) { const dup = await sameSale(ctx, ref); if (dup) return dup; }
+            throw e;
+        }
         return send(ctx, sale.id);
     }
 
@@ -341,7 +377,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
 
         const by = emailOf(ctx);
         await prisma.$transaction(async tx => {
-            await tx.posAttempt.create({ data: { saleId: sale.id, at: startedAt, durationMs: r.durationMs ?? endedAt - startedAt, outcome: r.outcome, httpStatus: r.httpStatus ?? null, code: r.code ?? null, message: note(r.message, 500) } });
+            await tx.posAttempt.create({ data: { saleId: sale.id, at: startedAt, durationMs: r.durationMs ?? endedAt - startedAt, outcome: r.outcome, httpStatus: r.httpStatus ?? null, code: r.code ?? null, message: note(r.message, 500), mock: Boolean(r.mock) } });
             const common = { respondedAt: endedAt, lastCode: r.code ?? null, response: r.raw ?? undefined };
             const move = async (to, data, text) => {
                 const done = await tx.posSale.updateMany({ where: { id: sale.id, state: 'AWAITING_FISCALIZATION' }, data: { ...common, ...data, state: to } });
@@ -440,10 +476,14 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     }
 
     // A credit note (InvoiceType 3, RefUSIN = the sale's USIN) returns part or all of a fiscalized sale
-    async function creditNote(ctx, id, { lines, reason }) {
+    async function creditNote(ctx, id, { lines, reason, clientRef }) {
+        const ref = cleanRef(clientRef);
+        const again = await sameSale(ctx, ref);
+        if (again) return again;
         const s = await loadSale(ctx, id);
         if (s.state !== 'FISCALIZED' || s.invoiceType !== 1) throw new PosError(409, 'Only a fiscalized sale can be returned.');
         await checkReady(ctx, s.counter);
+        assertConnected(s.counter);
         const why = note(reason, 300);
         if (why.length < 3) throw new PosError(400, 'Write the reason for the return.');
         const wanted = (Array.isArray(lines) ? lines : []).filter(l => l && Number(l.quantity) > 0);
@@ -460,7 +500,9 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         }
         const totals = C.totalsOf(made);
         const at = now();
-        const credit = await prisma.$transaction(async tx => {
+        let credit;
+        try {
+          credit = await prisma.$transaction(async tx => {
             const usin = await allocateUsin(tx, ctx.tenantId);
             const payload = buildPayload({
                 posId: s.counter.posId, usin, refUsin: s.usin, dateTime: at, buyer: { name: s.buyerName, pntn: s.buyerPntn, cnic: s.buyerCnic, phone: s.buyerPhone },
@@ -470,7 +512,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
             if (problems.length) throw new PosError(500, `This credit note does not add up (${problems[0]}) and was not saved.`);
             return tx.posSale.create({
                 data: {
-                    tenantId: ctx.tenantId, counterId: s.counterId, invoiceType: 3, usin, refUsin: s.usin, refSaleId: s.id, state: 'AWAITING_FISCALIZATION', env: s.counter.env, paymentMode: s.paymentMode,
+                    tenantId: ctx.tenantId, counterId: s.counterId, invoiceType: 3, usin, clientRef: ref, refUsin: s.usin, refSaleId: s.id, state: 'AWAITING_FISCALIZATION', env: s.counter.env, paymentMode: s.paymentMode,
                     buyerName: s.buyerName, buyerPntn: s.buyerPntn, buyerCnic: s.buyerCnic, buyerPhone: s.buyerPhone,
                     totalQuantity: totals.quantity, totalSaleValue: totals.saleValue, totalDiscount: totals.discount, totalTax: totals.tax, totalBill: totals.bill,
                     payload, note: why, createdBy: emailOf(ctx), createdAt: at, finalizedAt: at,
@@ -479,19 +521,28 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
                 },
             });
         });
+        } catch (e) {
+            if (e && e.code === 'P2002' && ref) { const dup = await sameSale(ctx, ref); if (dup) return dup; }
+            throw e;
+        }
         await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.sale.credit', entityType: 'PosSale', entityId: credit.id, summary: `Credit note ${credit.usin} for sale ${s.usin}: ${why}` });
         return send(ctx, credit.id);
     }
 
     // ---------- lists, receipts, monitoring ----------
+    // "from"/"to" are Pakistan calendar days (YYYY-MM-DD), both included
+    const rangeWhere = ({ from, to }) => {
+        const range = {}, day = /^\d{4}-\d{2}-\d{2}$/;
+        if (from && day.test(from)) range.gte = new Date(`${from}T00:00:00+05:00`);
+        if (to && day.test(to)) range.lte = new Date(`${to}T23:59:59.999+05:00`);
+        return Object.keys(range).length ? { createdAt: range } : {};
+    };
     async function listSales(ctx, { from, to, state, q, counterId, limit = 100, offset = 0 } = {}) {
         await sweepInterrupted(ctx);
         const where = { tenantId: ctx.tenantId };
         if (state && ['DRAFT', 'AWAITING_FISCALIZATION', 'OUTCOME_UNKNOWN', 'FISCALIZED', 'REJECTED', 'CANCELLED'].includes(state)) where.state = state;
         if (counterId) where.counterId = String(counterId);
-        const day = /^\d{4}-\d{2}-\d{2}$/;
-        if (from && day.test(from)) where.createdAt = { ...(where.createdAt || {}), gte: new Date(`${from}T00:00:00+05:00`) };
-        if (to && day.test(to)) where.createdAt = { ...(where.createdAt || {}), lte: new Date(`${to}T23:59:59.999+05:00`) };
+        Object.assign(where, rangeWhere({ from, to }));
         const s = note(q, 60);
         if (s) where.OR = [{ usin: { contains: s } }, { fiscalNumber: { contains: s, mode: 'insensitive' } }, { buyerName: { contains: s, mode: 'insensitive' } }];
         const take = Math.min(Math.max(Number(limit) || 100, 1), 500);
@@ -525,13 +576,15 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         await sweepInterrupted(ctx);
         const today = pktDay(now());
         const dayStart = new Date(`${today}T00:00:00+05:00`);
-        const [byState, todayOk, last, branches, profile] = await Promise.all([
+        const [byState, todayOk, last, branches, profile, answered] = await Promise.all([
             prisma.posSale.groupBy({ by: ['state'], where: { tenantId: ctx.tenantId, state: { in: ['AWAITING_FISCALIZATION', 'REJECTED', 'OUTCOME_UNKNOWN'] } }, _count: { _all: true } }),
             prisma.posSale.groupBy({ by: ['invoiceType'], where: { tenantId: ctx.tenantId, state: 'FISCALIZED', fiscalizedAt: { gte: dayStart } }, _count: { _all: true }, _sum: { totalBill: true, totalTax: true } }),
             prisma.posSale.findFirst({ where: { tenantId: ctx.tenantId, state: 'FISCALIZED' }, orderBy: { fiscalizedAt: 'desc' }, select: { fiscalizedAt: true, fiscalNumber: true } }),
             listBranches(ctx.tenantId),
             getProfile(ctx.tenantId),
+            prisma.posAttempt.findMany({ where: { sale: { tenantId: ctx.tenantId }, mock: false, outcome: { in: ['FISCALIZED', 'REJECTED'] } }, orderBy: { at: 'desc' }, take: 100, select: { durationMs: true } }),
         ]);
+        const ms = answered.map(a => a.durationMs).sort((a, b) => a - b);
         const count = st => (byState.find(r => r.state === st) || { _count: { _all: 0 } })._count._all;
         const t1 = todayOk.find(r => r.invoiceType === 1), t3 = todayOk.find(r => r.invoiceType === 3);
         return {
@@ -540,9 +593,73 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
             todaySales: { count: t1 ? t1._count._all : 0, total: t1 ? num(t1._sum.totalBill) : 0, tax: t1 ? num(t1._sum.totalTax) : 0 },
             todayReturns: { count: t3 ? t3._count._all : 0, total: t3 ? num(t3._sum.totalBill) : 0 },
             lastFiscalizedAt: last ? last.fiscalizedAt : null,
+            responseTimes: !pra.isMock() && ms.length ? { calls: ms.length, avgMs: Math.round(ms.reduce((t, x) => t + x, 0) / ms.length), p95Ms: ms[Math.min(ms.length - 1, Math.floor(ms.length * 0.95))], maxMs: ms[ms.length - 1] } : null,
             profileComplete: profile.complete,
             counters: branches.flatMap(b => b.counters.map(c => ({ id: c.id, name: c.name, branch: b.name, env: c.env, active: c.active, hasToken: c.hasToken, pending: c.pending, breaker: c.breaker }))),
         };
+    }
+
+    // Totals for a date range (managers): fiscalized sales and returns, by payment mode and by item, and what is not fiscalized
+    const money2 = n => Math.round(Number(n || 0) * 100) / 100;
+    async function salesReport(ctx, filters = {}) {
+        const where = { tenantId: ctx.tenantId, ...rangeWhere(filters) };
+        const [fis, other, sold, back] = await Promise.all([
+            prisma.posSale.groupBy({ by: ['invoiceType', 'paymentMode'], where: { ...where, state: 'FISCALIZED' }, _count: { _all: true }, _sum: { totalSaleValue: true, totalDiscount: true, totalTax: true, totalBill: true } }),
+            prisma.posSale.groupBy({ by: ['state'], where: { ...where, state: { not: 'FISCALIZED' } }, _count: { _all: true } }),
+            prisma.posSaleLine.groupBy({ by: ['itemCode', 'itemName'], where: { sale: { ...where, state: 'FISCALIZED', invoiceType: 1 } }, _sum: { quantity: true, totalAmount: true } }),
+            prisma.posSaleLine.groupBy({ by: ['itemCode', 'itemName'], where: { sale: { ...where, state: 'FISCALIZED', invoiceType: 3 } }, _sum: { quantity: true, totalAmount: true } }),
+        ]);
+        const blank = () => ({ count: 0, saleValue: 0, discount: 0, tax: 0, bill: 0 });
+        const sales = blank(), returns = blank(), byPay = new Map();
+        for (const r of fis) {
+            const t = r.invoiceType === 3 ? returns : sales;
+            t.count += r._count._all; t.saleValue += num(r._sum.totalSaleValue); t.discount += num(r._sum.totalDiscount); t.tax += num(r._sum.totalTax); t.bill += num(r._sum.totalBill);
+            const row = byPay.get(r.paymentMode) || { mode: r.paymentMode, label: (C.PAYMENT_MODES.find(m => m.id === r.paymentMode) || {}).label || String(r.paymentMode), sales: 0, returns: 0 };
+            if (r.invoiceType === 3) row.returns += num(r._sum.totalBill); else row.sales += num(r._sum.totalBill);
+            byPay.set(r.paymentMode, row);
+        }
+        const items = new Map();
+        for (const [rows, sign] of [[sold, 1], [back, -1]]) {
+            for (const r of rows) {
+                const it = items.get(r.itemCode) || { itemCode: r.itemCode, itemName: r.itemName, quantity: 0, bill: 0 };
+                it.quantity += sign * num(r._sum.quantity); it.bill += sign * num(r._sum.totalAmount);
+                items.set(r.itemCode, it);
+            }
+        }
+        const fix = t => Object.fromEntries(Object.entries(t).map(([k, v]) => [k, k === 'count' ? v : money2(v)]));
+        const notFis = st => (other.find(o => o.state === st) || { _count: { _all: 0 } })._count._all;
+        return {
+            from: filters.from || null, to: filters.to || null, testMode: pra.isMock(),
+            sales: fix(sales), returns: fix(returns),
+            net: { saleValue: money2(sales.saleValue - returns.saleValue), tax: money2(sales.tax - returns.tax), bill: money2(sales.bill - returns.bill) },
+            byPayment: [...byPay.values()].sort((a, b) => a.mode - b.mode).map(r => ({ ...r, sales: money2(r.sales), returns: money2(r.returns), net: money2(r.sales - r.returns) })),
+            items: [...items.values()].map(i => ({ ...i, quantity: Math.round(i.quantity * 10000) / 10000, bill: money2(i.bill) })).sort((a, b) => b.bill - a.bill).slice(0, 30),
+            notFiscalized: { waiting: notFis('AWAITING_FISCALIZATION'), refused: notFis('REJECTED'), unknown: notFis('OUTCOME_UNKNOWN'), cancelled: notFis('CANCELLED') },
+        };
+    }
+
+    // The sales of a date range as a spreadsheet (PRA's own POS component exports its invoices too). One row per sale, or per line.
+    // Text that could be read as a formula by Excel is defused with a leading quote.
+    const csvText = v => { let t = v === undefined || v === null ? '' : String(v); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    const csvNum = v => (v === undefined || v === null ? '' : Number(v).toFixed(2));
+    async function salesCsv(ctx, { from, to, state, detail } = {}) {
+        const where = { tenantId: ctx.tenantId, ...rangeWhere({ from, to }) };
+        if (state && ['AWAITING_FISCALIZATION', 'OUTCOME_UNKNOWN', 'FISCALIZED', 'REJECTED', 'CANCELLED'].includes(state)) where.state = state;
+        const perLine = detail === 'lines';
+        const rows = await prisma.posSale.findMany({ where, orderBy: { createdAt: 'asc' }, take: 20000, include: { counter: { select: { name: true, posId: true } }, ...(perLine ? { lines: { orderBy: { sort: 'asc' } } } : {}) } });
+        const head = ['Date and time (Pakistan)', 'Invoice no. (USIN)', 'Type', 'Status', 'PRA invoice no.', 'Returns invoice (RefUSIN)', 'Counter', 'POS ID', 'Cashier', 'Paid by', 'Buyer name', 'Buyer PNTN', 'Buyer CNIC', 'Buyer phone'];
+        const lineHead = ['Item code', 'Item', 'PCT code', 'Quantity', 'Unit price', 'Discount', 'Tax %', 'Value', 'Tax', 'Line total'];
+        const totalHead = ['Sale value', 'Discount', 'Sales tax', 'Total', 'Test mode', 'Note'];
+        const out = [(perLine ? [...head, ...lineHead] : [...head, ...totalHead]).map(csvText).join(',')];
+        const mode = id => (C.PAYMENT_MODES.find(m => m.id === id) || {}).label || id;
+        for (const r of rows) {
+            const base = [praDateTime(r.finalizedAt || r.createdAt), r.usin, r.invoiceType === 3 ? 'Credit note' : r.invoiceType === 2 ? 'Debit note' : 'Sale', r.state, r.fiscalNumber, r.refUsin, r.counter.name, r.counter.posId, r.createdBy, mode(r.paymentMode), r.buyerName, r.buyerPntn, r.buyerCnic, r.buyerPhone].map(csvText);
+            if (!perLine) out.push([...base, csvNum(r.totalSaleValue), csvNum(r.totalDiscount), csvNum(r.totalTax), csvNum(r.totalBill), r.mock ? 'yes' : '', csvText(r.note)].join(','));
+            else for (const l of r.lines) out.push([...base, csvText(l.itemCode), csvText(l.itemName), l.pctCode, Number(l.quantity), csvNum(l.unitPrice), csvNum(l.discount), Number(l.taxRate), csvNum(l.saleValue), csvNum(l.taxCharged), csvNum(l.totalAmount)].join(','));
+        }
+        const name = `pos-${perLine ? 'lines' : 'sales'}-${from || 'start'}-to-${to || 'today'}.csv`.replace(/[^A-Za-z0-9._-]/g, '');
+        await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.export', entityType: 'PosSale', entityId: null, summary: `Exported ${rows.length} ${perLine ? 'sale lines' : 'sales'} to CSV (${from || 'start'} to ${to || 'today'}${state ? ', ' + state.toLowerCase() : ''})` });
+        return { filename: name, csv: out.join('\r\n') + '\r\n', rows: rows.length };
     }
 
     // What the cashier screen needs to start: usable counters (no tokens) and the items
@@ -555,7 +672,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     return {
         getProfile, saveProfile, listBranches, createBranch, updateBranch, createCounter, updateCounter, setToken, decommission,
         listItems, createItem, updateItem, searchPct, createSale, retry, updateBuyer, cancel, resolve, creditNote,
-        listSales, saleDetail, receipt, overview, cashierSetup, sweepInterrupted,
+        listSales, saleDetail, receipt, overview, cashierSetup, sweepInterrupted, salesReport, salesCsv,
     };
 }
 

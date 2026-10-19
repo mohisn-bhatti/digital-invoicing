@@ -83,9 +83,11 @@ function classifyError(err) {
     };
 }
 
-// Test mode answers by itself. In the buyer name, MOCK-REJECT, MOCK-TIMEOUT and MOCK-OFFLINE rehearse the failures.
+// Test mode answers by itself. In the buyer name, MOCK-REJECT, MOCK-TIMEOUT and MOCK-OFFLINE rehearse the failures, and
+// MOCK-SLOW takes three seconds to answer (to see the cashier screen wait).
 function mockSubmit(payload) {
     const name = String(payload.BuyerName || '').trim().toUpperCase();
+    if (name === 'MOCK-SLOW') return { ...mockSubmit({ ...payload, BuyerName: '' }), delayMs: 3000 };
     if (name === 'MOCK-OFFLINE') return classifyError(Object.assign(new Error('simulated'), { code: 'ECONNREFUSED' }));
     if (name === 'MOCK-TIMEOUT') return classifyError(Object.assign(new Error('simulated'), { code: 'ECONNABORTED' }));
     if (name === 'MOCK-REJECT') return classifyResponse(200, { InvoiceNumber: '', Code: '106', Response: 'Invoice rejected (simulated).', Errors: ['Simulated validation error'] });
@@ -104,7 +106,11 @@ const defaultPost = (url, body, { token, timeout }) => axios.post(url, body, {
 async function submit({ env, token, payload }, deps = {}) {
     const started = Date.now();
     const finish = r => ({ reason: null, mock: false, ...r, durationMs: Date.now() - started });
-    if (isMock()) return finish(mockSubmit(payload));
+    if (isMock()) {
+        const r = mockSubmit(payload);
+        if (r.delayMs) await new Promise(res => setTimeout(res, r.delayMs));
+        return finish({ ...r, mock: true }); // every answer in test mode is a test, whatever the outcome
+    }
     const url = ENDPOINTS[env];
     if (!url) return finish({ outcome: 'NOT_SENT', reason: 'NO_ENDPOINT', message: 'This counter has no valid environment (Sandbox or Production).', errors: [] });
     if (!token) return finish({ outcome: 'NOT_SENT', reason: 'NO_TOKEN', message: 'This counter has no PRA token yet. Ask the account owner to add it in Settings.', errors: [] });

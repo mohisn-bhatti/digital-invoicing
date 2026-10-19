@@ -55,6 +55,13 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
     app.get('/api/pos/pct', ...manager, wrap(req => service.searchPct(req.query.q)));
 
     app.post('/api/pos/sales', ...base, wrap(req => service.createSale(ctxOf(req), req.body || {})));
+    app.get('/api/pos/report', ...manager, wrap(req => service.salesReport(ctxOf(req), req.query)));
+    app.get('/api/pos/export/sales', ...manager, async (req, res) => {
+        try {
+            const { filename, csv } = await service.salesCsv(ctxOf(req), req.query);
+            res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' }).send('\uFEFF' + csv);
+        } catch (e) { throw translate(e); }
+    });
     app.get('/api/pos/sales', ...base, wrap(req => service.listSales(ctxOf(req), req.query)));
     app.get('/api/pos/sales/:id', ...base, wrap(req => service.saleDetail(ctxOf(req), req.params.id)));
     app.get('/api/pos/sales/:id/receipt', ...base, wrap(req => service.receipt(ctxOf(req), req.params.id)));
