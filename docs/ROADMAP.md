@@ -78,7 +78,8 @@ _Last updated: 2026-10-19 (Point of Sale phase 2 built on branch `pos-phase2`, n
   summary; filters on the sales list; spreadsheets; Pakistan calendar days
 - Defaults and receipt settings (how a sale starts, 58 or 80 mm paper, header, cashier on or off, what a new item starts with) and
   a quick-rate list for the usual kinds of business
-- Migrations `0044` and `0045` only add; to go live they need the safe production procedure (fingerprint, rehearsal, no seed)
+- Migrations `0044` and `0045` only add; to go live they need the safe production procedure (fingerprint, rehearsal, no seed), and
+  the category backfill of `0044` run once more after the new code is live (see POS_MODULE.md, "Putting phase 2 on production")
 
 ## Waiting on others
 - **PRAL / IRIS:** sandbox token, assigned scenarios, IP whitelisting. Then run every scenario, then get the production token.

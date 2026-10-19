@@ -66,9 +66,15 @@ test('scan: a scanner types in a burst and presses Enter; a person types slowly'
     w = S.wedge(); t = feed(w, 'ITM0001', 250); assert.strictEqual(w.key('Enter', t), null);
     // a pause in the middle starts again: only what came after the pause is kept
     w = S.wedge(); t = feed(w, 'AB', 5); t += 500; t = feed(w, 'CDEF', 5, t); assert.strictEqual(w.key('Enter', t), 'CDEF');
-    // too short to be a code (a stray key and Enter)
+    // a stray key and Enter is a person; two or three keys at scanner speed are a short code (its Enter must not press a button)
     w = S.wedge(); w.key('a', 1000); assert.strictEqual(w.key('Enter', 1005), null);
-    w = S.wedge({ minLength: 2 }); w.key('a', 1000); w.key('b', 1005); assert.strictEqual(w.key('Enter', 1010), 'ab', 'the shortest code is for the screen to choose');
+    w = S.wedge(); w.key('a', 1000); w.key('b', 1005); assert.strictEqual(w.key('Enter', 1010), 'ab');
+    w = S.wedge(); t = feed(w, 'TEA', 8); assert.strictEqual(w.key('Enter', t), 'TEA');
+    w = S.wedge({ minLength: 4 }); t = feed(w, 'TEA', 8); assert.strictEqual(w.key('Enter', t), null, 'a screen can ask for more');
+    // Enter long after the last key is not the end of a scan (and it still empties the buffer)
+    w = S.wedge(); t = feed(w, 'ITM0001', 8); assert.strictEqual(w.key('Enter', t + 5000), null); assert.strictEqual(w.key('Enter', t + 5010), null);
+    w = S.wedge(); t = feed(w, 'ITM0001', 8); assert.strictEqual(w.key('Enter', t + 200), 'ITM0001', 'a scanner that waits a moment before Enter');
+    w = S.wedge({ enterGap: 20 }); t = feed(w, 'ITM0001', 8); assert.strictEqual(w.key('Enter', t + 200), null);
     // keys that are not characters are ignored, and do not break a burst
     w = S.wedge(); w.key('I', 1000); w.key('Shift', 1002); w.key('T', 1004); w.key('M', 1006); w.key('1', 1008); w.key('ArrowLeft', 1009);
     assert.strictEqual(w.key('Enter', 1010), 'ITM1');

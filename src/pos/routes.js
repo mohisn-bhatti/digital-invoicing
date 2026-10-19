@@ -25,6 +25,23 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
         if (!tenantModules(t).includes('POS')) throw new HttpError(403, 'Point of Sale is not switched on for this business.');
         next();
     };
+    // A NUL character cannot be stored in the database and would come back as a server error: said in plain words instead, wherever it is
+    // (an id in the address, a word in the search box, any field of the body). Written without recursion so a deeply nested body is no trick.
+    const problemWith = root => {
+        const todo = [root]; let seen = 0;
+        while (todo.length) {
+            const v = todo.pop();
+            if (++seen > 20000) return 'That request is too big.'; // (every value counts: a sale has a few hundred at the very most)
+            if (typeof v === 'string') { if (v.includes('\u0000')) return 'That contains a character that cannot be saved.'; }
+            else if (v && typeof v === 'object') {
+                for (const [k, x] of Object.entries(v)) { if (k.includes('\u0000')) return 'That contains a character that cannot be saved.'; todo.push(x); }
+            }
+        }
+        return null;
+    };
+    app.use('/api/pos', (req, res, next) => { const bad = problemWith([req.query, req.body]); if (bad) throw new HttpError(400, bad); next(); });
+    app.param('id', (req, res, next, id) => { if (req.path.startsWith('/api/pos/') && String(id).includes('\u0000')) throw new HttpError(404, 'Not found.'); next(); });
+
     const base = [authenticateToken, requireTenant, requirePos];
     const manager = [...base, requireTenantRole('OWNER', 'ACCOUNTANT')];
     const owner = [...base, requireTenantRole('OWNER')];
@@ -61,7 +78,7 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
     app.get('/api/pos/lookup', ...base, wrap(req => service.lookup(ctxOf(req), req.query.code)));
 
     // Saved customers: everyone can find one and add one at the counter; changing one, the history and the spreadsheet are for managers
-    app.get('/api/pos/customers', ...base, wrap(req => service.listCustomers(ctxOf(req), req.query)));
+    app.get('/api/pos/customers', ...base, wrap(req => service.listCustomers(ctxOf(req), req.query, { withStats: req.user.tenantRole === 'OWNER' || req.user.tenantRole === 'ACCOUNTANT' })));
     app.post('/api/pos/customers', ...base, wrap(req => service.createCustomer(ctxOf(req), req.body || {})));
     app.get('/api/pos/customers/:id', ...manager, wrap(req => service.customerDetail(ctxOf(req), req.params.id)));
     app.put('/api/pos/customers/:id', ...manager, wrap(req => service.updateCustomer(ctxOf(req), req.params.id, req.body || {})));

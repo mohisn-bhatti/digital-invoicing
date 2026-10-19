@@ -10,6 +10,7 @@
 const { Prisma } = require('@prisma/client');
 const { PosError } = require('./errors');
 const C = require('./calc');
+const { ciEquals, ciContains, contains } = require('./like');
 
 const STATES = ['DRAFT', 'AWAITING_FISCALIZATION', 'OUTCOME_UNKNOWN', 'FISCALIZED', 'REJECTED', 'CANCELLED'];
 const TYPE_OF = { sale: 1, return: 3 };
@@ -27,6 +28,10 @@ const realDay = (value, what) => {
 };
 const dayStart = day => new Date(`${day}T00:00:00+05:00`);
 const dayEnd = day => new Date(`${day}T23:59:59.999+05:00`);
+// createdAt is a timestamp without a zone that holds UTC. In SQL the bounds are written as the same kind of value (UTC, no zone) so the two
+// are compared as they are: a Date bound as a parameter is a timestamp WITH a zone, and the database would then read the column in its own
+// session's time zone, which moves the day by hours wherever that is not UTC.
+const utcText = date => date.toISOString().replace('T', ' ').replace('Z', '');
 const daysBetween = (a, b) => Math.round((Date.UTC(+b.slice(0, 4), +b.slice(5, 7) - 1, +b.slice(8, 10)) - Date.UTC(+a.slice(0, 4), +a.slice(5, 7) - 1, +a.slice(8, 10))) / 86400000);
 
 // What the person asked for, checked. Anything not given is left out (no filter). Returns only what was given.
@@ -77,7 +82,7 @@ function saleWhere(tenantId, f) {
     if (f.state) where.state = f.state;
     if (f.counterId) where.counterId = f.counterId;
     if (f.branchId) where.counter = { branchId: f.branchId };
-    if (f.cashier) where.createdBy = { equals: f.cashier, mode: 'insensitive' };
+    if (f.cashier) where.createdBy = ciEquals(f.cashier);
     if (f.paymentMode) where.paymentMode = f.paymentMode;
     if (f.invoiceType) where.invoiceType = TYPE_OF[f.invoiceType];
     if (f.customerId) where.customerId = f.customerId === 'none' ? null : f.customerId;
@@ -87,15 +92,15 @@ function saleWhere(tenantId, f) {
     if (f.category !== undefined) line.category = f.category === '__none' ? '' : f.category;
     if (f.taxRate !== undefined) line.taxRate = f.taxRate;
     if (Object.keys(line).length) where.lines = { some: line };
-    if (f.q) where.OR = [{ usin: { contains: f.q } }, { fiscalNumber: { contains: f.q, mode: 'insensitive' } }, { buyerName: { contains: f.q, mode: 'insensitive' } }];
+    if (f.q) where.OR = [{ usin: contains(f.q) }, { fiscalNumber: ciContains(f.q) }, { buyerName: ciContains(f.q) }];
     return where;
 }
 
 // ---------- the same filters as SQL (the reports), over PosSaleLine l joined to PosSale s ----------
 function sqlConditions(tenantId, f, env) {
     const c = [Prisma.sql`s."tenantId" = ${tenantId}`, Prisma.sql`s."state" = 'FISCALIZED'::"PosSaleState"`, Prisma.sql`s."env" = ${env}::"PosEnv"`];
-    if (f.from) c.push(Prisma.sql`s."createdAt" >= ${dayStart(f.from)}`);
-    if (f.to) c.push(Prisma.sql`s."createdAt" <= ${dayEnd(f.to)}`);
+    if (f.from) c.push(Prisma.sql`s."createdAt" >= ${utcText(dayStart(f.from))}::timestamp`);
+    if (f.to) c.push(Prisma.sql`s."createdAt" <= ${utcText(dayEnd(f.to))}::timestamp`);
     if (f.counterId) c.push(Prisma.sql`s."counterId" = ${f.counterId}`);
     if (f.branchId) c.push(Prisma.sql`s."counterId" IN (SELECT "id" FROM "PosCounter" WHERE "tenantId" = ${tenantId} AND "branchId" = ${f.branchId})`);
     if (f.cashier) c.push(Prisma.sql`lower(s."createdBy") = ${f.cashier.toLowerCase()}`);

@@ -149,8 +149,9 @@ A customer is a saved buyer: a name (required), PNTN and/or CNIC and phone in PR
 *Save these details as a customer* saves a typed buyer first (if that PNTN already belongs to someone, the sale still goes ahead with
 the details as typed). **A sale keeps its own copy of the buyer's details** (what was printed and sent to PRA never changes when the
 customer is edited later) plus a link to the customer for the history; a credit note keeps the link. One PNTN or CNIC is one
-customer: a second is refused with the first one's name. Everyone can find and add a customer; managers open the history (sales,
-returns, last sale), edit, switch off and download the list.
+customer: a second is refused with the first one's name, even when two people add it at the same moment (the check and the write are
+taken in turn per business). Everyone can find and add a customer, but only managers see what a customer has spent, open the history
+(sales, returns, last sale), edit, switch off and download the list.
 
 ### Scanning, barcodes and QR labels — phase 2
 
@@ -158,12 +159,14 @@ Nothing has to be added by hand: a scan brings the item with **the price and tax
 ("Tea: 100.00 · tax 16% (8% when paid by card) · 2 in this sale").
 - Each item has a **code** (what PRA gets) and an optional **barcode**. *A scan must lead to one item*: a code or barcode cannot be
   the code or barcode of another item, capitals ignored (checked when an item is saved).
-- **A barcode scanner** (USB or Bluetooth, the kind that types) works anywhere on the sale screen: fast typing that ends in Enter
-  (a gap of 70 ms or less between keys) is a scan; slow typing, and typing into a box, are not. Scanning the same item again adds one
+- **A barcode scanner** (USB or Bluetooth, the kind that types) works anywhere on the sale screen: two or more keys at scanner speed
+  (70 ms or less between them) ending in Enter is a scan; slow typing, a single key, and typing into a box are not. A scan never
+  changes the counter list if that has the keyboard (letters do not "type to pick" there), and its Enter never presses a button. Scanning the same item again adds one
   more; an open-price item asks for the price. A code nobody knows is said so; on the **Items** page the same scan opens that item
   for changing, or starts a new item with the code as its barcode (the usual way to add a product that has one).
 - **The camera** of a phone or tablet does the same through the *Scan* buttons (sale screen, Items, Sales & Receipts, the barcode box
-  of the item form). It needs a secure connection (https, or localhost) and the camera allowed for the site; the server sends
+  of the item form). A code held in front of the camera is **one** scan: it has to be out of sight for about a second to count again.
+  The camera needs a secure connection (https, or localhost) and the camera allowed for the site; the server sends
   `Permissions-Policy: camera=(self)`. Chrome's own reader is used when there is one, otherwise html5-qrcode from a CDN.
 - **A receipt's QR** (PRA's verification address), a sale's own number (USIN) or PRA's invoice number finds the sale: *Scan receipt* in
   Sales & Receipts opens it, to look at it or to return something. On the sale screen it says which sale it is; it never goes in the cart.
@@ -246,6 +249,11 @@ Settings (env): `PRA_MOCK`, `PRA_PROXY_URL`, `POS_PRA_TIMEOUT_MS`, `POS_BREAKER_
     details (the customer link is only for the history); reports count Pakistan calendar days.
 12. *Phase 2:* the quick rates are suggestions the owner confirms, never decided by the module, and a new item's defaults only fill the form.
 13. *Phase 2:* printing asks for no page size (the printer's own is used), because Chrome ignores `size: 80mm auto`.
+14. *Phase 2:* codes, barcodes, cashier logins and search words are matched as typed: `_` and `%` are not wildcards (Prisma's
+    case-insensitive match is `ILIKE`, which treats them as such; [src/pos/like.js](../src/pos/like.js) escapes them, and a test fails if
+    Prisma ever does it itself). An item saved before the "one code, one item" rule (Cola next to COLA) stays editable: only a barcode that
+    changes is checked.
+15. *Phase 2:* a NUL character anywhere in a request to the Point of Sale is a plain 400 (404 for an id), not a server error.
 
 ## 6. Not built yet / still open
 
@@ -262,6 +270,15 @@ Settings (env): `PRA_MOCK`, `PRA_PROXY_URL`, `POS_PRA_TIMEOUT_MS`, `POS_BREAKER_
 - That the QR address above is still PRA's current verification page for new invoices (the IMS Fiscal Report moved to IRIS for
   invoices from September 2024).
 - The MAC and IP fields PRA asks for when a counter is registered: what a cloud server should enter.
+
+**Putting phase 2 on production** follows the safe procedure used for the first push (read-only fingerprint of every table, a rehearsal
+on a copy at production's schema state with the old and the new code, `node scripts/supabase-deploy.js --no-seed`, then merge and push).
+Migrations `0044` and `0045` only add (new table, new columns that are nullable or have a default, and one `UPDATE` that fills only the
+new `PosSaleLine.category`), so the old code keeps working while they are applied. **One step comes after the new code is live**: run the
+backfill once more, because lines the old code wrote between the migration and the deploy have an empty category and would show as
+"No category":
+`UPDATE "PosSaleLine" l SET "category" = i."category" FROM "PosItem" i WHERE l."itemId" = i."id" AND l."category" = '';`
+(it only ever fills empty ones, so it is safe to repeat).
 
 **Going live** needs `PRA_MOCK=false`, the production POS ID and token, and PRA to whitelist the server's IP (the static-IP proxy,
 see [static-ip-proxy.md](static-ip-proxy.md); the proxy must allow `ims.pral.com.pk`).
@@ -293,4 +310,6 @@ fake camera that shows real QR codes and Code 128 barcodes, and with a keyboard-
 
 Tests: `npm test` runs the maths, the validation tables, PRA's reply handling, the states and the breaker, the cashier screens'
 own logic (the real `pos.js` in a sandbox), and the whole sale life against the local database (it makes its own business and
-removes it, and only runs against a database on this computer).
+removes it, and only runs against a database on this computer). `npm test` limits each test process to a few database connections
+([test-helpers/poolLimit.js](../test-helpers/poolLimit.js)) and runs eight files at a time: left alone, Prisma opens up to twice the number
+of CPUs plus one per process and a whole run overflows the local database's 100 connections ("too many clients already").

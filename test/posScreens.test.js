@@ -27,14 +27,16 @@ function page(overrides = {}) {
         return e;
     };
     const $ = sel => { if (!registry.has(sel)) registry.set(sel, element()); return registry.get(sel); };
-    const log = { api: [], toasts: [], went: [], timers: [] };
+    const log = { api: [], toasts: [], went: [], timers: [], listeners: {} };
+    // a clock the test moves by hand (only where it asks for one): new Date() and Date.now() follow it
+    const clock = overrides.clock, TheDate = clock ? class extends Date { constructor(...a) { if (a.length) super(...a); else super(clock.now); } static now() { return clock.now; } } : Date;
     const answers = { '/api/pos/alerts': { awaiting: 0, rejected: 0, outcomeUnknown: 0 }, '/api/pos/sales': { total: 0, sales: [] }, ...overrides.answers };
     const box = {
-        console, Date, Math, JSON, Map, Set, Number, String, Array, Object, Promise, Error, URLSearchParams, encodeURIComponent, setTimeout, clearTimeout,
+        console, Date: TheDate, Math, JSON, Map, Set, Number, String, Array, Object, Promise, Error, URLSearchParams, encodeURIComponent, setTimeout, clearTimeout,
         setInterval: (fn, ms) => { log.timers.push(ms); return log.timers.length; }, clearInterval: id => { log.timers.push('cleared'); },
         __api: async (url, opts) => { log.api.push(url); const key = Object.keys(answers).find(k => url.split('?')[0] === k); if (key) return typeof answers[key] === 'function' ? answers[key](url, opts) : answers[key]; throw new Error('no answer for ' + url); },
         __$: $, __toast: (m, ok) => log.toasts.push(m), __go: id => log.went.push(id),
-        document: { body: element(), hidden: false, addEventListener() {}, querySelectorAll: sel => (overrides.all && overrides.all[sel]) || [], createElement: element, getElementById: id => $('#' + id), head: element() },
+        document: { body: element(), hidden: false, addEventListener(type, fn) { (log.listeners[type] = log.listeners[type] || []).push(fn); }, querySelectorAll: sel => (overrides.all && overrides.all[sel]) || [], createElement: element, getElementById: id => $('#' + id), head: element() },
         window: { print() { log.printed = (log.printed || 0) + 1; }, scrollTo() {}, addEventListener() {}, removeEventListener() {} }, navigator: {}, localStorage: { getItem: () => null, setItem() {} }, confirm: () => true,
     };
     box.self = box; box.window.document = box.document;
@@ -47,7 +49,7 @@ function page(overrides = {}) {
         const $ = __$, api = __api, toast = __toast, go = __go, route = () => {}, renderNav = () => {}, syncModules = () => false, saveSession = () => {};
         ${HELPERS}`, ctx, { filename: 'helpers.js' });
     const run = code => vm.runInContext(code, ctx);
-    return { run, $, log, body: box.document.body, doc: box.document, set hidden(v) { box.document.hidden = v; }, answers };
+    return { run, $, log, body: box.document.body, doc: box.document, fire: (type, ev) => (log.listeners[type] || []).forEach(f => f(ev)), set hidden(v) { box.document.hidden = v; }, answers };
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const decode = s => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, c) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" }[c]));
@@ -717,4 +719,121 @@ test('POS screen: the Items page and the Settings page ask for the defaults; a f
     q.run('posItemForm()');
     assert.ok(q.$('#piForm').innerHTML.includes('Add an item'));
     assert.deepStrictEqual(q.log.toasts, [], 'no error is shown for it');
+});
+
+// ---------- the scanner that types, and the camera, on the cashier screen ----------
+const keys = (p, clock, text, { target = { tagName: 'BODY' }, gap = 5, enter = true } = {}) => {
+    const sent = [];
+    const press = k => { const ev = { key: k, target, ctrlKey: false, metaKey: false, altKey: false, prevented: false, preventDefault() { this.prevented = true; } }; p.fire('keydown', ev); sent.push(ev); clock.now += gap; };
+    for (const ch of text) press(ch);
+    if (enter) { clock.now -= gap - 2; press('Enter'); }
+    return sent;
+};
+function scannerPage() {
+    const clock = { now: Date.parse('2026-10-19T08:00:00Z') };
+    const p = page({ clock });
+    p.run(SETUP);
+    p.run("S.page = 'p-sale'; const __scanned = []; posScanSale = async c => { __scanned.push(c); return { ok: true, message: 'ok' }; }; posBeep = () => {}; posInstallScanner();");
+    for (const id of ['posModal', 'posReceiptModal', 'posScanModal']) p.$('#' + id).classList.add('hidden'); // (no window is open)
+    return { p, clock, scanned: () => JSON.parse(p.run('JSON.stringify(__scanned)')) };
+}
+
+test('POS screen: a scan that arrives while the counter list has the keyboard is a scan, and never changes the counter', async () => {
+    const { p, clock, scanned } = scannerPage();
+    const list = { tagName: 'SELECT', id: 'pCounter' };
+    const sent = keys(p, clock, 'MILK1', { target: list });
+    assert.deepStrictEqual(scanned(), ['MILK1'], 'the item was looked up');
+    assert.ok(sent.every(e => e.prevented), 'every letter and the Enter were kept from the list (its "type to pick" would have changed the counter)');
+    // a person typing letters on the list does not pick a counter either, and starts no scan
+    const slow = keys(p, clock, 'ab', { target: list, gap: 400, enter: false });
+    assert.ok(slow.every(e => e.prevented));
+    assert.deepStrictEqual(scanned(), ['MILK1']);
+    // but what a person uses the list with still works: the arrows, Space and Enter on their own
+    const nav = [];
+    for (const k of ['ArrowDown', 'ArrowUp', ' ', 'Enter', 'Tab']) { const ev = { key: k, target: list, ctrlKey: false, metaKey: false, altKey: false, prevented: false, preventDefault() { this.prevented = true; } }; clock.now += 1000; p.fire('keydown', ev); nav.push(ev.prevented); }
+    assert.deepStrictEqual(nav, [false, false, false, false, false]);
+});
+
+test('POS screen: a short code is a scan too, so its Enter never presses the button that has the focus', async () => {
+    const { p, clock, scanned } = scannerPage();
+    const button = { tagName: 'BUTTON' };
+    const three = keys(p, clock, 'TEA', { target: button });
+    assert.deepStrictEqual(scanned(), ['TEA']);
+    assert.strictEqual(three[three.length - 1].prevented, true, 'the Enter of the scan did not press the button');
+    keys(p, clock, 'AB', { target: button });
+    assert.deepStrictEqual(scanned(), ['TEA', 'AB']);
+    // a single key and Enter is a person: the button gets its Enter
+    const one = keys(p, clock, 'x', { target: button });
+    assert.strictEqual(one[one.length - 1].prevented, false);
+    // Enter on its own, and Enter long after a stray burst, are a person's too
+    const lone = keys(p, clock, '', { target: button });
+    assert.strictEqual(lone[0].prevented, false);
+    keys(p, clock, 'ITM0001', { target: { tagName: 'BODY' }, enter: false }); clock.now += 5000;
+    const late = keys(p, clock, '', { target: button });
+    assert.strictEqual(late[0].prevented, false, 'seconds later it is not the end of a scan');
+    assert.deepStrictEqual(scanned(), ['TEA', 'AB']);
+});
+
+test('POS screen: boxes the cashier types in, and open windows, are left alone by the scanner', async () => {
+    const { p, clock, scanned } = scannerPage();
+    for (const tagName of ['INPUT', 'TEXTAREA']) {
+        const sent = keys(p, clock, 'ITM0001', { target: { tagName } });
+        assert.ok(sent.every(e => !e.prevented), tagName);
+    }
+    assert.deepStrictEqual(scanned(), []);
+    p.$('#posModal').classList.remove('hidden');
+    assert.ok(keys(p, clock, 'ITM0001').every(e => !e.prevented), 'a window is open');
+    p.$('#posModal').classList.add('hidden');
+    p.run("S.page = 'p-sales'");
+    assert.ok(keys(p, clock, 'ITM0001').every(e => !e.prevented), 'only the sale screen takes scans');
+    assert.deepStrictEqual(scanned(), []);
+    p.run("S.page = 'p-sale'");
+    keys(p, clock, 'ITM0001');
+    assert.deepStrictEqual(scanned(), ['ITM0001'], 'and it does there');
+});
+
+test('POS screen: one code held in front of the camera is one scan, however long it stays', async () => {
+    const clock = { now: Date.parse('2026-10-19T08:00:00Z') };
+    const p = page({ clock });
+    p.run(SETUP);
+    p.run("const __got = []; posBeep = () => {}; Object.assign(posScan, { open: true, continuous: true, last: '', seenAt: 0, busy: false, handler: async t => { __got.push(t); return { ok: true, message: 'in' }; } });");
+    const got = () => JSON.parse(p.run('JSON.stringify(__got)'));
+    const sight = async (code, ms = 0) => { clock.now += ms; await p.run(`posScanGot(${JSON.stringify(code)})`); };
+    await sight('ITM0001');
+    for (let i = 0; i < 100; i++) await sight('ITM0001', 120); // twelve seconds in front of the camera
+    assert.deepStrictEqual(got(), ['ITM0001'], 'counted once');
+    await sight('ITM0001', 1300); // out of sight for a moment, then back: the next unit
+    assert.deepStrictEqual(got(), ['ITM0001', 'ITM0001']);
+    for (let i = 0; i < 20; i++) await sight('ITM0001', 500); // flickering in and out, never gone for long
+    assert.deepStrictEqual(got(), ['ITM0001', 'ITM0001'], 'a camera that misses a few frames does not count it again');
+    await sight('ITM0002', 100); // another item is its own scan at once
+    assert.deepStrictEqual(got(), ['ITM0001', 'ITM0001', 'ITM0002']);
+    await sight('ITM0001', 100); // and the first one coming back right after it counts, because it was not what the camera last saw
+    assert.deepStrictEqual(got(), ['ITM0001', 'ITM0001', 'ITM0002', 'ITM0001']);
+    // a code typed or pasted into the camera window is always meant
+    p.$('#posScanType').value = 'ITM0001'; await p.run('posScanTyped()');
+    assert.strictEqual(got().length, 5);
+    p.$('#posScanType').value = 'ITM0001'; await p.run('posScanTyped()');
+    assert.strictEqual(got().length, 6);
+});
+
+test('POS screen: the counter list gives the keyboard back once a counter is picked', () => {
+    const p = page();
+    p.run(SETUP);
+    let blurred = 0;
+    p.doc.activeElement = { id: 'pCounter', blur() { blurred++; } };
+    p.run("posPickCounter('c1')");
+    assert.strictEqual(blurred, 1);
+    p.doc.activeElement = { id: 'something-else', blur() { blurred += 10; } };
+    p.run("posPickCounter('c1')");
+    assert.strictEqual(blurred, 1, 'only that list');
+    p.doc.activeElement = null;
+    p.run("posPickCounter('c1')"); // nothing focused: no harm
+});
+
+test('POS screen: the cashier names of one login are not the next login\'s', () => {
+    const p = page();
+    p.run("POS.cashiers = [{ email: 'old@business.pk', name: 'Old Staff' }]");
+    p.run('posReset()');
+    assert.strictEqual(p.run('POS.cashiers'), null);
 });

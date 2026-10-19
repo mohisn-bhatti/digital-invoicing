@@ -53,11 +53,13 @@
     // A barcode scanner types like a very fast keyboard: the characters arrive a few milliseconds apart and Enter ends the code.
     // This tells a scan from a person typing by the gap between keys, so the cashier does not have to click a box first.
     //   const w = PosScan.wedge();  on every keydown: const code = w.key(event.key, Date.now());  (a string when a scan has just ended)
-    function wedge({ minLength = 4, maxGap = 70 } = {}) {
+    // A scan is at least two characters, each within maxGap of the one before, and Enter within enterGap of the last. (Shorter codes are
+    // allowed because the Enter of a scan that is not recognised would otherwise press whatever button has the focus.)
+    function wedge({ minLength = 2, maxGap = 70, enterGap = 250 } = {}) {
         let buf = '', last = 0;
         return {
             key(k, at) {
-                if (k === 'Enter') { const s = buf; buf = ''; return s.length >= minLength ? s : null; }
+                if (k === 'Enter') { const s = buf, fresh = at - last <= enterGap; buf = ''; return s.length >= minLength && fresh ? s : null; }
                 if (typeof k !== 'string' || k.length !== 1) return null; // Shift, arrows, F-keys …
                 if (buf && at - last > maxGap) buf = ''; // too slow for a scanner: a person is typing, begin again
                 buf += k; last = at;

@@ -8,7 +8,8 @@
 
 const POS_SCAN_FORMATS = ['qr_code', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'code_93', 'itf', 'codabar']; // names the browser's own detector uses
 const POS_SCAN_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js'; // for browsers with no detector of their own (Safari)
-const posScan = { open: false, stream: null, lib: null, timer: null, handler: null, continuous: false, last: '', lastAt: 0, busy: false, torch: false };
+const posScan = { open: false, stream: null, lib: null, timer: null, handler: null, continuous: false, last: '', seenAt: 0, busy: false, torch: false };
+const POS_SCAN_GONE_MS = 1200; // a code must be out of the camera's sight this long before it counts again: one code held in front of it is one scan
 
 // A short beep and a buzz when a code is read (not every device has either)
 function posBeep(ok = true) {
@@ -61,7 +62,7 @@ function posScanStatus(text, bad) {
 async function posScanOpen({ title, hint, onCode, continuous = false }) {
   posScanClose();
   posEnsureScanModal();
-  Object.assign(posScan, { open: true, handler: onCode, continuous, last: '', lastAt: 0, busy: false, torch: false });
+  Object.assign(posScan, { open: true, handler: onCode, continuous, last: '', seenAt: 0, busy: false, torch: false });
   document.getElementById('posScanTitle').textContent = title || 'Scan';
   document.getElementById('posScanHint').textContent = hint || 'Hold the code in the frame.';
   document.getElementById('posScanVideo').classList.remove('hidden'); document.getElementById('posScanRegion').classList.add('hidden');
@@ -121,20 +122,22 @@ async function posScanLibrary() {
   } catch (err) { posScan.lib = null; throw (err && err.name ? err : Object.assign(new Error(String(err)), { name: String(err).split(':')[0] })); }
 }
 
-// A code was read (by the camera or typed): the same code still in view is ignored for a couple of seconds
+// A code was read (by the camera or typed). The camera reports a code over and over while it is in view, so a code seen again within
+// POS_SCAN_GONE_MS of the last sighting is the same scan, however long it stays there: every sighting counts as "still there".
 async function posScanGot(raw) {
   const text = String(raw === undefined || raw === null ? '' : raw).trim();
-  if (!text || !posScan.open || posScan.busy) return;
-  const at = Date.now();
-  if (text === posScan.last && at - posScan.lastAt < 2000) return;
-  posScan.last = text; posScan.lastAt = at; posScan.busy = true;
+  if (!text || !posScan.open) return;
+  const at = Date.now(), held = text === posScan.last && at - posScan.seenAt < POS_SCAN_GONE_MS;
+  if (text === posScan.last) posScan.seenAt = at;
+  if (held || posScan.busy) return;
+  posScan.last = text; posScan.seenAt = at; posScan.busy = true;
   try {
     const r = (await posScan.handler(text)) || {};
     posBeep(r.ok !== false);
     posScanStatus(r.message || (r.ok === false ? 'Not recognised' : 'Scanned'), r.ok === false);
     if (r.ok !== false && !posScan.continuous) { posScan.busy = false; posScanClose(); return; }
   } catch (err) { posBeep(false); posScanStatus(err.message || 'Something went wrong', true); }
-  posScan.busy = false; posScan.lastAt = Date.now();
+  posScan.busy = false; posScan.seenAt = Date.now(); // (the code is most likely still in front of the camera)
 }
 function posScanTyped() {
   const box = document.getElementById('posScanType'); if (!box) return;
@@ -169,9 +172,12 @@ function posInstallScanner() {
   document.addEventListener('keydown', ev => {
     if (S.page !== 'p-sale' || S.module !== 'POS' || POS.busy || ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const t = ev.target, tag = t && t.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) { wedge.reset(); return; } // the cashier is typing: the box's own handler does the work
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) { wedge.reset(); return; } // the cashier is typing: the box's own handler does the work
     const open = id => { const e = document.getElementById(id); return e && !e.classList.contains('hidden'); };
     if (open('posModal') || open('posReceiptModal') || open('posScanModal')) { wedge.reset(); return; }
+    // A list (the counter) is not a typing box: left alone, its own "type to pick" would take the letters of a scan and change the counter
+    // the next sale goes to. Letters never choose from it here; the arrows, Space and Enter still work for a person.
+    if (tag === 'SELECT' && ev.key.length === 1 && ev.key !== ' ') ev.preventDefault();
     const code = wedge.key(ev.key, Date.now());
     if (code) { ev.preventDefault(); posScanSale(code).then(r => { posBeep(!r || r.ok !== false); if (r && r.ok === false) toast(r.message); }); }
     else if (ev.key.length === 1 && ev.key !== ' ' && wedge.pending().length > 1) ev.preventDefault(); // no button reacts to the letters of a scan

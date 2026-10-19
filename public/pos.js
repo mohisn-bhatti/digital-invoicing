@@ -6,7 +6,7 @@
 
 const POS = {
   setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, modePicked: false, buyer: { name: '', pntn: '', cnic: '', phone: '' }, customer: null, saveCustomer: false,
-  cat: '', q: '', busy: false, result: null, detail: null, settings: null, receiptWidth: 80,
+  cat: '', q: '', busy: false, result: null, detail: null, settings: null, receiptWidth: 80, cashiers: null,
   sales: { from: null, to: null, state: '', q: '', customerId: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null, pctTimer: null, // dates: null = not chosen yet (today), '' = all dates
   ref: null, refSig: null, creditRef: null, alerts: null, alertTimer: null, tick: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false, watching: false,
 };
@@ -19,7 +19,7 @@ const POS_RESETS = [];
 function posReset() {
   clearInterval(POS.alertTimer); clearInterval(POS.tick); clearTimeout(POS.pctTimer);
   Object.assign(POS, {
-    setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, modePicked: false, buyer: posBlankBuyer(), customer: null, saveCustomer: false, cat: '', q: '', busy: false, result: null, detail: null, settings: null, receiptWidth: 80,
+    setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, modePicked: false, buyer: posBlankBuyer(), customer: null, saveCustomer: false, cat: '', q: '', busy: false, result: null, detail: null, settings: null, receiptWidth: 80, cashiers: null,
     sales: { from: null, to: null, state: '', q: '', customerId: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null,
     ref: null, refSig: null, creditRef: null, alerts: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false,
   });
@@ -259,6 +259,7 @@ function posPickCounter(id) {
   POS.counterId = id;
   try { localStorage.setItem('posCounter', id); } catch { /* per-browser convenience only */ }
   posRenderBanner(); posRenderGo();
+  const on = document.activeElement; if (on && on.id === 'pCounter') on.blur(); // the list must not keep the keyboard: the next thing typed is a scan, not a choice of counter
 }
 function posRenderCats() {
   const cats = [...new Set(POS.setup.items.map(i => i.category || '__none'))].sort();

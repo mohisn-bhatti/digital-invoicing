@@ -15,6 +15,7 @@ const { assertMove } = require('./states');
 
 const { PosError } = require('./errors');
 const R = require('./reports');
+const { ciEquals, ciContains } = require('./like');
 const { csvText, csvNum } = require('./csv');
 
 const num = d => (d === null || d === undefined ? null : Number(d));
@@ -42,6 +43,13 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     const room = (ctx, kind) => limits.assertRoom(ctx.tenantId, kind, { user: userOf(ctx) }); // the plan's number of branches, counters and items
     const emailOf = ctx => (ctx.req && ctx.req.user && ctx.req.user.email) || ctx.email || 'user';
     const note = (text, max = 300) => String(text === undefined || text === null ? '' : text).trim().slice(0, max);
+    // Two requests for one business that must not both pass a check and then both write (one PNTN is one customer, one code leads to one
+    // item) are taken in turn: each holds a lock named for the business and the kind of thing until it has written. Everything inside uses
+    // the transaction's own connection (`db`), so requests waiting their turn cannot starve the pool of the one that is working.
+    const inTurn = (tenantId, what, work) => prisma.$transaction(async tx => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${tenantId}:${what}`}))`;
+        return work(tx);
+    }, { maxWait: 10000, timeout: 20000 });
     const taken = (e, what) => {
         if (e && e.code === 'P2002') throw new PosError(409, /barcode/.test(String(e.meta && e.meta.target)) ? 'That barcode is already used by another item.' : `That ${what} is already in use.`);
         throw e;
@@ -179,34 +187,36 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     async function listItems(tenantId, { q, activeOnly } = {}) {
         const where = { tenantId, ...(activeOnly ? { active: true } : {}) };
         const s = note(q, 60);
-        if (s) where.OR = [{ name: { contains: s, mode: 'insensitive' } }, { code: { contains: s, mode: 'insensitive' } }, { barcode: { contains: s, mode: 'insensitive' } }, { category: { contains: s, mode: 'insensitive' } }];
+        if (s) where.OR = [{ name: ciContains(s) }, { code: ciContains(s) }, { barcode: ciContains(s) }, { category: ciContains(s) }];
         return (await prisma.posItem.findMany({ where, orderBy: [{ category: 'asc' }, { name: 'asc' }], take: 5000 })).map(itemView);
     }
-    async function nextItemCode(tenantId) {
-        const rows = await prisma.posItem.findMany({ where: { tenantId, code: { startsWith: 'ITM' } }, select: { code: true } });
+    async function nextItemCode(tenantId, db = prisma) {
+        const rows = await db.posItem.findMany({ where: { tenantId, code: { startsWith: 'ITM' } }, select: { code: true } });
         const top = rows.reduce((m, r) => Math.max(m, /^ITM(\d+)$/.test(r.code) ? Number(r.code.slice(3)) : 0), 0);
         return 'ITM' + pad(top + 1, 4);
     }
     // A scan must lead to one item: a code or barcode cannot be the code or barcode of another item (capitals do not matter)
-    async function assertScanFree(tenantId, { code, barcode }, exceptId) {
+    async function assertScanFree(tenantId, { code, barcode }, exceptId, db = prisma) {
         const names = [code, barcode].filter(Boolean);
         if (!names.length) return;
-        const clash = await prisma.posItem.findFirst({
-            where: { tenantId, ...(exceptId ? { id: { not: exceptId } } : {}), OR: names.flatMap(n => [{ code: { equals: n, mode: 'insensitive' } }, { barcode: { equals: n, mode: 'insensitive' } }]) },
+        const clash = await db.posItem.findFirst({
+            where: { tenantId, ...(exceptId ? { id: { not: exceptId } } : {}), OR: names.flatMap(n => [{ code: ciEquals(n) }, { barcode: ciEquals(n) }]) },
             select: { name: true, code: true, barcode: true },
         });
         if (clash) {
-            const used = names.find(n => [clash.code, clash.barcode].some(x => x && x.toLowerCase() === n.toLowerCase()));
+            const used = names.find(n => [clash.code, clash.barcode].some(x => x && x.toLowerCase() === n.toLowerCase())) || names[0];
             throw new PosError(409, `"${used}" is already the code or barcode of "${clash.name}" (${clash.code}). A scan has to lead to one item.`);
         }
     }
     async function createItem(ctx, body) {
         const d = V.cleanItem(body);
         if (d.active) await room(ctx, 'items');
-        if (!d.code) d.code = await nextItemCode(ctx.tenantId);
-        await assertScanFree(ctx.tenantId, d);
         try {
-            const i = await prisma.posItem.create({ data: { tenantId: ctx.tenantId, ...d } });
+            const i = await inTurn(ctx.tenantId, 'item', async tx => {
+                const data = { ...d, code: d.code || await nextItemCode(ctx.tenantId, tx) };
+                await assertScanFree(ctx.tenantId, data, null, tx);
+                return tx.posItem.create({ data: { tenantId: ctx.tenantId, ...data } });
+            });
             await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.item.create', entityType: 'PosItem', entityId: i.id, summary: `Item "${i.name}" (${i.code}) added: PCT ${i.pctCode}, tax ${num(i.taxRate)}%${i.taxRateCard !== null ? `, card ${num(i.taxRateCard)}%` : ''}` });
             return itemView(i);
         } catch (e) { return taken(e, 'item code'); }
@@ -216,9 +226,13 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         if (!i) throw new PosError(404, 'Item not found.');
         const d = V.cleanItem({ ...itemView(i), ...body, code: i.code }); // the code never changes: it is on past sales
         if (d.active && !i.active) await room(ctx, 'items'); // putting an item back on sale takes its place back
-        await assertScanFree(ctx.tenantId, { code: i.code, barcode: d.barcode }, id);
+        // only what changes is checked: the code never does, and an item saved before this rule existed (Cola next to COLA) must stay
+        // editable and switchable off
         try {
-            const u = await prisma.posItem.update({ where: { id }, data: { ...d, code: i.code } });
+            const u = await inTurn(ctx.tenantId, 'item', async tx => {
+                await assertScanFree(ctx.tenantId, { barcode: d.barcode !== i.barcode ? d.barcode : null }, id, tx);
+                return tx.posItem.update({ where: { id }, data: { ...d, code: i.code } });
+            });
             const was = itemView(i), now_ = itemView(u);
             const changed = ['name', 'barcode', 'category', 'pctCode', 'taxRate', 'taxRateCard', 'unitPrice', 'openPrice', 'active'].filter(k => was[k] !== now_[k]).map(k => `${k}: ${was[k]} → ${now_[k]}`);
             if (changed.length) await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.item.update', entityType: 'PosItem', entityId: id, summary: `Item "${u.name}" (${u.code}) changed: ${changed.join(', ')}`.slice(0, 480) });
@@ -233,7 +247,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const digits = '98' + s.replace(/\D/g, '').replace(/^98/, '');
         const where = /^[\d.\s]+$/.test(s)
             ? { code: { startsWith: digits.length > 4 ? `${digits.slice(0, 4)}.${digits.slice(4)}` : digits } }
-            : { code: { startsWith: '98' }, AND: s.split(/\s+/).filter(w => w.length > 1).slice(0, 5).map(w => ({ description: { contains: w, mode: 'insensitive' } })) };
+            : { code: { startsWith: '98' }, AND: s.split(/\s+/).filter(w => w.length > 1).slice(0, 5).map(w => ({ description: ciContains(w) })) };
         const rows = await prisma.hsCode.findMany({ where, select: { code: true, description: true }, orderBy: { code: 'asc' }, take: 30 });
         return rows.map(r => ({ code: r.code, pctCode: r.code.replace(/\D/g, ''), description: r.description.replace(/^[\s-]+/, '') }));
     }
@@ -256,51 +270,58 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     const customerSearch = q => {
         const s = note(q, 60); if (!s) return null;
         const digits = s.replace(/\D/g, '');
-        const or = [{ name: { contains: s, mode: 'insensitive' } }, { code: { contains: s, mode: 'insensitive' } }, { address: { contains: s, mode: 'insensitive' } }];
+        const or = [{ name: ciContains(s) }, { code: ciContains(s) }, { address: ciContains(s) }];
         if (digits.length >= 3) or.push({ phone: { contains: digits } }, { cnic: { contains: digits } }, { pntn: { contains: digits.length === 8 ? `${digits.slice(0, 7)}-${digits[7]}` : digits } });
         return or;
     };
-    async function listCustomers(ctx, { q, active, limit = 100, offset = 0 } = {}) {
+    // withStats: what each customer has spent. The counter staff find a customer to put on a sale; the totals are for managers.
+    async function listCustomers(ctx, { q, active, limit = 100, offset = 0 } = {}, { withStats = true } = {}) {
         const where = { tenantId: ctx.tenantId };
         if (active === '1' || active === 1 || active === true) where.active = true; else if (active === '0' || active === 0 || active === false) where.active = false;
         const or = customerSearch(q); if (or) where.OR = or;
         const take = whole(limit, 100, 1, 500), skip = whole(offset, 0, 0, 1000000);
         const [rows, total] = await Promise.all([prisma.posCustomer.findMany({ where, orderBy: [{ name: 'asc' }, { code: 'asc' }], take, skip }), prisma.posCustomer.count({ where })]);
+        if (!withStats) return { total, customers: rows.map(customerView) };
         const stats = await customerStats(ctx.tenantId, rows.map(c => c.id));
         return { total, customers: rows.map(c => ({ ...customerView(c), ...stats.get(c.id) })) };
     }
-    async function nextCustomerCode(tenantId) {
-        const rows = await prisma.posCustomer.findMany({ where: { tenantId, code: { startsWith: 'CUS' } }, select: { code: true } });
+    async function nextCustomerCode(tenantId, db = prisma) {
+        const rows = await db.posCustomer.findMany({ where: { tenantId, code: { startsWith: 'CUS' } }, select: { code: true } });
         const top = rows.reduce((m, r) => Math.max(m, /^CUS(\d+)$/.test(r.code) ? Number(r.code.slice(3)) : 0), 0);
         return 'CUS' + pad(top + 1, 4);
     }
     // The same PNTN or CNIC is the same customer: two profiles for one buyer would split their history
-    async function assertCustomerFree(tenantId, d, exceptId) {
+    async function assertCustomerFree(tenantId, d, exceptId, db = prisma) {
         for (const [field, label] of [['pntn', 'PNTN'], ['cnic', 'CNIC']]) {
             if (!d[field]) continue;
-            const clash = await prisma.posCustomer.findFirst({ where: { tenantId, [field]: d[field], ...(exceptId ? { id: { not: exceptId } } : {}) }, select: { name: true, code: true } });
+            const clash = await db.posCustomer.findFirst({ where: { tenantId, [field]: d[field], ...(exceptId ? { id: { not: exceptId } } : {}) }, select: { name: true, code: true } });
             if (clash) throw new PosError(409, `A customer with this ${label} already exists: ${clash.name} (${clash.code}).`);
         }
     }
     async function createCustomer(ctx, body) {
         const d = V.cleanCustomer(body);
-        await assertCustomerFree(ctx.tenantId, d);
-        for (let attempt = 0; attempt < 5; attempt++) {
-            const code = await nextCustomerCode(ctx.tenantId);
-            try {
-                const c = await prisma.posCustomer.create({ data: { tenantId: ctx.tenantId, code, ...d } });
-                await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.customer.create', entityType: 'PosCustomer', entityId: c.id, summary: `Customer "${c.name}" (${c.code}) added` });
-                return customerView(c);
-            } catch (e) { if (!(e && e.code === 'P2002' && /code/.test(String(e.meta && e.meta.target)))) throw e; } // two customers added at once took the same code: take the next
+        let c;
+        try {
+            // in turn: the check for this PNTN or CNIC, the next code and the new row happen with nobody else adding a customer
+            c = await inTurn(ctx.tenantId, 'customer', async tx => {
+                await assertCustomerFree(ctx.tenantId, d, null, tx);
+                return tx.posCustomer.create({ data: { tenantId: ctx.tenantId, code: await nextCustomerCode(ctx.tenantId, tx), ...d } });
+            });
+        } catch (e) {
+            if (e && e.code === 'P2002') throw new PosError(409, 'The customer could not be given a code just now. Try again.'); // (the database's own rule, should the lock ever not hold)
+            throw e;
         }
-        throw new PosError(409, 'The customer could not be given a code just now. Try again.');
+        await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.customer.create', entityType: 'PosCustomer', entityId: c.id, summary: `Customer "${c.name}" (${c.code}) added` });
+        return customerView(c);
     }
     async function updateCustomer(ctx, id, body) {
         const c = await prisma.posCustomer.findFirst({ where: { id, tenantId: ctx.tenantId } });
         if (!c) throw new PosError(404, 'Customer not found.');
         const d = V.cleanCustomer({ ...customerView(c), ...body });
-        await assertCustomerFree(ctx.tenantId, d, id);
-        const u = await prisma.posCustomer.update({ where: { id }, data: d });
+        const u = await inTurn(ctx.tenantId, 'customer', async tx => {
+            await assertCustomerFree(ctx.tenantId, d, id, tx);
+            return tx.posCustomer.update({ where: { id }, data: d });
+        });
         const changed = ['name', 'pntn', 'cnic', 'phone', 'address', 'notes', 'active'].filter(k => c[k] !== u[k]);
         if (changed.length) await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.customer.update', entityType: 'PosCustomer', entityId: id, summary: `Customer "${u.name}" (${u.code}) changed: ${changed.map(k => (k === 'active' ? (u.active ? 'switched on' : 'switched off') : k)).join(', ')}` });
         return customerView(u);
@@ -905,13 +926,13 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         const out = { code: p.raw, item: null, sale: null };
         if (!p.raw || p.tooLong) return out;
         if (p.codes.length) {
-            const found = await prisma.posItem.findMany({ where: { tenantId: ctx.tenantId, OR: p.codes.flatMap(c => [{ barcode: { equals: c, mode: 'insensitive' } }, { code: { equals: c, mode: 'insensitive' } }]) }, take: 10 });
+            const found = await prisma.posItem.findMany({ where: { tenantId: ctx.tenantId, OR: p.codes.flatMap(c => [{ barcode: ciEquals(c) }, { code: ciEquals(c) }]) }, take: 10 });
             out.item = Scan.findItem(found.map(itemView), p); // the same rule the cashier screen uses: the barcode first, then the code
         }
         const numbers = [...new Set([p.invoice, p.usin, ...p.codes].filter(Boolean))];
         if (numbers.length) {
             const sale = await prisma.posSale.findFirst({
-                where: { tenantId: ctx.tenantId, OR: numbers.flatMap(n => [{ usin: n }, { fiscalNumber: { equals: n, mode: 'insensitive' } }]) },
+                where: { tenantId: ctx.tenantId, OR: numbers.flatMap(n => [{ usin: n }, { fiscalNumber: ciEquals(n) }]) },
                 orderBy: { createdAt: 'desc' }, include: BRIEF,
             });
             out.sale = sale ? saleRow(sale) : null;
