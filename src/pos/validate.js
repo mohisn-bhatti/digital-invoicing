@@ -48,6 +48,14 @@ function cleanBuyer(b) {
     return { name, pntn, cnic, phone };
 }
 
+// A saved customer: the buyer's details, in PRA's formats, plus an address and a note. The name is required.
+function cleanCustomer(c) {
+    c = isObject(c) ? c : {};
+    const b = cleanBuyer(c);
+    if (!b.name) throw new PosValidationError('Enter the customer name.');
+    return { ...b, address: text(c.address, 250, 'Address'), notes: text(c.notes, 300, 'Notes'), active: c.active === undefined ? true : c.active === true || c.active === 'true' };
+}
+
 // PCT / HS code of the service (Second Schedule): PRA wants 8 characters, no dot (9801.2000 → 98012000)
 function cleanPct(v) {
     const d = digitsOf(v);
@@ -61,9 +69,12 @@ function cleanItem(i) {
     if (code && !/^[A-Za-z0-9._\-\/]+$/.test(code)) throw new PosValidationError('Item code can use letters, numbers and . _ - / only.');
     const name = text(i.name, 150, 'Item name');
     if (!name) throw new PosValidationError('Enter the item name.');
+    const barcode = text(i.barcode, 50, 'Barcode');
+    if (barcode && !/^[A-Za-z0-9._\-\/]+$/.test(barcode)) throw new PosValidationError('A barcode can use letters, numbers and . _ - / only.');
     const hasCard = i.taxRateCard !== undefined && i.taxRateCard !== null && String(i.taxRateCard).trim() !== '';
     return {
         code, name,
+        barcode: barcode || null, // nothing typed = no barcode (the code is what is scanned)
         category: text(i.category, 60, 'Category'),
         pctCode: cleanPct(i.pctCode),
         taxRate: num(i.taxRate, 'Tax rate', { max: 100 }),
@@ -118,4 +129,4 @@ function cleanToken(v) {
     return t;
 }
 
-module.exports = { PosValidationError, cleanBuyer, cleanPct, cleanItem, cleanPaymentMode, cleanProfile, cleanBranch, cleanCounter, cleanToken };
+module.exports = { PosValidationError, cleanBuyer, cleanCustomer, cleanPct, cleanItem, cleanPaymentMode, cleanProfile, cleanBranch, cleanCounter, cleanToken };

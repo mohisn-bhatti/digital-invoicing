@@ -27,92 +27,93 @@ enum FbrEnv {
 
 enum InvoiceStatus {
   DRAFT
-  QUEUED     // waiting for the background sender (FBR was unreachable, or from a bulk import); see nextAttemptAt
+  QUEUED // waiting for the background sender (FBR was unreachable, or from a bulk import); see nextAttemptAt
   SUBMITTING // a submission is in flight (acts as a lock against double submits)
   SUBMITTED
-  FAILED     // FBR definitely did not record it; safe to retry
-  UNCERTAIN  // connection broke after posting; FBR may have recorded it — check IRIS before resubmitting
-  CANCELLED  // was filed, then cancelled in IRIS (recorded here so reports leave it out)
+  FAILED // FBR definitely did not record it; safe to retry
+  UNCERTAIN // connection broke after posting; FBR may have recorded it — check IRIS before resubmitting
+  CANCELLED // was filed, then cancelled in IRIS (recorded here so reports leave it out)
 }
 
 model User {
-  id                 String      @id @default(uuid())
-  email              String      @unique
-  name               String      @default("")
+  id                 String     @id @default(uuid())
+  email              String     @unique
+  name               String     @default("")
   password           String
-  role               Role        @default(CLIENT_USER)
-  tenantRole         TenantRole  @default(OWNER) // only for CLIENT_USER
-  active             Boolean     @default(true)
-  pendingApproval    Boolean     @default(false) // added by a client owner: cannot log in until the administrator approves
-  requestedBy        String?     // email of the owner who asked for this user
-  tokenVersion       Int         @default(0)     // bump to log the user out everywhere (password change / reset / deactivate)
-  mustChangePassword Boolean     @default(false) // set after an admin/owner reset
-  failedLogins       Int         @default(0)
+  role               Role       @default(CLIENT_USER)
+  tenantRole         TenantRole @default(OWNER) // only for CLIENT_USER
+  active             Boolean    @default(true)
+  pendingApproval    Boolean    @default(false) // added by a client owner: cannot log in until the administrator approves
+  requestedBy        String? // email of the owner who asked for this user
+  tokenVersion       Int        @default(0) // bump to log the user out everywhere (password change / reset / deactivate)
+  mustChangePassword Boolean    @default(false) // set after an admin/owner reset
+  failedLogins       Int        @default(0)
   lockedUntil        DateTime?
   lastLoginAt        DateTime?
   tenantId           String?
-  tenant             Tenant?     @relation(fields: [tenantId], references: [id])
-  createdAt          DateTime    @default(now())
+  tenant             Tenant?    @relation(fields: [tenantId], references: [id])
+  createdAt          DateTime   @default(now())
 }
 
 model Tenant {
-  id                 String    @id @default(uuid())
-  companyName        String
+  id                  String          @id @default(uuid())
+  companyName         String
   // Seller block of every DI invoice
-  sellerNtnCnic      String    @default("")  // the one number sent to FBR: the NTN, else the CNIC
-  sellerNtn          String    @default("")
-  sellerCnic         String    @default("")
-  mobile             String    @default("")   // contact mobile: added by the admin or the client's owner
-  active             Boolean   @default(true) // inactive: the client's users can't log in (admin can still manage it)
-  sellerBusinessName String    @default("")
-  sellerProvince     String    @default("")
-  sellerAddress      String    @default("")
+  sellerNtnCnic       String          @default("") // the one number sent to FBR: the NTN, else the CNIC
+  sellerNtn           String          @default("")
+  sellerCnic          String          @default("")
+  mobile              String          @default("") // contact mobile: added by the admin or the client's owner
+  active              Boolean         @default(true) // inactive: the client's users can't log in (admin can still manage it)
+  sellerBusinessName  String          @default("")
+  sellerProvince      String          @default("")
+  sellerAddress       String          @default("")
   // Sales tax registration no. — printed on invoices (STA s.23); not part of the DI API payload
-  sellerStrn         String    @default("")
-  tokenIssuedAt      DateTime? // FBR token is valid for 5 years (spec §3.1)
-  irisScenarios   Json?    // sandbox scenarios as IRIS shows them (admin records): { assigned, passed, at, by }
+  sellerStrn          String          @default("")
+  tokenIssuedAt       DateTime? // FBR token is valid for 5 years (spec §3.1)
+  irisScenarios       Json? // sandbox scenarios as IRIS shows them (admin records): { assigned, passed, at, by }
   // PRAL security token, AES-256-GCM encrypted (src/crypto.js)
-  fbrTokenEnc        String?
-  fbrEnv             FbrEnv    @default(SANDBOX)
+  fbrTokenEnc         String?
+  fbrEnv              FbrEnv          @default(SANDBOX)
   // Further-tax % for unregistered buyers (4% confirmed by the CA)
-  furtherTaxRate     Decimal   @default(4) @db.Decimal(5, 2)
-  invoiceSeq         Int       @default(0)
+  furtherTaxRate      Decimal         @default(4) @db.Decimal(5, 2)
+  invoiceSeq          Int             @default(0)
   // As chosen in IRIS: decides the sandbox scenarios to pass (DI spec §10)
-  businessActivities String[]  @default([])
-  sectors            String[]  @default([]) // IRIS lets several be ticked
-  modules            String[]  @default(["INVOICING"]) // products this client may use: INVOICING, POS (src/modules.js)
+  businessActivities  String[]        @default([])
+  sectors             String[]        @default([]) // IRIS lets several be ticked
+  modules             String[]        @default(["INVOICING"]) // products this client may use: INVOICING, POS (src/modules.js)
   // Internal invoice number printed next to the FBR number, e.g. INV-{YYYY}-{NNNN} → INV-2026-0042
-  invoiceNumberFormat String   @default("INV-{YYYY}-{NNNN}")
-  softwareRegNo      String    @default("") // software registration no. from PRAL/FBR, printed on receipts
+  invoiceNumberFormat String          @default("INV-{YYYY}-{NNNN}")
+  softwareRegNo       String          @default("") // software registration no. from PRAL/FBR, printed on receipts
   // Signed authorization (Form STR-13) letting the firm manage this client's FBR token / IRIS
-  authLetterRef      String    @default("")
-  authLetterAt       DateTime?
+  authLetterRef       String          @default("")
+  authLetterAt        DateTime?
   // How long the client may use the application (src/subscription.js). No end date = no limit (every client before this existed).
   // Dates are Pakistan calendar days kept at 00:00 Pakistan time. When the end date plus the grace days (3 for a monthly plan,
   // 7 for a yearly one) has passed the client is made inactive by itself, and renewing it makes it active again.
-  integratedAt       DateTime  @default(now()) // the day the client was integrated
-  accessUnit         String?   // MONTH or YEAR: the length of the last period given (decides the grace days)
-  accessCount        Int?      // how many of them
-  accessEndsAt       DateTime? // the last day of access
-  inactiveReason     String?   // why active is false: ADMIN (switched off by hand) or EXPIRED (the period ended)
-  plan               String?   // starter, pro or enterprise (public/plans.js): sets the limits on branches, terminals, products and users (src/limits.js). No plan = no limits (every client from before plans existed)
-  users              User[]
-  invoices           Invoice[]
-  products           Product[]
-  buyers             Buyer[]
-  importBatches      ImportBatch[]
-  stockEntries       StockEntry[]
-  drafts             InvoiceDraft[]
-  createdAt          DateTime  @default(now())
-  sandboxTests     SandboxTest[]
-  supportTickets   SupportTicket[]
+  integratedAt        DateTime        @default(now()) // the day the client was integrated
+  accessUnit          String? // MONTH or YEAR: the length of the last period given (decides the grace days)
+  accessCount         Int? // how many of them
+  accessEndsAt        DateTime? // the last day of access
+  inactiveReason      String? // why active is false: ADMIN (switched off by hand) or EXPIRED (the period ended)
+  plan                String? // starter, pro or enterprise (public/plans.js): sets the limits on branches, terminals, products and users (src/limits.js). No plan = no limits (every client from before plans existed)
+  users               User[]
+  invoices            Invoice[]
+  products            Product[]
+  buyers              Buyer[]
+  importBatches       ImportBatch[]
+  stockEntries        StockEntry[]
+  drafts              InvoiceDraft[]
+  createdAt           DateTime        @default(now())
+  sandboxTests        SandboxTest[]
+  supportTickets      SupportTicket[]
   // Point of Sale (PRA): its own tables and numbering, nothing shared with the FBR invoicing ones
-  posSeq           Int           @default(0) // last USIN number handed out
-  posProfile       PosProfile?
-  posBranches      PosBranch[]
-  posCounters      PosCounter[]
-  posItems         PosItem[]
-  posSales         PosSale[]
+  posSeq              Int             @default(0) // last USIN number handed out
+  posProfile          PosProfile?
+  posBranches         PosBranch[]
+  posCounters         PosCounter[]
+  posItems            PosItem[]
+  posSales            PosSale[]
+  posCustomers        PosCustomer[]
 }
 
 model Invoice {
@@ -125,7 +126,7 @@ model Invoice {
   status                InvoiceStatus @default(DRAFT)
   fbrEnv                FbrEnv
   invoiceType           String        @default("Sale Invoice")
-  invoiceDate           String        // YYYY-MM-DD (Asia/Karachi), exactly as sent to FBR
+  invoiceDate           String // YYYY-MM-DD (Asia/Karachi), exactly as sent to FBR
   invoiceRefNo          String        @default("")
   // Debit notes: why it was issued (FBR error codes 0027/0028 require a reason; "Others" needs remarks)
   reason                String        @default("")
@@ -158,7 +159,7 @@ model Invoice {
   clientRequestId       String?
   submitAttempts        Int           @default(0)
   lastAttemptAt         DateTime?
-  nextAttemptAt         DateTime?     // QUEUED: don't send before this (retry backoff)
+  nextAttemptAt         DateTime? // QUEUED: don't send before this (retry backoff)
   // Rule 150XC: issued while FBR/internet was down; must reach FBR within 24h of the outage
   offlineMode           Boolean       @default(false)
   offlineSince          DateTime?
@@ -194,33 +195,33 @@ model ImportBatch {
 // Items (the client's own list). An item appears on the invoice only once it has a tax rule; the current rule is
 // copied onto the item (saleType … sroItemSerialNo) and every rule ever set is kept in ProductTaxRule.
 model Product {
-  id              String   @id @default(uuid())
+  id              String           @id @default(uuid())
   tenantId        String
-  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
   name            String
-  description     String   @default("")
-  notes           String   @default("")
+  description     String           @default("")
+  notes           String           @default("")
   hsCode          String
-  hsDescription   String   @default("") // FBR's text for an official code; the client's for their own code
-  source          String   @default("OFFICIAL") // OFFICIAL = picked from the FBR/PCT HS list; CUSTOMER = code typed by the client
+  hsDescription   String           @default("") // FBR's text for an official code; the client's for their own code
+  source          String           @default("OFFICIAL") // OFFICIAL = picked from the FBR/PCT HS list; CUSTOMER = code typed by the client
   uoM             String
-  unitPrice       Decimal? @db.Decimal(14, 2) // first of `prices`, kept for older screens and imports
-  prices          Json     @default("[]")     // [{ label: "Retail", price: 150 }, …] — an item can have several prices
+  unitPrice       Decimal?         @db.Decimal(14, 2) // first of `prices`, kept for older screens and imports
+  prices          Json             @default("[]") // [{ label: "Retail", price: 150 }, …] — an item can have several prices
   // Current tax rule ("" = none yet: the item is not offered on invoices)
-  saleType        String   @default("")
-  rate            String   @default("")
-  sroScheduleNo   String   @default("")
-  sroItemSerialNo String   @default("")
-  lawRefs         Json     @default("[]") // [{ reference, url, source, comment }] — the first is sent to FBR as the SRO / Schedule no.
-  taxComment      String   @default("") // the client's note on the law for the sales tax (one per tax)
-  fbrRateId       Int?     // rate id from FBR SaleTypeToRate (spec §5.8)
-  fbrSroId        Int?     // SRO id from FBR SroSchedule (spec §5.7)
-  extraTaxes      Json     @default("[]") // more taxes: [{ name, kind: PCT|FIXED, value, base, fbrField }] — src/tax.js
-  notifiedRate    Decimal? @db.Decimal(14, 2) // notified price per unit; tax is charged on it instead of the actual price
+  saleType        String           @default("")
+  rate            String           @default("")
+  sroScheduleNo   String           @default("")
+  sroItemSerialNo String           @default("")
+  lawRefs         Json             @default("[]") // [{ reference, url, source, comment }] — the first is sent to FBR as the SRO / Schedule no.
+  taxComment      String           @default("") // the client's note on the law for the sales tax (one per tax)
+  fbrRateId       Int? // rate id from FBR SaleTypeToRate (spec §5.8)
+  fbrSroId        Int? // SRO id from FBR SroSchedule (spec §5.7)
+  extraTaxes      Json             @default("[]") // more taxes: [{ name, kind: PCT|FIXED, value, base, fbrField }] — src/tax.js
+  notifiedRate    Decimal?         @db.Decimal(14, 2) // notified price per unit; tax is charged on it instead of the actual price
   taxRuleAt       DateTime?
   taxRules        ProductTaxRule[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@unique([tenantId, name])
 }
@@ -238,8 +239,8 @@ model ProductTaxRule {
   sroItemSerialNo String   @default("")
   lawRefs         Json     @default("[]") // [{ reference, url, source, comment }] — the first is sent to FBR as the SRO / Schedule no.
   taxComment      String   @default("") // the client's note on the law for the sales tax (one per tax)
-  fbrRateId       Int?     // rate id from FBR SaleTypeToRate (spec §5.8)
-  fbrSroId        Int?     // SRO id from FBR SroSchedule (spec §5.7)
+  fbrRateId       Int? // rate id from FBR SaleTypeToRate (spec §5.8)
+  fbrSroId        Int? // SRO id from FBR SroSchedule (spec §5.7)
   extraTaxes      Json     @default("[]") // more taxes: [{ name, kind: PCT|FIXED, value, base, fbrField }] — src/tax.js
   notifiedRate    Decimal? @db.Decimal(14, 2)
   industry        String   @default("") // client's business nature / sector at the time (as chosen in IRIS)
@@ -289,7 +290,7 @@ model InvoiceItem {
   sNo                             Int
   hsCode                          String
   productDescription              String
-  rate                            String  // e.g. "18%", as FBR's ratE_DESC
+  rate                            String // e.g. "18%", as FBR's ratE_DESC
   uoM                             String
   quantity                        Decimal @db.Decimal(14, 4)
   unitPrice                       Decimal @db.Decimal(18, 6) // imports may derive it from the line value
@@ -315,10 +316,10 @@ model InvoiceItem {
 // that rejects UPDATE / DELETE / TRUNCATE, so entries can't be altered or removed through the app or SQL.
 model AuditLog {
   id         String   @id @default(uuid())
-  tenantId   String?  // null = platform-level (super admin) action
-  userId     String?  // null = system (background sender)
+  tenantId   String? // null = platform-level (super admin) action
+  userId     String? // null = system (background sender)
   userEmail  String   @default("system")
-  action     String   // e.g. invoice.create, settings.update, auth.login_failed
+  action     String // e.g. invoice.create, settings.update, auth.login_failed
   entityType String?
   entityId   String?
   summary    String
@@ -352,10 +353,10 @@ model Lead {
 
 // Stock movements other than sales (sales come from filed invoices). Feeds the Annex-H1 stock statement.
 enum StockEntryType {
-  OPENING        // opening balance
-  PURCHASE       // local purchase
-  IMPORT         // imported goods (GD)
-  ADJUSTMENT_IN  // e.g. stock count surplus
+  OPENING // opening balance
+  PURCHASE // local purchase
+  IMPORT // imported goods (GD)
+  ADJUSTMENT_IN // e.g. stock count surplus
   ADJUSTMENT_OUT // e.g. damage, shortage, own use
 }
 
@@ -364,14 +365,14 @@ model StockEntry {
   tenantId    String
   tenant      Tenant         @relation(fields: [tenantId], references: [id])
   entryType   StockEntryType
-  entryDate   String         // YYYY-MM-DD
+  entryDate   String // YYYY-MM-DD
   hsCode      String
   uoM         String
   description String         @default("")
   quantity    Decimal        @db.Decimal(18, 4)
   value       Decimal        @db.Decimal(14, 2) // cost value (excl. sales tax)
-  reference   String         @default("")       // supplier invoice / GD no.
-  partyName   String         @default("")       // supplier
+  reference   String         @default("") // supplier invoice / GD no.
+  partyName   String         @default("") // supplier
   notes       String         @default("")
   createdBy   String         @default("")
   createdAt   DateTime       @default(now())
@@ -385,7 +386,7 @@ model StockEntry {
 // each with its own condition (e.g. "not in retail packing under a brand name" → exempt); the user then picks one.
 model HsTaxRule {
   id              String   @id @default(uuid())
-  prefix          String   // HS code digits, e.g. "3402" (heading) or "84713010" (one tariff line)
+  prefix          String // HS code digits, e.g. "3402" (heading) or "84713010" (one tariff line)
   condition       String   @default("") // when this rule applies; "" = always for this code
   saleType        String
   rate            String   @default("") // "" = keep the rate the user entered (e.g. fixed-amount regimes)
@@ -393,7 +394,7 @@ model HsTaxRule {
   sroItemSerialNo String   @default("")
   note            String   @default("")
   source          String   @default("manual") // "manual", or where it was extracted from, e.g. "Sales Tax Act 30-06-2026"
-  reviewed        Boolean  @default(false)    // checked by the CA
+  reviewed        Boolean  @default(false) // checked by the CA
   updatedBy       String   @default("system")
   updatedAt       DateTime @updatedAt
 
@@ -407,7 +408,7 @@ model InvoiceDraft {
   tenantId    String
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   title       String   @default("") // buyer name, for the list
-  data        Json     // the form as the browser had it
+  data        Json // the form as the browser had it
   totalAmount Decimal  @default(0) @db.Decimal(14, 2)
   createdBy   String   @default("")
   createdAt   DateTime @default(now())
@@ -437,7 +438,7 @@ model AppSetting {
 // SROs, circulars, general orders and notices from fbr.gov.pk, copied daily so the Tax Rules page can search them
 model LegalReference {
   id        String    @id @default(uuid())
-  source    String    // ACT, RULES (Sales Tax Act / Rules editions), SRO, CIRCULAR, GENERAL_ORDER, NOTICE
+  source    String // ACT, RULES (Sales Tax Act / Rules editions), SRO, CIRCULAR, GENERAL_ORDER, NOTICE
   refNo     String    @default("") // e.g. "1751(I)/2026", "Circular No. 01 of 2026 (Sales Tax)"
   title     String
   issuedOn  DateTime?
@@ -455,7 +456,7 @@ model SandboxTest {
   tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   scenarioId       String
   ok               Boolean
-  stage            String   // validate | post
+  stage            String // validate | post
   fbrInvoiceNumber String?
   error            String?
   request          Json?
@@ -472,7 +473,7 @@ model SupportTicket {
   tenantId  String
   tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   userEmail String
-  category  String           // Question | Problem | Suggestion | FBR / invoice | Other
+  category  String // Question | Problem | Suggestion | FBR / invoice | Other
   subject   String
   status    String           @default("OPEN") // OPEN (waiting for ETAX) | ANSWERED (waiting for the client) | RESOLVED
   createdAt DateTime         @default(now())
@@ -565,6 +566,7 @@ model PosItem {
   tenantId    String
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   code        String
+  barcode     String? // what a scanner or a QR label carries when that is not the code PRA gets (the maker's EAN, say); unique per business
   name        String
   category    String   @default("")
   pctCode     String
@@ -575,6 +577,29 @@ model PosItem {
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, barcode])
+  @@index([tenantId, name])
+}
+
+// A regular customer (a company or a person) the cashier can pick instead of typing the buyer's details each time.
+// Never deleted: a sale may point at it. The sale keeps its own copy of the details as they were.
+model PosCustomer {
+  id        String    @id @default(uuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  code      String // CUS0001: handed out once, never changes
+  name      String
+  pntn      String    @default("")
+  cnic      String    @default("")
+  phone     String    @default("")
+  address   String    @default("")
+  notes     String    @default("")
+  active    Boolean   @default(true)
+  sales     PosSale[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@unique([tenantId, code])
   @@index([tenantId, name])
@@ -588,13 +613,15 @@ model PosSale {
   counterId      String
   counter        PosCounter     @relation(fields: [counterId], references: [id])
   invoiceType    Int            @default(1) // 1 New, 2 Debit, 3 Credit
-  usin           String         // our own invoice number, handed out once and never reused (unique per business)
-  clientRef      String?        // sent by the screen with each new sale: the same key twice gives back the sale already made, never a second one
-  refUsin        String?        // credit note: the USIN of the sale it returns
+  usin           String // our own invoice number, handed out once and never reused (unique per business)
+  clientRef      String? // sent by the screen with each new sale: the same key twice gives back the sale already made, never a second one
+  refUsin        String? // credit note: the USIN of the sale it returns
   refSaleId      String?
   state          PosSaleState   @default(DRAFT)
   env            PosEnv         @default(SANDBOX)
   paymentMode    Int
+  customerId     String? // the saved customer picked for this sale (the buyer details below are a copy of theirs)
+  customer       PosCustomer?   @relation(fields: [customerId], references: [id])
   buyerName      String         @default("")
   buyerPntn      String         @default("")
   buyerCnic      String         @default("")
@@ -604,17 +631,17 @@ model PosSale {
   totalDiscount  Decimal        @db.Decimal(14, 2)
   totalTax       Decimal        @db.Decimal(14, 2)
   totalBill      Decimal        @db.Decimal(14, 2)
-  fiscalNumber   String?        // PRA's invoice number
-  lastCode       String?        // PRA's last answer code
-  lastError      String?        // the last problem, in plain words
-  payload        Json?          // exactly what was sent to PRA
-  response       Json?          // PRA's last answer
+  fiscalNumber   String? // PRA's invoice number
+  lastCode       String? // PRA's last answer code
+  lastError      String? // the last problem, in plain words
+  payload        Json? // exactly what was sent to PRA
+  response       Json? // PRA's last answer
   attempts       Int            @default(0)
   note           String         @default("")
   mock           Boolean        @default(false) // fiscal number came from test mode: not a real fiscal invoice
   createdBy      String
   createdAt      DateTime       @default(now())
-  finalizedAt    DateTime?      // the sale time sent to PRA (SRS 4.6: kept apart from the times below)
+  finalizedAt    DateTime? // the sale time sent to PRA (SRS 4.6: kept apart from the times below)
   submittedAt    DateTime?
   respondedAt    DateTime?
   fiscalizedAt   DateTime?
@@ -628,6 +655,7 @@ model PosSale {
   @@unique([tenantId, clientRef])
   @@index([tenantId, state, fiscalizedAt]) // the alert counts, today's figures and "last fiscalized"
   @@index([tenantId, createdAt])
+  @@index([tenantId, customerId])
   @@index([refSaleId])
 }
 
@@ -639,6 +667,7 @@ model PosSaleLine {
   itemId      String?
   itemCode    String
   itemName    String
+  category    String  @default("") // the item's category when it was sold, so a report by category stays true when the item is moved
   pctCode     String
   quantity    Decimal @db.Decimal(18, 4)
   unitPrice   Decimal @db.Decimal(14, 2)

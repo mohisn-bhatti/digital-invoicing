@@ -51,6 +51,21 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
     app.put('/api/pos/items/:id', ...manager, wrap(req => service.updateItem(ctxOf(req), req.params.id, req.body || {})));
     app.get('/api/pos/pct', ...manager, wrap(req => service.searchPct(req.query.q)));
 
+    // What a scan or a typed code is: an item (with its price and tax rate) and/or a sale
+    app.get('/api/pos/lookup', ...base, wrap(req => service.lookup(ctxOf(req), req.query.code)));
+
+    // Saved customers: everyone can find one and add one at the counter; changing one, the history and the spreadsheet are for managers
+    app.get('/api/pos/customers', ...base, wrap(req => service.listCustomers(ctxOf(req), req.query)));
+    app.post('/api/pos/customers', ...base, wrap(req => service.createCustomer(ctxOf(req), req.body || {})));
+    app.get('/api/pos/customers/:id', ...manager, wrap(req => service.customerDetail(ctxOf(req), req.params.id)));
+    app.put('/api/pos/customers/:id', ...manager, wrap(req => service.updateCustomer(ctxOf(req), req.params.id, req.body || {})));
+    app.get('/api/pos/export/customers', ...manager, async (req, res) => {
+        try {
+            const { filename, csv } = await service.customersCsv(ctxOf(req), req.query);
+            res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' }).send('\uFEFF' + csv);
+        } catch (e) { throw translate(e); }
+    });
+
     app.post('/api/pos/sales', ...base, wrap(req => service.createSale(ctxOf(req), req.body || {})));
     app.get('/api/pos/report', ...manager, wrap(req => service.salesReport(ctxOf(req), req.query)));
     app.get('/api/pos/export/sales', ...manager, async (req, res) => {
