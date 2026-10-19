@@ -28,6 +28,12 @@ services:
         value: "true"
       - key: FBR_PROXY_URL
         sync: false
+      # Point of Sale (PRA): test mode (nothing sent, fake numbers) until set to "false"; PRA also whitelists the server IP,
+      # so PRA_PROXY_URL (or FBR_PROXY_URL) must be the static-IP proxy.
+      - key: PRA_MOCK
+        value: "true"
+      - key: PRA_PROXY_URL
+        sync: false
       # 1 = only Render in front. Use 2 if a Vercel domain later forwards to this service.
       - key: TRUST_PROXY_HOPS
         value: "1"

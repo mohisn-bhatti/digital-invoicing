@@ -22,6 +22,8 @@ const importer = require('./src/importer');
 const stock = require('./src/stock');
 const { createAudit } = require('./src/audit');
 const { BUSINESS_ACTIVITIES, SECTORS } = require('./src/activityScenarios');
+const { MODULES, tenantModules, cleanModules } = require('./src/modules');
+const sub = require('./src/subscription');
 const { SCENARIOS, PROVINCES, UOMS, RATES } = require('./src/scenarios');
 
 for (const k of ['DATABASE_URL', 'JWT_SECRET', 'ENCRYPTION_KEY']) {
@@ -68,6 +70,8 @@ app.use(express.static('public'));
 class HttpError extends Error {
     constructor(status, message) { super(message); this.status = status; }
 }
+// What a client's plan allows (branches, terminals, products, users): checked when something is added (src/limits.js)
+const limits = require('./src/limits').createLimits({ prisma, HttpError });
 
 function todayPKT() {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi' }).format(new Date());
@@ -120,7 +124,9 @@ function publicTenant(t) {
     return {
         id: t.id,
         companyName: t.companyName,
-        mobile: t.mobile, active: t.active,
+        mobile: t.mobile, active: t.active, inactiveReason: t.inactiveReason,
+        // how long the client may use the application (src/subscription.js)
+        integratedAt: t.integratedAt, accessUnit: t.accessUnit, accessCount: t.accessCount, accessEndsAt: t.accessEndsAt, access: sub.access(t), plan: t.plan,
         sellerNtnCnic: t.sellerNtnCnic, sellerNtn: t.sellerNtn, sellerCnic: t.sellerCnic,
         sellerBusinessName: t.sellerBusinessName,
         sellerProvince: t.sellerProvince,
@@ -133,6 +139,7 @@ function publicTenant(t) {
         tokenExpiring: Boolean(t.tokenIssuedAt && Date.now() > new Date(t.tokenIssuedAt).setFullYear(new Date(t.tokenIssuedAt).getFullYear() + 5) - 60 * 86400000),
         businessActivities: t.businessActivities,
         sectors: t.sectors,
+        modules: tenantModules(t),
         invoiceNumberFormat: t.invoiceNumberFormat,
         softwareRegNo: t.softwareRegNo,
         authLetterRef: t.authLetterRef,
@@ -144,6 +151,9 @@ function publicTenant(t) {
 
 // Clients can't file in SANDBOX: test invoices are the admin's job (via Open workspace)
 function assertCanInvoice(req, tenant) {
+    if (!tenantModules(tenant).includes('INVOICING')) {
+        throw new HttpError(403, 'FBR Digital Invoicing is not switched on for this business. Please contact your administrator.');
+    }
     if (!sellerReady(tenant) || !tenant.fbrTokenEnc && process.env.FBR_MOCK !== 'true') {
         throw new HttpError(403, 'Your FBR setup is not complete yet. Please contact your administrator.');
     }
@@ -220,6 +230,7 @@ function loginPayload(user) {
         name: user.name || user.email,
         mustChangePassword: user.mustChangePassword,
         companyName: user.tenant ? user.tenant.companyName : 'Super Admin',
+        modules: user.role === 'CLIENT_USER' ? tenantModules(user.tenant) : [], // the user picks one after logging in when there are several
     };
 }
 
@@ -246,7 +257,8 @@ app.post('/api/auth/login', async (req, res) => {
     }
     if (user.pendingApproval) throw new HttpError(403, 'This user is waiting for the administrator\'s approval. You will be able to log in once it is approved.');
     if (!user.active) throw new HttpError(403, 'This account has been disabled. Contact your account owner or administrator.');
-    if (user.tenant && user.tenant.active === false) throw new HttpError(403, 'This business account is inactive. Contact ETAX to reactivate it.');
+    const blocked = user.tenant ? sub.blockedMessage(user.tenant) : null; // switched off, or the access period (and grace) is over
+    if (blocked) throw new HttpError(403, blocked);
     const fresh = await prisma.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() }, include: { tenant: true } });
     await audit({ ip: req.ip, user }, { action: 'auth.login', summary: 'Logged in' });
     res.json(loginPayload(fresh));
@@ -294,11 +306,12 @@ app.get('/api/meta', authenticateToken, (req, res) => {
     res.json({
         scenarios: SCENARIOS, provinces: PROVINCES, uoms: UOMS, rates: RATES, mock: process.env.FBR_MOCK === 'true',
         debitReasons: DEBIT_REASONS, editWindowHours: IRIS_EDIT_WINDOW_HOURS, debitNoteMaxDays: DEBIT_NOTE_MAX_DAYS,
-        businessActivities: BUSINESS_ACTIVITIES, sectors: SECTORS, wholeNumberUoms: [...WHOLE_NUMBER_UOMS],
+        businessActivities: BUSINESS_ACTIVITIES, sectors: SECTORS, modules: MODULES, wholeNumberUoms: [...WHOLE_NUMBER_UOMS],
     });
 });
 
 // ---------- Super admin (minimal: list + create tenants) ----------
+const posAdmin = { service: null }; // set where the Point of Sale is built (below): the admin screens read its figures
 app.get('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
     const tenants = await prisma.tenant.findMany({
         orderBy: { createdAt: 'desc' },
@@ -306,7 +319,7 @@ app.get('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), asy
     });
     const month = todayPKT().slice(0, 7);
     const out = await Promise.all(tenants.map(async t => {
-        const [ob, monthAgg, last, attention] = await Promise.all([
+        const [ob, monthAgg, last, attention, pos] = await Promise.all([
             onboarding.checklist(prisma, t),
             prisma.invoice.aggregate({
                 where: { tenantId: t.id, status: 'SUBMITTED', fbrEnv: t.fbrEnv, invoiceDate: { startsWith: month } },
@@ -314,9 +327,11 @@ app.get('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), asy
             }),
             prisma.invoice.findFirst({ where: { tenantId: t.id }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
             prisma.invoice.count({ where: { tenantId: t.id, status: { in: ['FAILED', 'UNCERTAIN'] } } }),
+            tenantModules(t).includes('POS') && posAdmin.service ? posAdmin.service.adminFigures(t.id) : null, // Point of Sale: this month's sales and what needs attention
         ]);
         return {
             ...publicTenant(t),
+            pos,
             emails: t.users.map(u => u.email),
             invoiceCount: t._count.invoices,
             createdAt: t.createdAt,
@@ -545,15 +560,24 @@ app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), as
     const email = String(clientEmail).toLowerCase().trim();
     checkNewPassword(clientPassword, email);
     if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
+    const plan = req.body?.plan ? String(req.body.plan) : null;
+    if (plan !== null && !PLAN_IDS.includes(plan)) throw new HttpError(400, 'Choose Starter, Pro, Enterprise, or no plan.');
+    // optionally, how long the client may use the application (no period given = no time limit); checked before anything is created
+    let period = {};
+    if (req.body?.accessUnit) {
+        try { period = sub.setPeriod({ unit: req.body.accessUnit, count: req.body.accessCount }, {}); } catch (e) { if (e instanceof sub.AccessError) throw new HttpError(400, e.message); throw e; }
+    }
 
     const tenant = await prisma.tenant.create({
         data: {
             companyName: String(companyName).trim(),
             mobile,
+            plan,
+            ...period,
             users: { create: { email, password: await bcrypt.hash(String(clientPassword), 10), role: 'CLIENT_USER', tenantRole: 'OWNER', mustChangePassword: true } },
         },
     });
-    await audit(req, { tenantId: tenant.id, action: 'admin.client_create', entityType: 'Tenant', entityId: tenant.id, summary: `Client "${tenant.companyName}" created with login ${email}${mobile ? `, mobile ${mobile}` : ''}` });
+    await audit(req, { tenantId: tenant.id, action: 'admin.client_create', entityType: 'Tenant', entityId: tenant.id, summary: `Client "${tenant.companyName}" created with login ${email}${mobile ? `, mobile ${mobile}` : ''}; plan: ${plan || 'none'}; access: ${accessText(tenant)}` });
     res.json({ success: true, tenantId: tenant.id });
 });
 
@@ -572,6 +596,7 @@ async function addTenantUser(req, tenantId, b) {
     if (!TENANT_ROLES.includes(b.tenantRole)) throw new HttpError(400, 'Choose a role: Owner, Accountant or Cashier.');
     const pw = checkNewPassword(b.password, email);
     if (await prisma.user.findUnique({ where: { email } })) throw new HttpError(400, 'That email is already registered.');
+    await limits.assertRoom(tenantId, 'users', { user: req.user }); // the plan's number of users (a waiting request takes a place too)
     // an owner's new user waits for the administrator; the administrator's own additions are live at once
     const request = req.user.role !== 'SUPER_ADMIN';
     const u = await prisma.user.create({ data: {
@@ -601,6 +626,7 @@ async function updateTenantUser(req, tenantId, id, b) {
         data.tenantRole = b.tenantRole;
     }
     if (b.active !== undefined) data.active = Boolean(b.active);
+    if (data.active === true && !u.active && !u.pendingApproval) await limits.assertRoom(tenantId, 'users', { user: req.user }); // enabling a user takes a place again
     // Correcting a mistyped login email: administrator only (owners can never change it, even by calling the API)
     if (b.email !== undefined && String(b.email).toLowerCase().trim() !== u.email) {
         if (req.user.role !== 'SUPER_ADMIN') throw new HttpError(403, 'Only the administrator can change a login email.');
@@ -666,7 +692,7 @@ app.post('/api/admin/clients/:id/workspace', authenticateToken, requireRole('SUP
     if (!t) throw new HttpError(404, 'Client not found.');
     const admin = await prisma.user.findUniqueOrThrow({ where: { id: req.user.id } });
     await audit(req, { tenantId: t.id, action: 'admin.workspace_open', entityType: 'Tenant', entityId: t.id, summary: `Admin opened the workspace of "${t.companyName}"` });
-    res.json({ token: signWorkspaceToken(admin, t.id), companyName: t.companyName });
+    res.json({ token: signWorkspaceToken(admin, t.id), companyName: t.companyName, modules: tenantModules(t) });
 });
 
 // Website enquiries
@@ -706,7 +732,7 @@ app.get('/api/admin/egress-ip', authenticateToken, requireRole('SUPER_ADMIN'), a
 // Read-only for clients; only the super admin changes FBR settings
 app.get('/api/client/settings', authenticateToken, requireTenant, async (req, res) => {
     const t = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId } });
-    res.json({ ...clientTenant(t), workspace: Boolean(req.user.impersonatedBy), tenantRole: req.user.tenantRole,
+    res.json({ ...clientTenant(t), modules: tenantModules(t), workspace: Boolean(req.user.impersonatedBy), tenantRole: req.user.tenantRole,
         nextInvoiceNo: formatInvoiceNo(t.invoiceNumberFormat, t.invoiceSeq + 1, todayPKT()) }); // shown on the form; taken only when the invoice is created
 });
 
@@ -718,7 +744,7 @@ app.get('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
 
 const SETTING_LABELS = {
     mobile: 'Mobile number', active: 'Status', sellerNtn: 'Seller NTN', sellerCnic: 'Seller CNIC', sellerNtnCnic: 'Seller number sent to FBR', sellerStrn: 'STRN', sellerBusinessName: 'Business name', sellerProvince: 'Province',
-    sellerAddress: 'Address', fbrEnv: 'Environment', furtherTaxRate: 'Further tax %', businessActivities: 'Business nature', sectors: 'Sector',
+    sellerAddress: 'Address', fbrEnv: 'Environment', furtherTaxRate: 'Further tax %', businessActivities: 'Business nature', sectors: 'Sector', modules: 'Modules',
     invoiceNumberFormat: 'Invoice number format', softwareRegNo: 'Software reg. no.', authLetterRef: 'Authorization letter ref', authLetterAt: 'Authorization letter date',
 };
 app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
@@ -774,6 +800,11 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
         if (list.some(a => !BUSINESS_ACTIVITIES.includes(a))) throw new HttpError(400, 'Unknown business nature.');
         data.businessActivities = list;
     }
+    if (b.modules !== undefined) {
+        const list = cleanModules(b.modules);
+        if (!list.length) throw new HttpError(400, 'Switch on at least one module for the client.');
+        data.modules = list;
+    }
     if (b.sectors !== undefined) {
         const list = Array.isArray(b.sectors) ? [...new Set(b.sectors.map(String))] : [];
         if (list.some(s => !SECTORS.includes(s))) throw new HttpError(400, 'Unknown sector.');
@@ -799,6 +830,10 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
     }
 
     const before = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
+    if (data.active === true && !before.active && sub.access(before).status === 'EXPIRED') {
+        throw new HttpError(400, 'This client\'s access period has ended. Renew it first (Manage → Overview → Access period): renewing makes it active again.');
+    }
+    if ('active' in data) data.inactiveReason = data.active ? null : 'ADMIN'; // switched off by hand, or on again
     // a new token starts a new 5-year period, unless the admin typed a different issue date
     const sameDay = (a, c) => a && c && new Date(a).toISOString().slice(0, 10) === new Date(c).toISOString().slice(0, 10);
     if (b.fbrToken && (!data.tokenIssuedAt || sameDay(data.tokenIssuedAt, before.tokenIssuedAt))) data.tokenIssuedAt = new Date();
@@ -822,6 +857,57 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
     // New token: refresh the HS code list from FBR in the background
     if (b.fbrToken) hs.syncFromFbr(prisma, String(b.fbrToken).trim()).catch(err => console.error('HS sync failed:', err.message));
     res.json(publicTenant(t));
+});
+
+// ---------- How long a client may use the application (src/subscription.js) ----------
+const accessText = t => (t.accessEndsAt ? `${t.accessCount} ${String(t.accessUnit || '').toLowerCase()}${t.accessCount === 1 ? '' : 's'}, ends ${sub.dayOf(t.accessEndsAt)}` : 'no time limit');
+async function changeAccess(req, res, compute, verb) {
+    const tenantId = req.params.id;
+    const before = await prisma.tenant.findUnique({ where: { id: tenantId } });
+    if (!before) throw new HttpError(404, 'Client not found.');
+    let data;
+    try { data = compute(before); } catch (e) { if (e instanceof sub.AccessError) throw new HttpError(400, e.message); throw e; }
+    const status = sub.access({ ...before, ...data }).status;
+    // the client's state follows the new dates: a lapsed one is switched off, and one the period had switched off comes back
+    if (status === 'EXPIRED' && before.active) Object.assign(data, { active: false, inactiveReason: 'EXPIRED' });
+    else if (status !== 'EXPIRED' && !before.active && before.inactiveReason === 'EXPIRED') Object.assign(data, { active: true, inactiveReason: null });
+    const t = await prisma.tenant.update({ where: { id: tenantId }, data });
+    const day = d => sub.dayOf(d);
+    await audit(req, {
+        tenantId, action: 'client.access', entityType: 'Tenant', entityId: tenantId,
+        summary: `Access period ${verb}: ${accessText(before)} → ${accessText(t)}${before.active !== t.active ? (t.active ? '; client made active' : '; client made inactive (period over)') : ''}`,
+        details: { 'Integration date': [day(before.integratedAt), day(t.integratedAt)], 'Access period': [accessText(before), accessText(t)] },
+    });
+    res.json(publicTenant(t));
+}
+app.put('/api/admin/clients/:id/access', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => changeAccess(req, res, before => sub.setPeriod(req.body, before), 'set'));
+app.post('/api/admin/clients/:id/access/renew', authenticateToken, requireRole('SUPER_ADMIN'), (req, res) => changeAccess(req, res, before => sub.renew(req.body, before), 'renewed'));
+// The plan a client is on, and what it uses against each limit (for the Manage screen, and the client's own pages)
+const PLAN_IDS = ['starter', 'pro', 'enterprise'];
+app.get('/api/admin/clients/:id/plan', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const t = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+    if (!t) throw new HttpError(404, 'Client not found.');
+    res.json(await limits.usage(t.id, tenantModules(t)));
+});
+app.put('/api/admin/clients/:id/plan', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const before = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+    if (!before) throw new HttpError(404, 'Client not found.');
+    const plan = req.body?.plan === undefined || req.body.plan === null || req.body.plan === '' ? null : String(req.body.plan);
+    if (plan !== null && !PLAN_IDS.includes(plan)) throw new HttpError(400, 'Choose Starter, Pro, Enterprise, or no plan.');
+    const t = await prisma.tenant.update({ where: { id: before.id }, data: { plan } });
+    const name = p => (p ? p[0].toUpperCase() + p.slice(1) : 'no plan');
+    if (before.plan !== plan) await audit(req, { tenantId: t.id, action: 'client.plan', entityType: 'Tenant', entityId: t.id, summary: `Plan changed: ${name(before.plan)} → ${name(plan)}`, details: { Plan: [name(before.plan), name(plan)] } });
+    res.json(publicTenant(t));
+});
+app.get('/api/client/plan', authenticateToken, requireTenant, async (req, res) => {
+    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId }, select: { modules: true } });
+    res.json(await limits.usage(req.user.tenantId, tenantModules(t)));
+});
+// The Point of Sale side of a client, read-only, for the Manage screen (counters, this month, what needs attention)
+app.get('/api/admin/clients/:id/pos-summary', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
+    const t = await prisma.tenant.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!t) throw new HttpError(404, 'Client not found.');
+    res.json(await posAdmin.service.adminSummary(t.id));
 });
 
 // FBR reference lists (provinces, uom, ...) via the tenant's token, with static fallbacks
@@ -2050,6 +2136,7 @@ app.post('/api/products', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT,
     try {
         let p;
         const before = await prisma.product.findFirst({ where: b.id ? { id: String(b.id), tenantId } : { tenantId, name: d.name } });
+        if (!before) await limits.assertRoom(tenantId, 'products', { user: req.user }); // a new item: the plan's number of products
         if (b.id) {
             const { count } = await prisma.product.updateMany({ where: { id: String(b.id), tenantId }, data: d });
             if (!count) throw new HttpError(404, 'Item not found.');
@@ -2094,6 +2181,7 @@ async function checkItemImport(tenantId, body) {
 app.post('/api/products/import/check', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
     const r = await checkItemImport(req.user.tenantId, req.body);
     const updates = r.ready.filter(e => e.existing).map(({ row, item, existing, fills, conflicts }) => ({ row, name: item.name, existing, fills, conflicts }));
+    if (!r.errors.length && r.ready.length > updates.length) await limits.assertRoom(req.user.tenantId, 'products', { adding: r.ready.length - updates.length, user: req.user }); // the file must fit the plan
     res.json({ errors: r.errors, warnings: r.warnings, ready: r.ready.length - updates.length, updates });
 });
 app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_OR_ACCOUNTANT, async (req, res) => {
@@ -2148,6 +2236,7 @@ app.post('/api/products/import/commit', authenticateToken, requireTenant, OWNER_
         }
     }
     if (problems.length) return res.status(400).json({ error: 'Some choices don\'t make a valid item — choose again.', errors: problems, warnings: r.warnings });
+    if (products.length) await limits.assertRoom(tenantId, 'products', { adding: products.length, user: req.user });
     try {
         // one transaction: every new item and its first tax rule, every update and its new tax rule entry, or nothing
         await prisma.$transaction([prisma.product.createMany({ data: products }), ...updates, prisma.productTaxRule.createMany({ data: rules })]);
@@ -2355,6 +2444,19 @@ app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNT
     res.json({ deleted: true });
 });
 
+// Point of Sale (PRA): a separate product, its own routes and tables (src/pos)
+{
+    const pra = require('./src/pos/pra');
+    const { createBreaker } = require('./src/pos/breaker');
+    const { createPosService } = require('./src/pos/service');
+    const { registerPosRoutes } = require('./src/pos/routes');
+    // After this many failed calls in a row the counter's sales are paused for a short rest (SRS: new sales are blocked while PRA is unreachable)
+    const breaker = createBreaker({ threshold: Number(process.env.POS_BREAKER_FAILS) || 1, coolDownMs: (Number(process.env.POS_BREAKER_REST_SECONDS) || 15) * 1000 });
+    const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker, limits });
+    posAdmin.service = posService;
+    registerPosRoutes(app, { service: posService, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
+}
+
 // ---------- Errors ----------
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
@@ -2366,6 +2468,14 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// Clients whose access period (and grace) is over are made inactive by themselves: when the server starts and every ten minutes.
+// The login and every request check too, so nothing depends on this having run.
+const runExpiry = () => sub.expireDueClients({ prisma, audit })
+    .then(ids => { if (ids.length) console.log(`Access period over: ${ids.length} client(s) made inactive`); })
+    .catch(err => console.error('access-period check failed:', err.message));
+runExpiry();
+setInterval(runExpiry, 10 * 60 * 1000).unref();
+
 app.listen(PORT, () => {
     console.log(`FBR billing app on http://localhost:${PORT}${process.env.FBR_MOCK === 'true' ? '  (FBR_MOCK on — nothing is sent to FBR)' : ''}`);
 });

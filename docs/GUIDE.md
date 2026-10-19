@@ -1,6 +1,6 @@
 # ETAX — complete guide
 
-_Last updated: 2026-10-07_
+_Last updated: 2026-10-19_
 
 ETAX is a multi-tenant FBR Digital Invoicing app. A CA firm (the **admin**) onboards its clients. Each client
 (a **tenant**, one NTN) issues invoices, and ETAX sends them to FBR through the PRAL DI API v1.12. The receipt or
@@ -37,14 +37,47 @@ so the first page can take about a minute to load.
 ### Admin (the CA firm)
 | Menu | What it does |
 |---|---|
-| Dashboard | Go-live progress for every client, this month's invoices and totals, invoices that need attention |
-| Clients | Add a client (business details + its first login), open a client to manage it |
-| Client page | FBR settings in three groups (must match IRIS · received from FBR · entered in ETAX), Business Nature / Sector → scenarios, go-live checklist, users |
+| Dashboard | Go-live progress for the clients that use Digital Invoicing, this month's invoices and Point of Sale sales, invoices and POS sales that need attention, and every client whose **access period** is ending, in grace or over |
+| Clients | Add a client (business details, its first login, its **plan**, and how long it may use the application). The list shows each client's plan, its **integration date and the period it was allowed**, and an **Expiry** column with **the days left and the last day** (amber in the last 30 days, orange in the grace days, red when over; a client with no time limit has a *Set expiry…* link that opens its Overview), and can be **filtered** (search, status, access period, product, plan, FBR environment) and **sorted** (newest, name, integration date, days left, most active, latest invoice or sale). Open a client to manage it |
+| Client page (Manage) | Tabs, so only what applies shows: **Overview** (access period, plan & limits, modules), **Digital Invoicing** (only if the client has it: FBR settings in three groups, Business Nature / Sector → scenarios, go-live checklist, invoice settings), **Point of Sale** (only if the client has it: this month, what needs attention, counters and tokens, read-only), **Users** |
 | Workspace (inside a client) | "Enter" the client's account for 2 hours, e.g. to run sandbox scenarios on their behalf |
 | Reports | Annex-C (sales) CSV and Annex-H1 (stock statement) per client and month |
 | Activity | Audit log of every action. It can't be edited or deleted. CSV export |
 | Enquiries | Messages sent from the website's contact form |
 | System | HS code sync with FBR, server egress IP, client guideline buttons, FBR references (copied from fbr.gov.pk daily; "Refresh now") |
+
+**Access period.** Under *Manage → Overview → Access period* (or when registering a client) the administrator says how many
+months or years a client may use the application, counted from its integration date (which can be changed). The last day is the
+integration date plus the period (19 Oct 2026 + 1 year = 19 Oct 2027). After it the client keeps working for a few days of
+grace: **3 days for a monthly plan, 7 days for a yearly one**. When the grace is over the client is **made inactive by itself**
+(checked when the server starts, every ten minutes, and on every login and request) and its users see "Your access period has
+ended". **Renew** adds a period to the last day, or to today if it had already ended, and makes the client active again. A client
+with no end date has no time limit (all clients before this existed). Everything is written to the Activity log.
+
+**Plans and prices (website).** The landing page has a *Pricing* section with a switch between FBR Digital Invoicing and PRA Point of
+Sale. Both products have the **same prices**, and plans are **annual only, shown at 50% off** with the full price beside it:
+Starter Rs. 12,000 (full Rs. 24,000), Pro Rs. 30,000 (Rs. 60,000), Enterprise Rs. 90,000 (Rs. 180,000) a year; limits per plan
+(branches, terminals, products, users) and a feature table by plan. Everything lives in one file, `public/plans.js`: change a
+price, a limit or a feature there (a feature also names its picture; the drawings are in `public/index.html`). The feature table is two
+short tables side by side (what every plan has, and what the higher plans add), each plan in its own colour, one picture per row; on
+a phone they stack. Every feature a plan includes is shown with a tick; one that does not apply to a product (for example the
+SDC/IMS set-up for PRA) is left out of that product's table. The Get Started buttons open the contact form with the product and plan
+already chosen, and the choice is written at the top of the enquiry message you see under *Enquiries*.
+
+**Plan and limits (enforced).** Each client can be given a plan when it is registered (plans are annual, so choosing one sets the
+access period to **1 year**, which you can change or take off before pressing Create), or later under *Manage → Overview → Plan &
+limits* (changing the plan there does not touch the access period; it tells you when the client has no time limit), which also shows what the client uses against each limit (full or over the limit shows in amber or red) and, before you
+save, what the chosen plan means for what the client already has. The numbers are the ones on the website, read from
+`public/plans.js`: **Starter** 1 branch, 2 terminals (counters), 1,000 products, 3 users; **Pro** 5, 10, 10,000, 15; **Enterprise**
+no limits. A client with **no plan has no limits** (every client from before plans existed). A limit is checked when something is
+**added or switched back on**: a user (a request waiting for your approval already takes a place, and enabling a disabled user takes
+it again), a Digital Invoicing product (one at a time, or a whole Excel import: a file that does not fit is refused as a whole), a
+Point of Sale branch, counter or item. What is switched off gives its place back (a closed branch, a decommissioned or switched-off
+counter, an item off sale, a disabled user). Digital Invoicing products and Point of Sale items are counted separately, each against
+the plan's number of products. **Moving a client to a smaller plan never removes anything:** it keeps what it has and can add
+nothing until it is back under. The refusal says which plan, the limit, and who to ask (the client is told to ask ETAX; you are
+told to change the plan under Manage). A client sees a one-line note ("Starter plan: 3 of 1,000 items used") on its Items page and
+the Point of Sale Settings page; you see one on the client's Users tab.
 
 ### Client (each NTN)
 | Menu | What it does |
@@ -65,6 +98,28 @@ Roles inside a client:
 - **Cashier:** makes and prints invoices only.
 
 A client can't file real invoices while it is in **SANDBOX**. Only the admin switches it to production.
+
+### Point of Sale (PRA): a second product, per client
+
+Switched on per client by the administrator (client page → **Modules**). A client with more than one product picks one after
+logging in and can switch from the menu. It is separate from FBR invoicing: its own business details, counters, items and sales.
+Every sale is sent to PRA (Punjab Revenue Authority) and the receipt carries PRA's invoice number and a QR code.
+
+| Menu | Who | What it does |
+|---|---|---|
+| New Sale | everyone | Touch screen: tap items (or scan a barcode), quantity buttons, discount in rupees or %, pay mode (cash, card, gift voucher, loyalty card, mixed, cheque; card, mobile wallet and QR are all *Card*), buyer details (required above Rs 50,000 before tax: name and CNIC or NTN), **Finalize & send to PRA** |
+| Sales & Receipts | everyone | Every sale and its status; reprint a receipt (never re-sent); send again, correct the buyer; managers also see totals for the dates chosen, download a CSV, cancel, return items (credit note, or everything that is left) and record a manual PRA check |
+| Dashboard | manager, owner | Today's sales and returns, what needs attention (unknown outcome, refused, waiting), the connection to PRA per counter |
+| Items | manager, owner | Services with their PCT code (9801.xxxx), tax rate, an optional rate for card payments, price |
+| Settings | owner | Business details printed on receipts, branches, counters (POS ID + PRA token, sandbox or production), the server IP to give PRA |
+
+It runs in **test mode** until the server has `PRA_MOCK=false`: nothing is sent to PRA and receipts say they are not fiscal invoices.
+While PRA cannot be reached, new sales are blocked for a few seconds with a clear message. A sale whose answer from PRA is lost is
+never sent again by itself: a manager checks PRA's report and records the result. The rates follow the Second Schedule (from 1 July
+2026 restaurants pay 16%, or 8% on card, wallet or QR payments); the owner enters them per item.
+To show it to a client: `node scripts/seed-pos-demo.js` makes a demo restaurant with sales (test mode only).
+Details, decisions and what is still open: [POS_MODULE.md](POS_MODULE.md). The build against the SRS and the code review:
+[POS_COMPLIANCE.md](POS_COMPLIANCE.md).
 
 ### Invoice statuses
 - **SUBMITTED:** FBR accepted it (it has an FBR number).

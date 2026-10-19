@@ -80,12 +80,22 @@ model Tenant {
   // As chosen in IRIS: decides the sandbox scenarios to pass (DI spec §10)
   businessActivities String[]  @default([])
   sectors            String[]  @default([]) // IRIS lets several be ticked
+  modules            String[]  @default(["INVOICING"]) // products this client may use: INVOICING, POS (src/modules.js)
   // Internal invoice number printed next to the FBR number, e.g. INV-{YYYY}-{NNNN} → INV-2026-0042
   invoiceNumberFormat String   @default("INV-{YYYY}-{NNNN}")
   softwareRegNo      String    @default("") // software registration no. from PRAL/FBR, printed on receipts
   // Signed authorization (Form STR-13) letting the firm manage this client's FBR token / IRIS
   authLetterRef      String    @default("")
   authLetterAt       DateTime?
+  // How long the client may use the application (src/subscription.js). No end date = no limit (every client before this existed).
+  // Dates are Pakistan calendar days kept at 00:00 Pakistan time. When the end date plus the grace days (3 for a monthly plan,
+  // 7 for a yearly one) has passed the client is made inactive by itself, and renewing it makes it active again.
+  integratedAt       DateTime  @default(now()) // the day the client was integrated
+  accessUnit         String?   // MONTH or YEAR: the length of the last period given (decides the grace days)
+  accessCount        Int?      // how many of them
+  accessEndsAt       DateTime? // the last day of access
+  inactiveReason     String?   // why active is false: ADMIN (switched off by hand) or EXPIRED (the period ended)
+  plan               String?   // starter, pro or enterprise (public/plans.js): sets the limits on branches, terminals, products and users (src/limits.js). No plan = no limits (every client from before plans existed)
   users              User[]
   invoices           Invoice[]
   products           Product[]
@@ -96,6 +106,13 @@ model Tenant {
   createdAt          DateTime  @default(now())
   sandboxTests     SandboxTest[]
   supportTickets   SupportTicket[]
+  // Point of Sale (PRA): its own tables and numbering, nothing shared with the FBR invoicing ones
+  posSeq           Int           @default(0) // last USIN number handed out
+  posProfile       PosProfile?
+  posBranches      PosBranch[]
+  posCounters      PosCounter[]
+  posItems         PosItem[]
+  posSales         PosSale[]
 }
 
 model Invoice {
@@ -478,3 +495,191 @@ model SupportMessage {
   @@index([ticketId, createdAt])
 }
 
+// ---------- Point of Sale (PRA eIMS) ----------
+// A separate product from Digital Invoicing: its own business profile, counters, items and sales. Every row carries tenantId.
+enum PosEnv {
+  SANDBOX
+  PRODUCTION
+}
+
+// SRS v1.7 section 3. A sale is a completed fiscal invoice only once it is FISCALIZED.
+enum PosSaleState {
+  DRAFT
+  AWAITING_FISCALIZATION
+  OUTCOME_UNKNOWN
+  FISCALIZED
+  REJECTED
+  CANCELLED
+}
+
+// What the receipt shows about the business (SRS 4.1: name, address, PNTN/NTN)
+model PosProfile {
+  tenantId      String   @id
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  businessName  String   @default("")
+  pntn          String   @default("")
+  address       String   @default("")
+  phone         String   @default("")
+  receiptFooter String   @default("")
+  updatedAt     DateTime @updatedAt
+}
+
+model PosBranch {
+  id        String       @id @default(uuid())
+  tenantId  String
+  tenant    Tenant       @relation(fields: [tenantId], references: [id])
+  name      String
+  address   String       @default("")
+  city      String       @default("")
+  phone     String       @default("")
+  active    Boolean      @default(true)
+  counters  PosCounter[]
+  createdAt DateTime     @default(now())
+
+  @@unique([tenantId, name])
+}
+
+// One PRA-registered POS counter: its POS ID and Bearer token (encrypted, never sent to the browser)
+model PosCounter {
+  id         String    @id @default(uuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  branchId   String
+  branch     PosBranch @relation(fields: [branchId], references: [id])
+  name       String
+  posId      String
+  env        PosEnv    @default(SANDBOX)
+  tokenEnc   String?
+  tokenSetAt DateTime?
+  active     Boolean   @default(true)
+  sales      PosSale[]
+  createdAt  DateTime  @default(now())
+
+  @@unique([tenantId, name])
+  @@unique([tenantId, posId])
+}
+
+// What is sold: a service with its PCT code (Second Schedule) and tax rate
+model PosItem {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  code        String
+  name        String
+  category    String   @default("")
+  pctCode     String
+  taxRate     Decimal  @db.Decimal(5, 2)
+  taxRateCard Decimal? @db.Decimal(5, 2) // when set, used for card payments (restaurants pay less on card / QR)
+  unitPrice   Decimal  @default(0) @db.Decimal(14, 2) // before tax
+  openPrice   Boolean  @default(false) // the cashier types the price on each sale
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, code])
+  @@index([tenantId, name])
+}
+
+// A sale (invoiceType 1), or a credit note (3) that returns part of an earlier one. Never deleted: it is a tax record.
+model PosSale {
+  id             String         @id @default(uuid())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id])
+  counterId      String
+  counter        PosCounter     @relation(fields: [counterId], references: [id])
+  invoiceType    Int            @default(1) // 1 New, 2 Debit, 3 Credit
+  usin           String         // our own invoice number, handed out once and never reused (unique per business)
+  clientRef      String?        // sent by the screen with each new sale: the same key twice gives back the sale already made, never a second one
+  refUsin        String?        // credit note: the USIN of the sale it returns
+  refSaleId      String?
+  state          PosSaleState   @default(DRAFT)
+  env            PosEnv         @default(SANDBOX)
+  paymentMode    Int
+  buyerName      String         @default("")
+  buyerPntn      String         @default("")
+  buyerCnic      String         @default("")
+  buyerPhone     String         @default("")
+  totalQuantity  Decimal        @db.Decimal(18, 4)
+  totalSaleValue Decimal        @db.Decimal(14, 2)
+  totalDiscount  Decimal        @db.Decimal(14, 2)
+  totalTax       Decimal        @db.Decimal(14, 2)
+  totalBill      Decimal        @db.Decimal(14, 2)
+  fiscalNumber   String?        // PRA's invoice number
+  lastCode       String?        // PRA's last answer code
+  lastError      String?        // the last problem, in plain words
+  payload        Json?          // exactly what was sent to PRA
+  response       Json?          // PRA's last answer
+  attempts       Int            @default(0)
+  note           String         @default("")
+  mock           Boolean        @default(false) // fiscal number came from test mode: not a real fiscal invoice
+  createdBy      String
+  createdAt      DateTime       @default(now())
+  finalizedAt    DateTime?      // the sale time sent to PRA (SRS 4.6: kept apart from the times below)
+  submittedAt    DateTime?
+  respondedAt    DateTime?
+  fiscalizedAt   DateTime?
+  resolvedBy     String?
+  resolvedAt     DateTime?
+  lines          PosSaleLine[]
+  events         PosSaleEvent[]
+  tries          PosAttempt[]
+
+  @@unique([tenantId, usin])
+  @@unique([tenantId, clientRef])
+  @@index([tenantId, state, fiscalizedAt]) // the alert counts, today's figures and "last fiscalized"
+  @@index([tenantId, createdAt])
+  @@index([refSaleId])
+}
+
+model PosSaleLine {
+  id          String  @id @default(uuid())
+  saleId      String
+  sale        PosSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  sort        Int
+  itemId      String?
+  itemCode    String
+  itemName    String
+  pctCode     String
+  quantity    Decimal @db.Decimal(18, 4)
+  unitPrice   Decimal @db.Decimal(14, 2)
+  discount    Decimal @db.Decimal(14, 2)
+  taxRate     Decimal @db.Decimal(5, 2)
+  saleValue   Decimal @db.Decimal(14, 2) // the value tax is charged on (after the discount)
+  taxCharged  Decimal @db.Decimal(14, 2)
+  totalAmount Decimal @db.Decimal(14, 2)
+  refLineId   String? // credit note: the sold line it returns
+
+  @@index([saleId])
+  @@index([refLineId])
+}
+
+// Every change of state, who and why (SRS section 3: transitions must be recorded)
+model PosSaleEvent {
+  id        String   @id @default(uuid())
+  saleId    String
+  sale      PosSale  @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  at        DateTime @default(now())
+  fromState String?
+  toState   String
+  by        String
+  note      String   @default("")
+
+  @@index([saleId])
+}
+
+// Every call to PRA and how it ended
+model PosAttempt {
+  id         String   @id @default(uuid())
+  saleId     String
+  sale       PosSale  @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  at         DateTime @default(now())
+  durationMs Int
+  outcome    String
+  httpStatus Int?
+  code       String?
+  message    String   @default("")
+  mock       Boolean  @default(false) // answered by test mode, not by PRA
+
+  @@index([saleId])
+  @@index([at]) // the latest answers, for the response-time figures
+}
