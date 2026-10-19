@@ -109,8 +109,10 @@ _Last updated: 2026-10-19 (Point of Sale finished in test mode; access periods, 
 - ✅ Render test deploy is live at https://digital-invoicing.onrender.com (FBR_MOCK on) and uses the Supabase database.
 - ✅ Supabase final push done: 13 migrations, HS codes loaded, test data cleaned out.
 - An Oracle Cloud Always Free VM proxy for the static IP (docs/static-ip-proxy.md). The user needs to create the Oracle account.
-- Deploying the `pos-module` branch: apply its migrations (`0038`–`0043`) to Supabase first (`npm run supabase:deploy`), then
-  deploy the new code (the login query reads the new columns). Not done yet; only when we decide to.
+- ✅ 2026-10-19: the Point of Sale, access periods, plans and the new website are on production (Render, merge `d9711e8`). Migrations
+  `0038`–`0043` were applied to Supabase first, without the seed (the seed resets the admin's password), then the code was pushed. They
+  only add tables and columns; every existing table was fingerprinted before and after and came out identical. Point of Sale runs in
+  test mode there (`PRA_MOCK` is not set, so nothing is sent to PRA).
 - Vercel and a domain: later. Render serves everything for now.
 - Backups: the scripts are ready but **not scheduled**. Turn them on before the first real client (docs/backups.md).
 - Remove the brother's GitHub account from this Mac when it's no longer needed (`gh auth logout -u mohisn-bhatti`).

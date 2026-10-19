@@ -189,7 +189,9 @@ npm run db:local          # start local Postgres (Docker)
 npm run dev               # app on http://localhost:3000 (FBR_MOCK=true in .env)
 npm test                  # all tests
 npm run db:migrate        # new migration (local)
-npm run supabase:deploy   # apply migrations to Supabase. Only when we decide to.
+npm run supabase:deploy   # apply migrations to Supabase AND run the seed. Only when we decide to.
+                          # The seed RESETS the passwords of the super admin and the seed client: on a database that has real
+                          # users run  node scripts/supabase-deploy.js --no-seed  (migrations only) instead.
 npm run backup            # encrypted Supabase backup. Only when we decide to.
 ```
 
