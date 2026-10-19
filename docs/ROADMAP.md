@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last updated: 2026-10-19 (Point of Sale phase 2 built on branch `pos-phase2`, not deployed; access periods, plans and limits)_ · summary: [GUIDE.md](GUIDE.md)
+_Last updated: 2026-10-19 (Point of Sale phase 2 is on production; access periods, plans and limits)_ · summary: [GUIDE.md](GUIDE.md)
 
 ## Done
 **Phase 1: filing invoices with FBR**
@@ -70,7 +70,7 @@ _Last updated: 2026-10-19 (Point of Sale phase 2 built on branch `pos-phase2`, n
 - Manage client in tabs (Overview · Digital Invoicing · Point of Sale · Users); a client without Digital Invoicing never sees FBR
   settings, and the dashboard counts FBR figures for FBR clients only
 
-**Point of Sale, phase 2 (built 2026-10-19 on branch `pos-phase2`, tested locally, not pushed or deployed)**
+**Point of Sale, phase 2 (built and put on production 2026-10-19, merge `4ed8b9f`)**
 - Saved customers (Customers menu, found on the sale screen); a sale keeps its own copy of the buyer's details
 - Scanning: item barcodes, a barcode scanner or the camera adds an item with the price and tax rate it is set to; a receipt's QR
   opens the sale; QR labels to print; the server answers `GET /api/pos/lookup`
@@ -78,8 +78,7 @@ _Last updated: 2026-10-19 (Point of Sale phase 2 built on branch `pos-phase2`, n
   summary; filters on the sales list; spreadsheets; Pakistan calendar days; every report row opens the invoices behind it
 - Defaults and receipt settings (how a sale starts, 58 or 80 mm paper, header, cashier on or off, what a new item starts with) and
   a quick-rate list for the usual kinds of business
-- Migrations `0044` and `0045` only add; to go live they need the safe production procedure (fingerprint, rehearsal, no seed), and
-  the category backfill of `0044` run once more after the new code is live (see POS_MODULE.md, "Putting phase 2 on production")
+- Migrations `0044` and `0045` only add; applied to production first (see "Before go-live" below)
 
 ## Waiting on others
 - **PRAL / IRIS:** sandbox token, assigned scenarios, IP whitelisting. Then run every scenario, then get the production token.
@@ -128,6 +127,10 @@ _Last updated: 2026-10-19 (Point of Sale phase 2 built on branch `pos-phase2`, n
   `0038`–`0043` were applied to Supabase first, without the seed (the seed resets the admin's password), then the code was pushed. They
   only add tables and columns; every existing table was fingerprinted before and after and came out identical. Point of Sale runs in
   test mode there (`PRA_MOCK` is not set, so nothing is sent to PRA).
+- ✅ 2026-10-19 (later): Point of Sale phase 2 is on production (Render, merge `4ed8b9f`). Migrations `0044`–`0045` were applied to
+  Supabase first, without the seed, after a read-only fingerprint of every table and a rehearsal with the old and the new code on a copy;
+  afterwards every existing table was identical except two activity-log entries and a client's modules, changed by the administrator
+  while it ran. The category backfill was not needed (no Point of Sale lines existed). Pushed with the repository owner's GitHub account.
 - Vercel and a domain: later. Render serves everything for now.
 - Backups: the scripts are ready but **not scheduled**. Turn them on before the first real client (docs/backups.md).
 - Remove the brother's GitHub account from this Mac when it's no longer needed (`gh auth logout -u mohisn-bhatti`).
@@ -136,7 +139,7 @@ _Last updated: 2026-10-19 (Point of Sale phase 2 built on branch `pos-phase2`, n
 - **Point of Sale (PRA)** (a second product; a client with more than one picks at login): a cashier screen for restaurants,
   banquet halls and other Punjab service businesses, every sale sent to PRA's eIMS. Built, independently reviewed and tested in
   test mode on branch `pos-module` (sales, credit notes, reports and CSV, receipts, roles, the PRA-unreachable rules; on production
-  since 2026-10-19), with phase 2 (customers, scanning, reports, defaults) on `pos-phase2`; still to do:
+  since 2026-10-19), and phase 2 (customers, scanning, reports, defaults, also on production since 2026-10-19); still to do:
   a run against PRA's sandbox and PRA's answers (discount reading, product catalogue, mixed payments), an outage procedure, going
   live. See [POS_MODULE.md](POS_MODULE.md) and [POS_COMPLIANCE.md](POS_COMPLIANCE.md).
 - **Stock:** CSV import of purchases; refund (Annex-H) specifics for exporters, once the CA confirms who needs them.

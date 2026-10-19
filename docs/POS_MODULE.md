@@ -1,8 +1,8 @@
 # Point of Sale (PRA) module
 
-_Branch `pos-module` (on production since 2026-10-19) and, after it, `pos-phase2` (customers, scanning and QR labels, reports and
-filters, defaults: built and tested here, **not pushed or deployed**) · updated 2026-10-19 · status: built, independently reviewed
-and tested in test mode; **not yet run against PRA's sandbox**_ · requirement-by-requirement check: [POS_COMPLIANCE.md](POS_COMPLIANCE.md)
+_Branch `pos-module` and, after it, `pos-phase2` (customers, scanning and QR labels, reports and filters, defaults): both on
+production since 2026-10-19 (merges `d9711e8` and `4ed8b9f`) · updated 2026-10-19 · status: built, independently reviewed and tested
+in test mode; **not yet run against PRA's sandbox**_ · requirement-by-requirement check: [POS_COMPLIANCE.md](POS_COMPLIANCE.md)
 
 A second product on the same platform, next to FBR Digital Invoicing. It is a cashier screen for restaurants, banquet halls,
 hotels and other Punjab service businesses: **every sale is sent to PRA (Punjab Revenue Authority)** and the receipt is printed
@@ -230,7 +230,7 @@ maths, the same file for the server and the browser, so the cashier's preview al
 [public/pos.js](../public/pos.js) (the screens; `pos-camera.js`, `pos-customers.js` and `pos-reports.js` are the phase 2 screens, and
 `pos-scan.js` reads what a scanner hands over, the same file on the server and in the browser), [src/pos/reports.js](../src/pos/reports.js),
 tables `Pos*` in [schema.prisma](../prisma/schema.prisma), migrations `0038`–`0041`, and for phase 2 `0044` (customers, barcodes, the
-line's category) and `0045` (settings). Both only add; they have not been applied to the production database.
+line's category) and `0045` (settings). Both only add; they are on the production database (applied 2026-10-19).
 Settings (env): `PRA_MOCK`, `PRA_PROXY_URL`, `POS_PRA_TIMEOUT_MS`, `POS_BREAKER_FAILS`, `POS_BREAKER_REST_SECONDS` (see `.env.example`).
 
 ## 5. Decisions made (please confirm)
@@ -279,14 +279,17 @@ Settings (env): `PRA_MOCK`, `PRA_PROXY_URL`, `POS_PRA_TIMEOUT_MS`, `POS_BREAKER_
   invoices from September 2024).
 - The MAC and IP fields PRA asks for when a counter is registered: what a cloud server should enter.
 
-**Putting phase 2 on production** follows the safe procedure used for the first push (read-only fingerprint of every table, a rehearsal
-on a copy at production's schema state with the old and the new code, `node scripts/supabase-deploy.js --no-seed`, then merge and push).
-Migrations `0044` and `0045` only add (new table, new columns that are nullable or have a default, and one `UPDATE` that fills only the
-new `PosSaleLine.category`), so the old code keeps working while they are applied. **One step comes after the new code is live**: run the
+**Phase 2 went to production on 2026-10-19** (merge `4ed8b9f`), by the same safe procedure as the first push: a read-only fingerprint of
+every table, a rehearsal on a copy at production's schema state (the deployed code kept working on the migrated database, the new code
+ran, the backfill below was tried), `node scripts/supabase-deploy.js --no-seed`, a second fingerprint, then merge and push. Migrations
+`0044` and `0045` only add (a new table, new columns that are nullable or have a default, and one `UPDATE` that fills only the new
+`PosSaleLine.category`), so the old code keeps working while they are applied. **One step comes after the new code is live**: run the
 backfill once more, because lines the old code wrote between the migration and the deploy have an empty category and would show as
 "No category":
 `UPDATE "PosSaleLine" l SET "category" = i."category" FROM "PosItem" i WHERE l."itemId" = i."id" AND l."category" = '';`
-(it only ever fills empty ones, so it is safe to repeat).
+(it only ever fills empty ones, so it is safe to repeat; on 2026-10-19 production had no Point of Sale lines yet, so there was nothing to
+fill). A fingerprint can differ because of live activity (this time two activity-log entries and a client's modules, changed by the
+administrator while the rehearsal ran): look at what changed, with its time, before suspecting a migration.
 
 **Going live** needs `PRA_MOCK=false`, the production POS ID and token, and PRA to whitelist the server's IP (the static-IP proxy,
 see [static-ip-proxy.md](static-ip-proxy.md); the proxy must allow `ims.pral.com.pk`).
