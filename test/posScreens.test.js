@@ -34,13 +34,13 @@ function page(overrides = {}) {
         setInterval: (fn, ms) => { log.timers.push(ms); return log.timers.length; }, clearInterval: id => { log.timers.push('cleared'); },
         __api: async (url, opts) => { log.api.push(url); const key = Object.keys(answers).find(k => url.split('?')[0] === k); if (key) return typeof answers[key] === 'function' ? answers[key](url, opts) : answers[key]; throw new Error('no answer for ' + url); },
         __$: $, __toast: (m, ok) => log.toasts.push(m), __go: id => log.went.push(id),
-        document: { body: element(), hidden: false, addEventListener() {}, querySelectorAll: sel => (overrides.all && overrides.all[sel]) || [], createElement: element, getElementById: () => null, head: element() },
-        window: { print() { log.printed = (log.printed || 0) + 1; }, scrollTo() {} }, navigator: {}, localStorage: { getItem: () => null, setItem() {} }, confirm: () => true,
+        document: { body: element(), hidden: false, addEventListener() {}, querySelectorAll: sel => (overrides.all && overrides.all[sel]) || [], createElement: element, getElementById: id => $('#' + id), head: element() },
+        window: { print() { log.printed = (log.printed || 0) + 1; }, scrollTo() {}, addEventListener() {}, removeEventListener() {} }, navigator: {}, localStorage: { getItem: () => null, setItem() {} }, confirm: () => true,
     };
     box.self = box; box.window.document = box.document;
     const ctx = vm.createContext(box);
-    vm.runInContext(pub('pos-calc.js'), ctx, { filename: 'pos-calc.js' });
-    vm.runInContext(pub('pos.js'), ctx, { filename: 'pos.js' });
+    // the same scripts, in the same order, as app.html loads them
+    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos.js', 'pos-camera.js', 'pos-customers.js']) vm.runInContext(pub(f), ctx, { filename: f });
     vm.runInContext(`
         const S = { token: 't', module: 'POS', tenantRole: 'OWNER' }, PAGE_ENTER = {};
         const $ = __$, api = __api, toast = __toast, go = __go, route = () => {}, renderNav = () => {}, syncModules = () => false, saveSession = () => {};
@@ -218,4 +218,204 @@ test('POS screen: a bill above Rs 50,000 asks for the buyer first, and Finalize 
     // a smaller bill never asks
     p.run("POS.cart = [{ itemId: 'i3', qty: '1', price: '49999', disc: '' }]; POS.buyer = posBlankBuyer(); posRenderCart()");
     assert.strictEqual(p.$('#pGo').disabled, false);
+});
+
+// ---------- scanning, customers and labels ----------
+const SCAN_SETUP = `${SETUP}
+    POS.setup.items[0].barcode = '8964000123456'; POS.setup.items[0].taxRateCard = 8; POS.setup.items[1].barcode = null; POS.setup.items[2].barcode = null;
+    POS.setup.items[1].taxRateCard = null; POS.itemsById = new Map(POS.setup.items.map(i => [i.id, i]));`;
+const recorder = answers => { const bodies = []; return { bodies, answers: Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, (url, opts) => { if (opts && opts.body) bodies.push([url, opts.body]); return typeof v === 'function' ? v(url, opts) : v; }])) }; };
+
+test('POS screen: a scanned item goes into the sale, and the screen says what it is set to', async () => {
+    const p = page();
+    p.run(SCAN_SETUP);
+    const r1 = await p.run("posScanSale('8964000123456')");
+    assert.strictEqual(r1.ok, true);
+    assert.match(r1.message, /^Tea: 100\.00 · tax 16% \(8% when paid by card\) · 1 in this sale$/);
+    assert.deepStrictEqual(JSON.parse(p.run('JSON.stringify(POS.cart.map(c => [c.itemId, c.qty]))')), [['i1', '1']]);
+    assert.match(decode(p.$('#pScanNote').innerHTML), /<b>Tea<\/b> added · 100\.00 · tax 16% \(8% by card\)/);
+    const r2 = await p.run("posScanSale('  a\\n')"); // the code of the same item, as a scanner writes it
+    assert.match(r2.message, /· 2 in this sale$/);
+    assert.deepStrictEqual(JSON.parse(p.run('JSON.stringify(POS.cart.map(c => [c.itemId, c.qty]))')), [['i1', '2']]);
+    assert.deepStrictEqual(p.log.api.filter(u => u.startsWith('/api/pos/lookup')), [], 'an item the screen has is never looked up');
+    // an item with no fixed price says so
+    const r3 = await p.run("posScanSale('C')");
+    assert.match(r3.message, /^Lawn: enter the price · tax 5%/);
+    assert.match(decode(p.$('#pScanNote').innerHTML), /type the price in the sale/);
+});
+
+test('POS screen: a code the screen does not know is looked up: a receipt, an item added a moment ago, or nothing', async () => {
+    // nothing
+    let p = page({ answers: { '/api/pos/lookup': { code: 'ZZZ', item: null, sale: null } } });
+    p.run(SCAN_SETUP);
+    let r = await p.run("posScanSale('ZZZ')");
+    assert.strictEqual(r.ok, false);
+    assert.match(r.message, /Nothing matches "ZZZ"/);
+    assert.ok(p.log.api.includes('/api/pos/lookup?code=ZZZ'));
+    assert.match(decode(p.$('#pScanNote').innerHTML), /Nothing matches <b>ZZZ<\/b>.*Add it under Items/);
+    // a receipt: the sale is named, with a way to open it
+    p = page({ answers: { '/api/pos/lookup': { code: 'x', item: null, sale: { id: 's7', usin: '000007', state: 'FISCALIZED', totalBill: 3480 } } } });
+    p.run(SCAN_SETUP);
+    r = await p.run("posScanSale('https://reg.pra.punjab.gov.pk/IMSFiscalReport/SearchPOSInvoice_Report.aspx?PRAInvNo=ABC1')");
+    assert.strictEqual(r.ok, true);
+    assert.match(r.message, /That is a receipt: sale 000007/);
+    const note = decode(p.$('#pScanNote').innerHTML);
+    assert.match(note, /sale 000007<\/b> \(Fiscalized, 3,480\.00\)/);
+    assert.ok(note.includes("posOpenSale('s7')"), 'with a button to open it');
+    assert.strictEqual(p.run('POS.cart.length'), 0, 'a receipt is never put in the cart');
+    // an item the server has but this screen's list does not: the list is fetched again and the item added
+    const fresh = { id: 'i9', code: 'NEW1', barcode: null, name: 'New dish', category: '', pctCode: '98012000', taxRate: 16, taxRateCard: null, unitPrice: 300, openPrice: false, active: true };
+    p = page({ answers: { '/api/pos/lookup': { code: 'NEW1', item: fresh, sale: null }, '/api/pos/setup': () => ({ testMode: false, counters: [], items: [fresh], paymentModes: [], profileComplete: true }) } });
+    p.run(SCAN_SETUP);
+    r = await p.run("posScanSale('NEW1')");
+    assert.strictEqual(r.ok, true);
+    assert.deepStrictEqual(JSON.parse(p.run('JSON.stringify(POS.cart.map(c => c.itemId))')), ['i9']);
+    // an item that has been switched off is not added
+    p = page({ answers: { '/api/pos/lookup': { code: 'OFF', item: { ...fresh, active: false }, sale: null } } });
+    p.run(SCAN_SETUP);
+    r = await p.run("posScanSale('OFF')");
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(p.run('POS.cart.length'), 0);
+    // the server cannot be reached: the screen says so, and does not guess
+    p = page({ answers: { '/api/pos/lookup': () => { throw new Error('Failed to fetch'); } } });
+    p.run(SCAN_SETUP);
+    r = await p.run("posScanSale('ZZZ')");
+    assert.deepStrictEqual([r.ok, r.message], [false, 'Failed to fetch']);
+});
+
+test('POS screen: nothing is scanned while a sale is being sent, or when nothing was read', async () => {
+    const p = page();
+    p.run(SCAN_SETUP);
+    p.run('POS.busy = true');
+    assert.match((await p.run("posScanSale('A')")).message, /being sent/);
+    p.run('POS.busy = false');
+    assert.strictEqual((await p.run("posScanSale('   ')")).ok, false);
+    assert.strictEqual((await p.run('posScanSale(undefined)')).ok, false);
+    assert.strictEqual(p.run('POS.cart.length'), 0);
+    assert.deepStrictEqual(p.log.api.filter(u => u.startsWith('/api/pos/lookup')), []);
+});
+
+test('POS screen: Enter in the search box takes a barcode or code exactly; a receipt address is a receipt; a word still searches', async () => {
+    const p = page({ answers: { '/api/pos/lookup': { code: 'x', item: null, sale: { id: 's7', usin: '000007', state: 'FISCALIZED', totalBill: 10 } } } });
+    p.run(SCAN_SETUP);
+    const press = (text) => { const e = { key: 'Enter', preventDefault() {}, target: { value: text } }; p.run('0'); return p.run(`posSearchKey(${JSON.stringify({ key: 'Enter', target: { value: text } })}.key ? { key: 'Enter', preventDefault() {}, target: { value: ${JSON.stringify(text)} } } : 0)`) ; };
+    press('8964000123456'); await sleep(30);
+    assert.deepStrictEqual(JSON.parse(p.run('JSON.stringify(POS.cart.map(c => [c.itemId, c.qty]))')), [['i1', '1']], 'by barcode');
+    press('a'); await sleep(30);
+    assert.strictEqual(p.run('POS.cart[0].qty'), '2', 'by code, capitals ignored');
+    press('ric'); await sleep(30); // "Rice" is the only item with this in its name
+    assert.deepStrictEqual(JSON.parse(p.run('JSON.stringify(POS.cart.map(c => c.itemId))')), ['i1', 'i2'], 'the only match goes in');
+    press('https://reg.pra.punjab.gov.pk/IMSFiscalReport/SearchPOSInvoice_Report.aspx?PRAInvNo=ABC1'); await sleep(30);
+    assert.ok(p.log.api.some(u => u.startsWith('/api/pos/lookup?code=https')), 'a receipt address is looked up');
+    assert.strictEqual(p.run('POS.cart.length'), 2, 'and is never an item');
+    press('zzzz'); await sleep(30);
+    assert.ok(p.log.toasts.includes('No item matches.'));
+});
+
+test('POS screen: why the camera would not start', () => {
+    const p = page();
+    p.run('window.isSecureContext = true');
+    const say = (name, message) => p.run(`posCameraError(${JSON.stringify({ name, message })})`);
+    assert.match(say('NotAllowedError'), /blocked.*Allow the camera for this site/);
+    assert.match(say('PermissionDeniedError'), /blocked/);
+    assert.match(say('SecurityError'), /blocked/);
+    assert.match(say('NotFoundError'), /No camera was found/);
+    assert.match(say('OverconstrainedError'), /No camera was found/);
+    assert.match(say('NotReadableError'), /used by another app/);
+    assert.match(say('SomethingElse', 'boom'), /could not be started \(boom\)/);
+    assert.match(p.run('posCameraError(null)'), /could not be started\.$/);
+    p.run('window.isSecureContext = false');
+    assert.match(say('NotAllowedError'), /secure \(https\) connection/, 'an address that is not https is the first thing to say');
+});
+
+test('POS screen: a label carries the QR, the name, the price and the code, and a name cannot break out of it', () => {
+    const p = page();
+    p.run(SCAN_SETUP);
+    const label = (item, opts) => decode(p.run(`posLabelHtml(${JSON.stringify(item)}, ${JSON.stringify(opts)})`));
+    const tea = { name: 'Packed <b>tea</b> & "co"', code: 'ITM0002', barcode: '8964000123456', unitPrice: 90, openPrice: false };
+    const html = p.run(`posLabelHtml(${JSON.stringify(tea)}, { price: true, roll: false })`);
+    assert.ok(html.includes('data-code="8964000123456"'), 'the QR holds the barcode when there is one');
+    assert.ok(!html.includes('<b>tea</b>') && html.includes('&lt;b&gt;tea&lt;/b&gt;'), 'a name is text, never markup');
+    assert.ok(label(tea, { price: true, roll: false }).includes('90.00'));
+    assert.ok(!label(tea, { price: false, roll: false }).includes('90.00'), 'no price when it is not wanted');
+    assert.ok(label({ ...tea, barcode: null }, { price: true }).includes('data-code="ITM0002"'), 'the code when there is no barcode');
+    assert.ok(label({ ...tea, openPrice: true }, { price: true }).includes('price on sale'));
+    assert.ok(label(tea, { roll: true }).includes('width:50mm;height:30mm'), 'a roll label is its own page');
+    assert.ok(label(tea, { roll: false }).includes('width:62mm;height:36mm'));
+    // printing: a sheet of 21 to a page, one label for each item and copy, and the page size set for the printer
+    p.run("POS.items = [{ id: 'i1', name: 'Tea', code: 'A', barcode: '8964000123456', unitPrice: 100, openPrice: false, active: true }, { id: 'i2', name: 'Off', code: 'B', barcode: null, unitPrice: 5, openPrice: false, active: false }, { id: 'i3', name: 'Rice', code: 'C', barcode: null, unitPrice: 200, openPrice: false, active: true }]");
+    p.run("document.getElementById('lbSize').value = 'sheet'; document.getElementById('lbPrice').checked = true; document.getElementById('lbCopies').value = '3'; posLabelsPrint()");
+    const area = p.$('#posPrintArea').innerHTML;
+    assert.strictEqual((area.match(/class="lblqr"/g) || []).length, 6, 'two items on sale, three copies each; the one switched off is left out');
+    assert.ok(area.startsWith('<div style="display:grid;grid-template-columns:repeat(3,62mm)'));
+    assert.strictEqual(p.$('#pageStyle').textContent, '@page { size: A4; margin: 8mm; }');
+    assert.strictEqual(p.log.printed, 1);
+    assert.ok(p.log.toasts.some(t => /QR code could not be drawn/.test(t)), 'with no QR library the codes are printed as text, and the cashier is told');
+    p.run("document.getElementById('lbSize').value = 'roll'; document.getElementById('lbCopies').value = '999'; posLabelsPrint()");
+    assert.strictEqual(((p.$('#posPrintArea').innerHTML).match(/class="lblqr"/g) || []).length, 40, 'at most 20 copies of each');
+    assert.strictEqual(p.$('#pageStyle').textContent, '@page { size: 50mm 30mm; margin: 0; }');
+});
+
+test('POS screen: a chosen customer locks the buyer boxes, goes on the sale, and is forgotten after it', async () => {
+    const khan = { id: 'c1', code: 'CUS0001', name: 'Khan Events', pntn: '1234567-8', cnic: '', phone: '03001234567', active: true };
+    const rec = recorder({ '/api/pos/sales': { result: { outcome: 'REJECTED', message: 'no' }, sale: { id: 's1', usin: '000001', totalBill: 116, state: 'REJECTED' } } });
+    const p = page({ answers: rec.answers });
+    p.run(SCAN_SETUP);
+    p.run("POS.cart = [{ itemId: 'i1', qty: '1', price: '', disc: '' }]; posRenderCart(); posRenderCustomer()");
+    assert.match(p.$('#pCustomer').innerHTML, /Find by name, phone, CNIC or PNTN/);
+    p.run(`posCust.hits = [${JSON.stringify(khan)}]; posCustPick('c1')`);
+    assert.strictEqual(p.run('POS.customer.code'), 'CUS0001');
+    assert.deepStrictEqual(JSON.parse(p.run('JSON.stringify(POS.buyer)')), { name: 'Khan Events', pntn: '1234567-8', cnic: '', phone: '03001234567' });
+    assert.deepStrictEqual(['pbName', 'pbPntn', 'pbCnic', 'pbPhone'].map(id => p.$('#' + id).readOnly), [true, true, true, true], 'the boxes are locked');
+    assert.deepStrictEqual(['pbName', 'pbPhone'].map(id => p.$('#' + id).value), ['Khan Events', '03001234567'], 'and show the customer');
+    assert.match(p.$('#pCustomer').innerHTML, /Khan Events/);
+    assert.match(p.$('#pCustomer').innerHTML, /These details go on the invoice/);
+    assert.strictEqual(p.$('#pCustomerSave').innerHTML, '', 'no "save as a customer" for one that is saved');
+    await p.run('posFinalize()');
+    const [url, body] = rec.bodies.find(b => b[0] === '/api/pos/sales');
+    assert.strictEqual(url, '/api/pos/sales');
+    assert.strictEqual(body.customerId, 'c1', 'the sale names the customer');
+    assert.strictEqual(p.run('POS.customer'), null, 'and the next sale starts with none');
+    assert.strictEqual(p.$('#pbName').readOnly, false);
+    // Change gives the boxes back, empty
+    p.run(`posCust.hits = [${JSON.stringify(khan)}]; posCustPick('c1'); posCustClear()`);
+    assert.deepStrictEqual([p.run('POS.customer'), p.$('#pbName').readOnly, p.$('#pbName').value, p.run('POS.buyer.name')], [null, false, '', '']);
+});
+
+test('POS screen: "save these details as a customer" saves first and the sale points at the customer; a clash does not stop the sale', async () => {
+    const saved = { id: 'cNew', code: 'CUS0009', name: 'Walk In', pntn: '', cnic: '', phone: '' };
+    let mode = 'ok';
+    const rec = recorder({
+        '/api/pos/customers': () => { if (mode === 'clash') throw new Error('A customer with this PNTN already exists: Khan Events (CUS0001).'); return saved; },
+        '/api/pos/sales': { result: { outcome: 'REJECTED', message: 'no' }, sale: { id: 's1', usin: '000001', totalBill: 116, state: 'REJECTED' } },
+    });
+    const p = page({ answers: rec.answers });
+    p.run(SCAN_SETUP);
+    p.run("POS.cart = [{ itemId: 'i1', qty: '1', price: '', disc: '' }]; posRenderCart(); posRenderCustomer()");
+    assert.strictEqual(p.$('#pCustomerSave').innerHTML, '', 'nothing to save until a name is typed');
+    p.run("posBuyer('name', 'Walk In')");
+    assert.match(p.$('#pCustomerSave').innerHTML, /Save these details as a customer/);
+    p.run('POS.saveCustomer = true');
+    await p.run('posFinalize()');
+    const posted = rec.bodies.filter(b => b[0] === '/api/pos/customers');
+    assert.strictEqual(posted.length, 1);
+    assert.strictEqual(posted[0][1].name, 'Walk In');
+    assert.strictEqual(rec.bodies.find(b => b[0] === '/api/pos/sales')[1].customerId, 'cNew', 'the sale points at the new customer');
+    assert.ok(p.log.toasts.some(t => /Saved as customer CUS0009/.test(t)));
+    // a clash: the sale goes ahead with the details as typed
+    mode = 'clash'; rec.bodies.length = 0; p.log.toasts.length = 0;
+    p.run("POS.cart = [{ itemId: 'i1', qty: '1', price: '', disc: '' }]; POS.customer = null; posBuyer('name', 'Khan Again'); POS.saveCustomer = true; posRenderCart()");
+    await p.run('posFinalize()');
+    const sale = rec.bodies.find(b => b[0] === '/api/pos/sales')[1];
+    assert.strictEqual(sale.customerId, undefined, 'no customer');
+    assert.strictEqual(sale.buyer.name, 'Khan Again', 'the typed details are used');
+    assert.ok(p.log.toasts.some(t => /Not saved as a customer: A customer with this PNTN already exists.*sale is made with the details typed/.test(t)), p.log.toasts.join(' | '));
+});
+
+test('POS screen: signing out of the cashier forgets the camera, the customer and the customers list', () => {
+    const p = page();
+    p.run(SCAN_SETUP);
+    p.run("POS.customer = { id: 'c1' }; POS.saveCustomer = true; posCust.rows = [1, 2]; posCust.q = 'khan'; posCust.active = ''; posScan.open = true");
+    p.run('posReset()');
+    assert.deepStrictEqual([p.run('POS.customer'), p.run('POS.saveCustomer'), p.run('posCust.rows.length'), p.run('posCust.q'), p.run('posCust.active'), p.run('posScan.open')], [null, false, 0, '', '1', false]);
 });

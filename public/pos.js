@@ -5,21 +5,29 @@
    server uses, so the preview always matches what is sent. */
 
 const POS = {
-  setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, buyer: { name: '', pntn: '', cnic: '', phone: '' },
+  setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, buyer: { name: '', pntn: '', cnic: '', phone: '' }, customer: null, saveCustomer: false,
   cat: '', q: '', busy: false, result: null, detail: null,
-  sales: { from: null, to: null, state: '', q: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null, pctTimer: null, // dates: null = not chosen yet (today), '' = all dates
+  sales: { from: null, to: null, state: '', q: '', customerId: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null, pctTimer: null, // dates: null = not chosen yet (today), '' = all dates
   ref: null, refSig: null, creditRef: null, alerts: null, alertTimer: null, tick: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false, watching: false,
 };
+// Pages that the other Point of Sale scripts add (customers, reports, accounts ...): each pushes { id, html(), enter() } and gets its
+// place in the shell and its page-enter hook, so nothing here has to know about them.
+const POS_PAGES = [];
+// What each of those scripts forgets when the login, the module or the workspace changes (posReset runs them all)
+const POS_RESETS = [];
 // Whatever the last login, module or workspace left behind (cart, buyer, windows, timers) must not show up in the next one
 function posReset() {
   clearInterval(POS.alertTimer); clearInterval(POS.tick); clearTimeout(POS.pctTimer);
   Object.assign(POS, {
-    setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, buyer: posBlankBuyer(), cat: '', q: '', busy: false, result: null, detail: null,
-    sales: { from: null, to: null, state: '', q: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null,
+    setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, buyer: posBlankBuyer(), customer: null, saveCustomer: false, cat: '', q: '', busy: false, result: null, detail: null,
+    sales: { from: null, to: null, state: '', q: '', customerId: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null,
     ref: null, refSig: null, creditRef: null, alerts: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false,
   });
   posCloseModal(); posCloseReceipt();
+  POS_RESETS.forEach(f => f());
 }
+// a viewfinder: the corners of a frame and a scan line (the Scan buttons)
+const POS_ICON_SCAN = '<svg viewBox="0 0 24 24" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10"/></svg>';
 const POS_STATES = {
   AWAITING_FISCALIZATION: ['Waiting for PRA', 'bg-amber-100 text-amber-800'],
   FISCALIZED: ['Fiscalized', 'bg-emerald-100 text-emerald-800'],
@@ -52,7 +60,9 @@ async function initPos() {
   host.querySelectorAll('[data-page^="p-"]').forEach(el => el.remove());
   host.insertAdjacentHTML('beforeend', posPagesHtml());
   posEnsureModals();
-  Object.assign(PAGE_ENTER, { 'p-dashboard': posEnterDashboard, 'p-sale': posEnterSale, 'p-sales': posEnterSales, 'p-items': posEnterItems, 'p-settings': posEnterSettings });
+  Object.assign(PAGE_ENTER, { 'p-dashboard': posEnterDashboard, 'p-sale': posEnterSale, 'p-sales': posEnterSales, 'p-items': posEnterItems, 'p-settings': posEnterSettings },
+    Object.fromEntries(POS_PAGES.map(x => [x.id, x.enter])));
+  posInstallScanner(); // the barcode scanner works anywhere on the sale screen
   clearInterval(POS.alertTimer); POS.alertTimer = setInterval(posPollAlerts, 60000);
   if (!POS.watching) { POS.watching = true; document.addEventListener('visibilitychange', () => { if (!document.hidden) posPollAlerts(); }); } // catch up when the tab comes back
   posPollAlerts();
@@ -69,7 +79,10 @@ function posPagesHtml() {
         <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-start">
           <section class="min-w-0 md:col-span-3 space-y-3">
             <div class="bg-white rounded-xl shadow p-3 space-y-2">
-              <input id="pSearch" type="search" placeholder="Search items, or scan a barcode…" autocomplete="off" oninput="posSearch(this.value)" onkeydown="posSearchKey(event)" class="!text-base">
+              <div class="flex gap-2">
+                <input id="pSearch" type="search" placeholder="Search or scan a barcode…" autocomplete="off" oninput="posSearch(this.value)" onkeydown="posSearchKey(event)" class="!text-base flex-1 min-w-0">
+                <button type="button" onclick="posScanForSale()" class="shrink-0 px-3 min-h-[2.75rem] rounded-lg border bg-white hover:border-emerald-600 text-sm font-medium inline-flex items-center gap-1.5" aria-label="Scan a barcode or QR code with the camera">${POS_ICON_SCAN}<span>Scan</span></button></div>
+              <div id="pScanNote" aria-live="polite"></div>
               <div id="pCats" class="flex flex-wrap gap-1.5"></div>
             </div>
             <div id="pGrid" class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2"></div>
@@ -83,12 +96,14 @@ function posPagesHtml() {
               <div id="pTotals"></div>
               <div><div class="text-xs text-slate-600 mb-1">Paid by <span class="text-slate-400">(card, mobile wallet or QR: choose Card)</span></div><div id="pPay" class="grid grid-cols-3 gap-2"></div></div>
               <details id="pBuyerBox" class="text-sm"><summary id="pBuyerSum" class="cursor-pointer text-slate-600 py-2">Buyer details (optional)</summary>
+                <div id="pCustomer" class="mt-2"></div>
                 <div class="grid grid-cols-2 gap-2 mt-2">
                   <label class="col-span-2"><span>Name</span><input id="pbName" maxlength="150" oninput="posBuyer('name', this.value)" autocomplete="off"></label>
                   <label><span>PNTN</span><input id="pbPntn" maxlength="9" placeholder="1234567-8" oninput="posBuyer('pntn', this.value)" autocomplete="off"></label>
                   <label><span>CNIC</span><input id="pbCnic" maxlength="15" placeholder="13 digits" oninput="posBuyer('cnic', this.value)" inputmode="numeric" autocomplete="off"></label>
                   <label class="col-span-2"><span>Phone</span><input id="pbPhone" maxlength="20" oninput="posBuyer('phone', this.value)" inputmode="tel" autocomplete="off"></label>
-                </div></details>
+                </div>
+                <div id="pCustomerSave" class="mt-2"></div></details>
               <div class="flex gap-2">
                 <button type="button" onclick="posClear()" class="px-4 min-h-[3rem] rounded-lg border">Clear</button>
                 <button id="pGo" type="button" onclick="posFinalize()" class="flex-1 px-4 min-h-[3rem] rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-base font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Finalize &amp; send to PRA</button>
@@ -114,6 +129,8 @@ function posPagesHtml() {
             <button type="button" onclick="posSalesToday()" class="flex-1 sm:flex-none px-3 min-h-[2.5rem] rounded border text-sm">Today</button>
             <button type="button" onclick="posLoadSales()" class="flex-1 sm:flex-none px-3 min-h-[2.5rem] rounded border text-sm">Refresh</button></div>
           <label class="col-span-2 sm:flex-1 sm:min-w-[12rem]"><span>Search</span><input id="psQ" type="search" placeholder="Invoice no., PRA no. or buyer" oninput="posSalesSearch()" autocomplete="off"></label>
+          <div class="flex items-end"><button type="button" onclick="posScanForSales()" class="flex-1 sm:flex-none px-3 min-h-[2.5rem] rounded border text-sm inline-flex items-center justify-center gap-1.5 whitespace-nowrap">${POS_ICON_SCAN}<span>Scan receipt</span></button></div>
+          <div id="psCust" class="col-span-2 sm:basis-full"></div>
         </div>
         ${canManage() ? `<div id="psReport" class="mb-3"></div>
         <div class="flex flex-wrap gap-2 mb-3">${posBtn('Download CSV', 'posDownloadCsv()')}${posBtn('Download CSV with items', "posDownloadCsv('lines')")}</div>` : ''}
@@ -127,7 +144,9 @@ function posPagesHtml() {
       <div class="bg-white rounded-xl shadow p-4">
         <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
           <h2 class="font-semibold">Items</h2>
-          <div class="flex gap-2 w-full sm:w-auto"><input id="piQ" type="search" placeholder="Search items…" oninput="posItemSearch(this.value)" class="flex-1 sm:!w-52" autocomplete="off">
+          <div class="flex flex-wrap gap-2 w-full sm:w-auto"><input id="piQ" type="search" placeholder="Search items…" oninput="posItemSearch(this.value)" class="flex-1 min-w-[9rem] sm:!w-52" autocomplete="off">
+            <button type="button" onclick="posScanForItems()" class="border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap inline-flex items-center gap-1.5">${POS_ICON_SCAN}<span>Scan</span></button>
+            <button type="button" onclick="posLabelsDialog()" class="border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">Print labels</button>
             <button type="button" onclick="posItemForm()" class="bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ Add item</button></div>
         </div>
         <p id="piPlanHint" class="text-xs mb-3"></p>
@@ -138,6 +157,7 @@ function posPagesHtml() {
           <tbody id="piRows"></tbody></table></div>
       </div>`),
     page('p-settings', '<div id="pSettings"></div>'),
+    ...POS_PAGES.map(x => page(x.id, x.html())),
   ].join('');
 }
 
@@ -191,7 +211,7 @@ async function posEnterSale() {
   posRenderSale();
   clearInterval(POS.tick); POS.tick = setInterval(posTick, 1000);
 }
-function posRenderSale() { posRenderBanner(); posRenderCounters(); posRenderCats(); posRenderGrid(); posRenderCart(); posRenderPay(); posRenderResult(); }
+function posRenderSale() { posRenderBanner(); posRenderCounters(); posRenderCats(); posRenderGrid(); posRenderCart(); posRenderPay(); posRenderResult(); posRenderCustomer(); }
 const posCounter = () => (POS.setup ? POS.setup.counters.find(c => c.id === POS.counterId) : null);
 
 // How much of the connection's rest is left (the server told us at breakerAt)
@@ -232,18 +252,19 @@ function posRenderCats() {
 }
 function posCategory(v) { POS.cat = v; posRenderCats(); posRenderGrid(); }
 function posSearch(v) { POS.q = v.trim().toLowerCase(); posRenderGrid(); }
-// A barcode scanner types the code and presses Enter: an exact code, or the only match, goes into the sale
+// A barcode scanner types the code and presses Enter: a barcode or code exactly (an item, or the number on a receipt), or the only match
 function posSearchKey(e) {
   if (e.key !== 'Enter') return;
   e.preventDefault();
-  const q = e.target.value.trim().toLowerCase(); if (!q) return;
-  const exact = POS.setup.items.filter(i => i.code.toLowerCase() === q);
-  const hits = exact.length === 1 ? exact : POS.setup.items.filter(i => (i.name + ' ' + i.code + ' ' + i.category).toLowerCase().includes(q));
-  if (hits.length === 1) { posAdd(hits[0].id); e.target.value = ''; POS.q = ''; posRenderGrid(); }
+  const typed = e.target.value.trim(), q = typed.toLowerCase(); if (!q) return;
+  if (PosScan.findItem(POS.setup.items, typed)) { posScanSale(typed); e.target.value = ''; POS.q = ''; posRenderGrid(); return; }
+  const hits = POS.setup.items.filter(i => (i.name + ' ' + i.code + ' ' + (i.barcode || '') + ' ' + i.category).toLowerCase().includes(q));
+  if (hits.length === 1) { posAdd(hits[0].id); posScanNote(hits[0]); e.target.value = ''; POS.q = ''; posRenderGrid(); }
+  else if (!hits.length && PosScan.parse(typed).invoice) { posScanSale(typed); e.target.value = ''; POS.q = ''; posRenderGrid(); } // a receipt's address pasted in
   else toast(hits.length ? 'More than one item matches: tap the one you want.' : 'No item matches.');
 }
 function posRenderGrid() {
-  const list = POS.setup.items.filter(i => (!POS.cat || (i.category || '__none') === POS.cat) && (!POS.q || (i.name + ' ' + i.code + ' ' + i.category).toLowerCase().includes(POS.q)));
+  const list = POS.setup.items.filter(i => (!POS.cat || (i.category || '__none') === POS.cat) && (!POS.q || (i.name + ' ' + i.code + ' ' + (i.barcode || '') + ' ' + i.category).toLowerCase().includes(POS.q)));
   $('#pGrid').innerHTML = list.map(i => `<button type="button" onclick="posAdd('${i.id}')" class="text-left bg-white border rounded-xl p-3 min-h-[5rem] shadow-sm hover:border-emerald-600 active:bg-emerald-50">
     <div class="font-medium leading-tight">${esc(i.name)}</div><div class="text-xs text-slate-500 mt-1">${i.openPrice ? 'Enter the price' : money(i.unitPrice)}</div></button>`).join('')
     || `<p class="col-span-full text-sm text-slate-500 p-3">${POS.setup.items.length ? 'No item matches.' : ''}</p>`;
@@ -261,16 +282,17 @@ function posSetPrice(i, v) { POS.cart[i].price = String(v).trim(); posRenderCart
 function posSetDisc(i, v) { POS.cart[i].disc = String(v).trim(); posRenderCart(); }
 function posRemove(i) { POS.cart.splice(i, 1); posRenderCart(); }
 function posMode(id) { POS.mode = id; posRenderPay(); posRenderCart(); }
-function posBuyer(k, v) { POS.buyer[k] = v; posRenderCart(); }
+function posBuyer(k, v) { POS.buyer[k] = v; if (k === 'name') posRenderCustomerSave(); posRenderCart(); }
 function posBuyerLabel(need) {
   const sum = $('#pBuyerSum'), box = $('#pBuyerBox');
   if (sum) sum.textContent = need ? 'Buyer details (required for this sale)' : 'Buyer details (optional)';
   if (need && box) box.open = true;
 }
 function posClear() {
-  POS.cart = []; POS.buyer = posBlankBuyer(); POS.mode = 1; POS.result = null;
+  POS.cart = []; POS.buyer = posBlankBuyer(); POS.mode = 1; POS.result = null; POS.customer = null; POS.saveCustomer = false;
   POS.ref = POS.refSig = null; POS.lost = false; // the next sale is a new sale, even if it looks the same
   for (const [id, k] of [['pbName', 'name'], ['pbPntn', 'pntn'], ['pbCnic', 'cnic'], ['pbPhone', 'phone']]) $('#' + id).value = POS.buyer[k];
+  posRenderCustomer();
   posRenderPay(); posRenderCart(); posRenderResult();
 }
 function posRenderPay() {
@@ -355,11 +377,19 @@ async function posFinalize() {
   if (POS.busy) return;
   const pv = posPreview();
   if (!pv.ok || !POS.counterId || pv.needBuyer) return;
+  POS.busy = true; posRenderGo(); // (a second press while the customer is being saved must not start a second sale)
+  // "Save this buyer as a customer" is ticked: the customer is saved first and the sale then points at it. The sale never waits on this
+  // side job: if the customer cannot be saved (that PNTN already belongs to someone), the sale is made with the details as typed.
+  if (!POS.customer && POS.saveCustomer && POS.buyer.name.trim()) {
+    try { POS.customer = await api('/api/pos/customers', { method: 'POST', body: POS.buyer }); posRenderCustomer(); toast(`Saved as customer ${POS.customer.code}`, true); }
+    catch (err) { POS.saveCustomer = false; posRenderCustomer(); toast(`Not saved as a customer: ${err.message} The sale is made with the details typed.`); }
+  }
   const lines = POS.cart.map(c => {
     const item = POS.itemsById.get(c.itemId), d = String(c.disc || '').trim();
     return { itemId: c.itemId, quantity: c.qty, unitPrice: item.openPrice ? c.price : undefined, ...(d.endsWith('%') ? { discountPercent: d.slice(0, -1).trim() } : d ? { discount: d } : {}) };
   });
   const body = { counterId: POS.counterId, paymentMode: POS.mode, buyer: POS.buyer, lines };
+  if (POS.customer) body.customerId = POS.customer.id; // the customer's own details are the ones that go on the sale
   // the same cart pressed again is the same sale: if an answer was lost, nothing is made twice
   const sig = JSON.stringify(body);
   if (POS.refSig !== sig) { POS.ref = newRequestId(); POS.refSig = sig; }
@@ -372,9 +402,10 @@ async function posFinalize() {
     const r = await Promise.race([api('/api/pos/sales', { method: 'POST', body }), watchdog]);
     clearTimeout(timer);
     POS.ref = POS.refSig = null;
-    POS.cart = []; POS.buyer = posBlankBuyer(); POS.mode = 1; POS.busy = false;
+    POS.cart = []; POS.buyer = posBlankBuyer(); POS.mode = 1; POS.busy = false; POS.customer = null; POS.saveCustomer = false;
     for (const id of ['pbName', 'pbPntn', 'pbCnic', 'pbPhone']) $('#' + id).value = '';
     POS.result = r.result.outcome === 'FISCALIZED' ? null : r;
+    posRenderCustomer();
     posRenderPay(); posRenderCart(); posRenderResult();
     if (r.result.outcome === 'FISCALIZED') { toast(r.result.duplicate ? `Sale ${r.sale.usin} had already been made: nothing was sent twice` : `Sale ${r.sale.usin} fiscalized`, true); await posShowReceipt(r.sale.id); }
     posAfterSend(r.result);
@@ -464,6 +495,21 @@ function posPrintReceipt() {
   st.textContent = '@page { size: 80mm auto; margin: 3mm; }';
   window.print();
 }
+// Prints something other than a receipt (QR labels, a report): it goes into a print-only area and the rest of the page is hidden for
+// the print (see body.print-area in app.html). draw(area) runs once the html is in place (to draw QR codes, say).
+function posPrint(html, pageCss, draw) {
+  let area = document.getElementById('posPrintArea');
+  if (!area) { area = document.createElement('div'); area.id = 'posPrintArea'; document.body.appendChild(area); }
+  area.innerHTML = html;
+  if (draw) draw(area);
+  let st = document.getElementById('pageStyle');
+  if (!st) { st = document.createElement('style'); st.id = 'pageStyle'; document.head.appendChild(st); }
+  st.textContent = pageCss || '@page { size: A4; margin: 10mm; }';
+  document.body.classList.add('print-area');
+  const done = () => { document.body.classList.remove('print-area'); area.innerHTML = ''; window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  window.print();
+}
 function posCloseReceipt() {
   const m = $('#posReceiptModal'); if (m) m.classList.add('hidden');
   document.body.classList.remove('print-pos');
@@ -473,18 +519,25 @@ function posCloseReceipt() {
 async function posEnterSales() {
   posPollAlerts();
   if (POS.sales.from === null) POS.sales.from = POS.sales.to = pkDate(); // first visit: today. Empty dates mean all dates (the alert links ask for that).
-  $('#psFrom').value = POS.sales.from; $('#psTo').value = POS.sales.to; $('#psState').value = POS.sales.state; $('#psQ').value = POS.sales.q;
+  $('#psFrom').value = POS.sales.from; $('#psTo').value = POS.sales.to; $('#psState').value = POS.sales.state; $('#psQ').value = POS.sales.q; posRenderSalesCustomer();
   if (!POS.setup) { try { await posLoadSetup(); } catch { /* the list still loads */ } }
   await posLoadSales();
 }
 function posSalesFilter() {
   const was = POS.sales;
-  POS.sales = { from: $('#psFrom').value, to: $('#psTo').value, state: $('#psState').value, q: $('#psQ').value.trim() };
+  // a receipt's address (what its QR holds) typed or scanned into the search box means its invoice number
+  POS.sales = { from: $('#psFrom').value, to: $('#psTo').value, state: $('#psState').value, q: PosScan.parse($('#psQ').value).invoice || $('#psQ').value.trim(), customerId: was.customerId || '', customerName: was.customerName || '' };
   posLoadSales(POS.sales.from !== was.from || POS.sales.to !== was.to); // the totals only change when the dates do
 }
 let posSalesTimer = null;
 function posSalesSearch() { clearTimeout(posSalesTimer); posSalesTimer = setTimeout(posSalesFilter, 350); }
-function posSalesToday() { POS.sales = { from: pkDate(), to: pkDate(), state: '', q: '' }; posEnterSales(); }
+function posSalesToday() { POS.sales = { from: pkDate(), to: pkDate(), state: '', q: '', customerId: '' }; posEnterSales(); }
+// narrow the list to one customer (from the customers page), or take that back
+function posSalesCustomer(id, name) { POS.sales = { from: '', to: '', state: '', q: '', customerId: id || '', customerName: name || '' }; if (S.page === 'p-sales') posEnterSales(); else go('p-sales'); }
+function posRenderSalesCustomer() {
+  const el = $('#psCust'); if (!el) return;
+  el.innerHTML = POS.sales.customerId ? `<span class="inline-flex items-center gap-2 text-sm bg-emerald-50 border border-emerald-200 rounded-full pl-3 pr-1 py-0.5">Customer: <b>${esc(POS.sales.customerName || 'selected')}</b><button type="button" onclick="posSalesCustomer('')" class="w-8 h-8 text-slate-500 hover:text-red-600 text-lg leading-none" aria-label="Show every customer">×</button></span>` : '';
+}
 async function posLoadReport() {
   const el = $('#psReport'); if (!el) return;
   try {
@@ -500,22 +553,26 @@ async function posLoadReport() {
       ${r.items.length ? `<details class="text-xs mt-2"><summary class="cursor-pointer text-slate-600">By item</summary><table class="w-full mt-1"><tbody>${r.items.map(i => `<tr class="border-t"><td class="py-1">${esc(i.itemName)}</td><td class="text-right">${i.quantity}</td><td class="text-right">${money(i.bill)}</td></tr>`).join('')}</tbody></table></details>` : ''}`;
   } catch { el.innerHTML = ''; }
 }
-// The sales of the chosen dates as a spreadsheet. The request needs the login, so it is fetched and saved from here.
-async function posDownloadCsv(detail) {
-  const f = POS.sales;
+// A spreadsheet from the server. The request needs the login, so it is fetched and saved from here.
+async function posDownloadFile(url, fallbackName) {
   try {
-    const res = await fetch('/api/pos/export/sales?' + new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}), ...(f.state ? { state: f.state } : {}), ...(detail ? { detail } : {}) }), { headers: { Authorization: 'Bearer ' + S.token } });
+    const res = await fetch(url, { headers: { Authorization: 'Bearer ' + S.token } });
     if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || 'The download failed.');
     const blob = await res.blob(), m = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: m ? m[1] : 'pos-sales.csv' });
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: m ? m[1] : fallbackName });
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
     toast('Downloaded', true);
   } catch (err) { toast(err.message); }
 }
+// The sales of the chosen dates as a spreadsheet
+function posDownloadCsv(detail) {
+  const f = POS.sales;
+  return posDownloadFile('/api/pos/export/sales?' + new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}), ...(f.state ? { state: f.state } : {}), ...(detail ? { detail } : {}) }), 'pos-sales.csv');
+}
 async function posLoadSales(refreshReport = true) {
   if (refreshReport || POS.reportKey === null) { POS.reportKey = POS.sales.from + '|' + POS.sales.to; posLoadReport(); }
   try {
-    const f = POS.sales, qs = new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}), ...(f.state ? { state: f.state } : {}), ...(f.q ? { q: f.q } : {}), limit: '200' });
+    const f = POS.sales, qs = new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}), ...(f.state ? { state: f.state } : {}), ...(f.q ? { q: f.q } : {}), ...(f.customerId ? { customerId: f.customerId } : {}), limit: '200' });
     const r = await api('/api/pos/sales?' + qs);
     $('#psNote').textContent = r.total > r.sales.length ? `Showing the latest ${r.sales.length} of ${r.total}. Narrow the dates or search to see the rest.` : `${r.total} ${r.total === 1 ? 'sale' : 'sales'}`;
     const tags = s => `${s.invoiceType === 3 ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-slate-200">Credit note</span>' : ''}${s.mock ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">test</span>' : s.env === 'SANDBOX' ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">sandbox</span>' : ''}`;
@@ -667,22 +724,25 @@ function posItemSearch(v) { POS.itemQ = v.trim(); clearTimeout(posItemTimer); po
 function posRenderItems() {
   const pct = i => i.pctCode.slice(0, 4) + '.' + i.pctCode.slice(4);
   $('#piRows').innerHTML = POS.items.map(i => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer ${i.active ? '' : 'opacity-50'}" onclick="posItemForm('${i.id}')">
-    <td class="py-2 font-mono text-xs">${esc(i.code)}</td><td class="font-medium">${esc(i.name)}${i.openPrice ? ' <span class="text-xs text-slate-500">(price typed on each sale)</span>' : ''}${i.active ? '' : ' <span class="text-xs">(switched off)</span>'}</td>
+    <td class="py-2 font-mono text-xs">${esc(i.code)}${i.barcode ? `<div class="text-slate-400">${esc(i.barcode)}</div>` : ''}</td><td class="font-medium">${esc(i.name)}${i.openPrice ? ' <span class="text-xs text-slate-500">(price typed on each sale)</span>' : ''}${i.active ? '' : ' <span class="text-xs">(switched off)</span>'}</td>
     <td>${esc(i.category)}</td><td class="font-mono text-xs">${esc(pct(i))}</td><td class="text-right">${i.taxRate}</td><td class="text-right">${i.taxRateCard === null ? '<span class="text-slate-400">same</span>' : i.taxRateCard}</td>
     <td class="text-right">${i.openPrice ? '—' : money(i.unitPrice)}</td><td class="text-right text-emerald-700 text-xs">Edit</td></tr>`).join('') || '<tr><td colspan="8" class="py-6 text-center text-slate-500">No items yet. Add the services you sell.</td></tr>';
   $('#piCards').innerHTML = POS.items.map(i => `<button type="button" onclick="posItemForm('${i.id}')" class="w-full text-left border rounded-lg p-3 hover:bg-slate-50 ${i.active ? '' : 'opacity-50'}">
     <div class="flex items-start justify-between gap-3"><div class="font-medium break-words min-w-0">${esc(i.name)}</div><div class="font-semibold whitespace-nowrap">${i.openPrice ? 'price on sale' : money(i.unitPrice)}</div></div>
-    <div class="text-xs text-slate-500 mt-0.5">${esc(i.code)}${i.category ? ' · ' + esc(i.category) : ''} · PCT ${esc(pct(i))}</div>
+    <div class="text-xs text-slate-500 mt-0.5">${esc(i.code)}${i.barcode ? ' · ' + esc(i.barcode) : ''}${i.category ? ' · ' + esc(i.category) : ''} · PCT ${esc(pct(i))}</div>
     <div class="text-xs mt-1">Tax ${i.taxRate}%${i.taxRateCard === null ? '' : ` · on card ${i.taxRateCard}%`}${i.openPrice ? ' · price typed on each sale' : ''}${i.active ? '' : ' · switched off'}</div></button>`).join('') || '<p class="py-6 text-center text-sm text-slate-500">No items yet. Add the services you sell.</p>';
 }
-function posItemForm(id) {
-  const i = id ? POS.items.find(x => x.id === id) : { code: '', name: '', category: '', pctCode: '', taxRate: '', taxRateCard: null, unitPrice: '', openPrice: false, active: true };
+// prefill: what a scan of an unknown barcode already knows (the form for a new item opens with it filled in)
+function posItemForm(id, prefill) {
+  const i = id ? POS.items.find(x => x.id === id) : { code: '', barcode: '', name: '', category: '', pctCode: '', taxRate: '', taxRateCard: null, unitPrice: '', openPrice: false, active: true, ...(prefill || {}) };
   const cats = [...new Set(POS.items.map(x => x.category).filter(Boolean))];
   $('#piForm').innerHTML = `<div class="border rounded-lg p-4 mb-4 bg-slate-50 space-y-3">
     <div class="font-medium">${id ? `Edit ${esc(i.name)} <span class="text-xs text-slate-500">(code ${esc(i.code)} stays the same)</span>` : 'Add an item'}</div>
     <div class="grid sm:grid-cols-4 gap-3">
       <label class="sm:col-span-2"><span>Name (printed on the receipt)</span><input id="fiName" value="${esc(i.name)}" maxlength="150" autocomplete="off"></label>
-      <label><span>Code / barcode ${id ? '' : '<span class="text-slate-400">(blank = automatic)</span>'}</span><input id="fiCode" value="${esc(i.code)}" maxlength="50" ${id ? 'disabled' : ''} autocomplete="off"></label>
+      <label><span>Item code (PRA gets this) ${id ? '' : '<span class="text-slate-400">(blank = automatic)</span>'}</span><input id="fiCode" value="${esc(i.code)}" maxlength="50" ${id ? 'disabled' : ''} autocomplete="off"></label>
+      <label><span>Barcode <span class="text-slate-400">(optional: what the scanner reads)</span></span><div class="flex gap-1"><input id="fiBarcode" value="${esc(i.barcode || '')}" maxlength="50" autocomplete="off" class="min-w-0">
+        <button type="button" onclick="posScanIntoField('fiBarcode')" class="shrink-0 px-2.5 rounded-lg border bg-white hover:border-emerald-600" aria-label="Scan the barcode with the camera">${POS_ICON_SCAN}</button></div></label>
       <label><span>Category</span><input id="fiCat" value="${esc(i.category)}" maxlength="60" list="fiCats" autocomplete="off"><datalist id="fiCats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
       <label><span>Price before tax</span><input id="fiPrice" value="${i.unitPrice === '' ? '' : esc(i.unitPrice)}" inputmode="decimal" ${i.openPrice ? 'disabled' : ''}></label>
       <label><span>PCT code (8 digits)</span><input id="fiPct" value="${esc(i.pctCode ? i.pctCode.slice(0, 4) + '.' + i.pctCode.slice(4) : '')}" placeholder="9801.2000" oninput="posPctSearch(this.value)" autocomplete="off"></label>
@@ -713,7 +773,7 @@ function posPctSearch(v) {
 function posPctPick(code) { $('#fiPct').value = code; $('#fiPctHits').innerHTML = ''; }
 async function posItemSave(id) {
   const body = {
-    name: $('#fiName').value, ...(id ? {} : { code: $('#fiCode').value }), category: $('#fiCat').value, pctCode: $('#fiPct').value, taxRate: $('#fiRate').value, taxRateCard: $('#fiRateCard').value,
+    name: $('#fiName').value, ...(id ? {} : { code: $('#fiCode').value }), barcode: $('#fiBarcode').value, category: $('#fiCat').value, pctCode: $('#fiPct').value, taxRate: $('#fiRate').value, taxRateCard: $('#fiRateCard').value,
     unitPrice: $('#fiPrice').value, openPrice: $('#fiOpen').checked, active: $('#fiActive').checked,
   };
   try {
@@ -748,7 +808,7 @@ function posRenderDash(o) {
             <div class="text-xs text-slate-500">Token ${c.hasToken ? 'saved' : '<span class="text-red-700">missing</span>'}${c.pending ? ` · <span class="text-amber-700">${c.pending} waiting for PRA</span>` : ''}</div></div>
           <div class="text-sm">${c.breaker.open ? `<span class="text-amber-700">connection resting (${Math.ceil(c.breaker.retryInMs / 1000)} s)</span>` : c.breaker.fails ? `<span class="text-amber-700">${c.breaker.fails} failed in a row</span>` : '<span class="text-emerald-700">connection ok</span>'}</div></div>`).join('') || '<div class="border-t py-4 text-center text-slate-500 text-sm">No counter yet. The account owner adds one in Settings.</div>'}</div></div></div>`;
 }
-function posShowState(state) { POS.sales = { from: '', to: '', state, q: '' }; go('p-sales'); }
+function posShowState(state) { POS.sales = { from: '', to: '', state, q: '', customerId: '' }; go('p-sales'); }
 
 /* ---------- settings (account owner) ---------- */
 async function posEnterSettings() {
