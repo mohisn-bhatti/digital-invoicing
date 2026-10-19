@@ -2366,6 +2366,16 @@ app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNT
 // ---------- Errors ----------
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
+// Point of Sale (PRA): a separate product, its own routes and tables (src/pos)
+{
+    const pra = require('./src/pos/pra');
+    const { createBreaker } = require('./src/pos/breaker');
+    const { createPosService } = require('./src/pos/service');
+    const { registerPosRoutes } = require('./src/pos/routes');
+    const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker: createBreaker() });
+    registerPosRoutes(app, { service: posService, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
+}
+
 app.use((err, req, res, next) => {
     if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
     if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON.' });

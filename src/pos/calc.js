@@ -108,6 +108,16 @@
         };
     }
 
+    // The totals of lines that are already worked out (credit notes: some returned lines of a sale)
+    function totalsOf(lines) {
+        let qty4 = 0n, net = 0n, discount = 0n, tax = 0n, total = 0n;
+        for (const l of lines) {
+            qty4 += scaled(l.quantity, 4, 'Quantity'); net += scaled(l.saleValue, 2, 'Value'); discount += scaled(l.discount, 2, 'Discount');
+            tax += scaled(l.taxCharged, 2, 'Tax'); total += scaled(l.totalAmount, 2, 'Total');
+        }
+        return { quantity: qtyNum(qty4), saleValue: rupees(net), discount: rupees(discount), tax: rupees(tax), bill: rupees(total) };
+    }
+
     // The item amounts as PRA wants them, for the chosen basis
     function itemAmounts(line, basis) {
         const b = basis || SALE_VALUE_BASIS;
@@ -120,5 +130,5 @@
         };
     }
 
-    return { SALE_VALUE_BASIS, PAYMENT_MODES, CARD, INVOICE_TYPES, PosCalcError, calcLine, calcSale, discountFromPercent, rateFor, creditLine, itemAmounts };
+    return { SALE_VALUE_BASIS, PAYMENT_MODES, CARD, INVOICE_TYPES, PosCalcError, calcLine, calcSale, discountFromPercent, rateFor, creditLine, totalsOf, itemAmounts };
 });
