@@ -68,6 +68,17 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
 
     app.post('/api/pos/sales', ...base, wrap(req => service.createSale(ctxOf(req), req.body || {})));
     app.get('/api/pos/report', ...manager, wrap(req => service.salesReport(ctxOf(req), req.query)));
+    // Reports (managers): figures by day, hour, item, category, cashier, counter, branch, payment, tax rate or customer, narrowed by the filters;
+    // the closing sheet of a day is also for a cashier, but only for their own sales
+    app.get('/api/pos/reports/options', ...manager, wrap(req => service.reportOptions(ctxOf(req))));
+    app.get('/api/pos/reports/by/:groupBy', ...manager, wrap(req => service.reportBy(ctxOf(req), req.params.groupBy, req.query)));
+    app.get('/api/pos/reports/closing', ...base, wrap(req => service.reportClosing(ctxOf(req), req.user.tenantRole === 'CASHIER' ? { ...req.query, cashier: req.user.email, counterId: req.query.counterId } : req.query)));
+    app.get('/api/pos/export/report/:groupBy', ...manager, async (req, res) => {
+        try {
+            const { filename, csv } = await service.reportCsv(ctxOf(req), req.params.groupBy, req.query);
+            res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' }).send('\uFEFF' + csv);
+        } catch (e) { throw translate(e); }
+    });
     app.get('/api/pos/export/sales', ...manager, async (req, res) => {
         try {
             const { filename, csv } = await service.salesCsv(ctxOf(req), req.query);

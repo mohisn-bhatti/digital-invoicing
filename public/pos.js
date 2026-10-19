@@ -7,7 +7,7 @@
 const POS = {
   setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, buyer: { name: '', pntn: '', cnic: '', phone: '' }, customer: null, saveCustomer: false,
   cat: '', q: '', busy: false, result: null, detail: null,
-  sales: { from: null, to: null, state: '', q: '', customerId: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null, pctTimer: null, // dates: null = not chosen yet (today), '' = all dates
+  sales: { from: null, to: null, state: '', q: '', customerId: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null, pctTimer: null, // dates: null = not chosen yet (today), '' = all dates
   ref: null, refSig: null, creditRef: null, alerts: null, alertTimer: null, tick: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false, watching: false,
 };
 // Pages that the other Point of Sale scripts add (customers, reports, accounts ...): each pushes { id, html(), enter() } and gets its
@@ -20,7 +20,7 @@ function posReset() {
   clearInterval(POS.alertTimer); clearInterval(POS.tick); clearTimeout(POS.pctTimer);
   Object.assign(POS, {
     setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, buyer: posBlankBuyer(), customer: null, saveCustomer: false, cat: '', q: '', busy: false, result: null, detail: null,
-    sales: { from: null, to: null, state: '', q: '', customerId: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null,
+    sales: { from: null, to: null, state: '', q: '', customerId: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }, reportKey: null, items: [], itemQ: '', branches: [], profile: null,
     ref: null, refSig: null, creditRef: null, alerts: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false,
   });
   posCloseModal(); posCloseReceipt();
@@ -108,7 +108,7 @@ function posPagesHtml() {
                 <button type="button" onclick="posClear()" class="px-4 min-h-[3rem] rounded-lg border">Clear</button>
                 <button id="pGo" type="button" onclick="posFinalize()" class="flex-1 px-4 min-h-[3rem] rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-base font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Finalize &amp; send to PRA</button>
               </div>
-              <p class="text-xs text-slate-500">The receipt prints once PRA gives the fiscal invoice number.</p>
+              <p class="text-xs text-slate-500">The receipt prints once PRA gives the fiscal invoice number. <button type="button" onclick="posClosingModal()" class="underline text-emerald-700">Day-end sheet</button></p>
               <div id="pResult"></div>
             </div>
           </aside>
@@ -132,6 +132,14 @@ function posPagesHtml() {
           <div class="flex items-end"><button type="button" onclick="posScanForSales()" class="flex-1 sm:flex-none px-3 min-h-[2.5rem] rounded border text-sm inline-flex items-center justify-center gap-1.5 whitespace-nowrap">${POS_ICON_SCAN}<span>Scan receipt</span></button></div>
           <div id="psCust" class="col-span-2 sm:basis-full"></div>
         </div>
+        <details id="psMore" class="mb-3 text-sm"><summary class="cursor-pointer text-emerald-700 py-1 min-h-[2rem]">More filters <span id="psMoreCount" class="text-xs text-slate-500"></span></summary>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+            <label><span>Counter</span><select id="psCounter" onchange="posSalesFilter()"></select></label>
+            <label><span>Paid by</span><select id="psPay" onchange="posSalesFilter()"></select></label>
+            <label><span>Show</span><select id="psType" onchange="posSalesFilter()"><option value="">Sales and returns</option><option value="sale">Sales only</option><option value="return">Returns only</option></select></label>
+            <label id="psCashierWrap" class="hidden"><span>Cashier</span><select id="psCashier" onchange="posSalesFilter()"></select></label>
+            <label><span>Bill from (Rs)</span><input id="psMin" inputmode="decimal" placeholder="any" onchange="posSalesFilter()"></label>
+            <label><span>Bill up to (Rs)</span><input id="psMax" inputmode="decimal" placeholder="any" onchange="posSalesFilter()"></label></div></details>
         ${canManage() ? `<div id="psReport" class="mb-3"></div>
         <div class="flex flex-wrap gap-2 mb-3">${posBtn('Download CSV', 'posDownloadCsv()')}${posBtn('Download CSV with items', "posDownloadCsv('lines')")}</div>` : ''}
         <div id="psNote" class="text-xs text-slate-500 mb-2"></div>
@@ -521,19 +529,52 @@ async function posEnterSales() {
   if (POS.sales.from === null) POS.sales.from = POS.sales.to = pkDate(); // first visit: today. Empty dates mean all dates (the alert links ask for that).
   $('#psFrom').value = POS.sales.from; $('#psTo').value = POS.sales.to; $('#psState').value = POS.sales.state; $('#psQ').value = POS.sales.q; posRenderSalesCustomer();
   if (!POS.setup) { try { await posLoadSetup(); } catch { /* the list still loads */ } }
+  await posFillSalesFilters();
   await posLoadSales();
+}
+// The "More filters" boxes: the counters and payment types are known to everyone at the counter; who made the sales only to a manager
+async function posFillSalesFilters() {
+  const o = (v, t, cur) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(t)}</option>`, f = POS.sales;
+  const counters = POS.setup ? POS.setup.counters : [], modes = POS.setup ? POS.setup.paymentModes : [];
+  $('#psCounter').innerHTML = o('', 'All counters', f.counterId) + counters.map(c => o(c.id, `${c.branch} · ${c.name}`, f.counterId)).join('');
+  $('#psPay').innerHTML = o('', 'Any way', f.paymentMode) + modes.map(m => o(m.id, m.label, f.paymentMode)).join('');
+  $('#psType').value = f.invoiceType; $('#psMin').value = f.minAmount; $('#psMax').value = f.maxAmount;
+  if (canManage()) {
+    if (!POS.cashiers) { try { POS.cashiers = (await api('/api/pos/reports/options')).cashiers; } catch { POS.cashiers = []; } }
+    $('#psCashier').innerHTML = o('', 'Everyone', f.cashier) + POS.cashiers.map(c => o(c.email, c.name, f.cashier)).join('');
+    $('#psCashierWrap').classList.remove('hidden');
+  }
+  posCountSalesFilters();
+}
+// how many of the "More filters" are in use, so a closed box still says so
+function posCountSalesFilters() {
+  const f = POS.sales, n = ['counterId', 'cashier', 'paymentMode', 'invoiceType', 'minAmount', 'maxAmount'].filter(k => f[k]).length;
+  const el = $('#psMoreCount'); if (el) el.textContent = n ? `(${n} in use)` : '';
 }
 function posSalesFilter() {
   const was = POS.sales;
   // a receipt's address (what its QR holds) typed or scanned into the search box means its invoice number
-  POS.sales = { from: $('#psFrom').value, to: $('#psTo').value, state: $('#psState').value, q: PosScan.parse($('#psQ').value).invoice || $('#psQ').value.trim(), customerId: was.customerId || '', customerName: was.customerName || '' };
-  posLoadSales(POS.sales.from !== was.from || POS.sales.to !== was.to); // the totals only change when the dates do
+  POS.sales = {
+    from: $('#psFrom').value, to: $('#psTo').value, state: $('#psState').value, q: PosScan.parse($('#psQ').value).invoice || $('#psQ').value.trim(), customerId: was.customerId || '', customerName: was.customerName || '',
+    counterId: $('#psCounter').value, cashier: $('#psCashier').value || '', paymentMode: $('#psPay').value, invoiceType: $('#psType').value, minAmount: $('#psMin').value.trim(), maxAmount: $('#psMax').value.trim(),
+  };
+  posCountSalesFilters();
+  posLoadSales(posSalesTotalsKey() !== POS.reportKey); // the totals change with the dates and the filters, not with the search or the status
+}
+// What the totals above the list depend on (everything but the word searched for and the status)
+const posSalesTotalsKey = () => JSON.stringify(['from', 'to', 'customerId', 'counterId', 'cashier', 'paymentMode', 'invoiceType', 'minAmount', 'maxAmount'].map(k => POS.sales[k] || ''));
+// The filters as the query string the server takes
+function posSalesQuery(extra = {}, skip = []) {
+  const q = new URLSearchParams();
+  for (const k of ['from', 'to', 'state', 'q', 'customerId', 'counterId', 'cashier', 'paymentMode', 'invoiceType', 'minAmount', 'maxAmount']) if (POS.sales[k] && !skip.includes(k)) q.set(k, POS.sales[k]);
+  for (const [k, v] of Object.entries(extra)) q.set(k, v);
+  return q;
 }
 let posSalesTimer = null;
 function posSalesSearch() { clearTimeout(posSalesTimer); posSalesTimer = setTimeout(posSalesFilter, 350); }
-function posSalesToday() { POS.sales = { from: pkDate(), to: pkDate(), state: '', q: '', customerId: '' }; posEnterSales(); }
+function posSalesToday() { POS.sales = { from: pkDate(), to: pkDate(), state: '', q: '', customerId: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }; posEnterSales(); }
 // narrow the list to one customer (from the customers page), or take that back
-function posSalesCustomer(id, name) { POS.sales = { from: '', to: '', state: '', q: '', customerId: id || '', customerName: name || '' }; if (S.page === 'p-sales') posEnterSales(); else go('p-sales'); }
+function posSalesCustomer(id, name) { POS.sales = { from: '', to: '', state: '', q: '', customerId: id || '', customerName: name || '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }; if (S.page === 'p-sales') posEnterSales(); else go('p-sales'); }
 function posRenderSalesCustomer() {
   const el = $('#psCust'); if (!el) return;
   el.innerHTML = POS.sales.customerId ? `<span class="inline-flex items-center gap-2 text-sm bg-emerald-50 border border-emerald-200 rounded-full pl-3 pr-1 py-0.5">Customer: <b>${esc(POS.sales.customerName || 'selected')}</b><button type="button" onclick="posSalesCustomer('')" class="w-8 h-8 text-slate-500 hover:text-red-600 text-lg leading-none" aria-label="Show every customer">×</button></span>` : '';
@@ -541,7 +582,7 @@ function posRenderSalesCustomer() {
 async function posLoadReport() {
   const el = $('#psReport'); if (!el) return;
   try {
-    const f = POS.sales, r = await api('/api/pos/report?' + new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}) }));
+    const r = await api('/api/pos/report?' + posSalesQuery({}, ['state', 'q']));
     const tile = (t, big, sub) => `<div class="border rounded-lg p-3"><div class="text-xs text-slate-500">${t}</div><div class="text-lg font-semibold break-words">${big}</div><div class="text-xs text-slate-500">${sub || ''}</div></div>`;
     const nf = r.notFiscalized, pending = nf.waiting + nf.refused + nf.unknown;
     el.innerHTML = `<div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
@@ -566,14 +607,12 @@ async function posDownloadFile(url, fallbackName) {
 }
 // The sales of the chosen dates as a spreadsheet
 function posDownloadCsv(detail) {
-  const f = POS.sales;
-  return posDownloadFile('/api/pos/export/sales?' + new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}), ...(f.state ? { state: f.state } : {}), ...(detail ? { detail } : {}) }), 'pos-sales.csv');
+  return posDownloadFile('/api/pos/export/sales?' + posSalesQuery(detail ? { detail } : {}), 'pos-sales.csv');
 }
 async function posLoadSales(refreshReport = true) {
-  if (refreshReport || POS.reportKey === null) { POS.reportKey = POS.sales.from + '|' + POS.sales.to; posLoadReport(); }
+  if (refreshReport || POS.reportKey === null) { POS.reportKey = posSalesTotalsKey(); posLoadReport(); }
   try {
-    const f = POS.sales, qs = new URLSearchParams({ ...(f.from ? { from: f.from } : {}), ...(f.to ? { to: f.to } : {}), ...(f.state ? { state: f.state } : {}), ...(f.q ? { q: f.q } : {}), ...(f.customerId ? { customerId: f.customerId } : {}), limit: '200' });
-    const r = await api('/api/pos/sales?' + qs);
+    const r = await api('/api/pos/sales?' + posSalesQuery({ limit: '200' }));
     $('#psNote').textContent = r.total > r.sales.length ? `Showing the latest ${r.sales.length} of ${r.total}. Narrow the dates or search to see the rest.` : `${r.total} ${r.total === 1 ? 'sale' : 'sales'}`;
     const tags = s => `${s.invoiceType === 3 ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-slate-200">Credit note</span>' : ''}${s.mock ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">test</span>' : s.env === 'SANDBOX' ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">sandbox</span>' : ''}`;
     $('#psRows').innerHTML = r.sales.map(s => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onclick="posOpenSale('${s.id}')">
@@ -808,7 +847,7 @@ function posRenderDash(o) {
             <div class="text-xs text-slate-500">Token ${c.hasToken ? 'saved' : '<span class="text-red-700">missing</span>'}${c.pending ? ` · <span class="text-amber-700">${c.pending} waiting for PRA</span>` : ''}</div></div>
           <div class="text-sm">${c.breaker.open ? `<span class="text-amber-700">connection resting (${Math.ceil(c.breaker.retryInMs / 1000)} s)</span>` : c.breaker.fails ? `<span class="text-amber-700">${c.breaker.fails} failed in a row</span>` : '<span class="text-emerald-700">connection ok</span>'}</div></div>`).join('') || '<div class="border-t py-4 text-center text-slate-500 text-sm">No counter yet. The account owner adds one in Settings.</div>'}</div></div></div>`;
 }
-function posShowState(state) { POS.sales = { from: '', to: '', state, q: '', customerId: '' }; go('p-sales'); }
+function posShowState(state) { POS.sales = { from: '', to: '', state, q: '', customerId: '', counterId: '', cashier: '', paymentMode: '', invoiceType: '', minAmount: '', maxAmount: '' }; go('p-sales'); }
 
 /* ---------- settings (account owner) ---------- */
 async function posEnterSettings() {

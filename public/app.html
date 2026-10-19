@@ -1134,6 +1134,7 @@
 <script src="/pos.js"></script>
 <script src="/pos-camera.js"></script>
 <script src="/pos-customers.js"></script>
+<script src="/pos-reports.js"></script>
 <script>
 const S = { token: null, role: null, company: '', meta: null, settings: null, lists: {} };
 try { Object.assign(S, JSON.parse(localStorage.getItem('fbrSession') || '{}')); } catch {}
@@ -1212,6 +1213,7 @@ const NAV = {
     { id: 'p-sales', label: 'Sales & Receipts', icon: 'list', crumb: 'Sales' },
     { id: 'p-items', label: 'Items', icon: 'box', crumb: 'Catalogue', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'p-customers', label: 'Customers', icon: 'users', crumb: 'Catalogue', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'p-reports', label: 'Reports', icon: 'chart', crumb: 'Reports', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'p-settings', label: 'Settings', icon: 'cog', crumb: 'Settings', roles: ['OWNER'] },
   ],
   admin: [

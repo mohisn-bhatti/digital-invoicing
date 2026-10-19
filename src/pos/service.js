@@ -13,9 +13,9 @@ const Scan = require('./scan');
 const { buildPayload, reconcile, praDateTime } = require('./payload');
 const { assertMove } = require('./states');
 
-class PosError extends Error {
-    constructor(status, message) { super(message); this.status = status; }
-}
+const { PosError } = require('./errors');
+const R = require('./reports');
+const { csvText, csvNum } = require('./csv');
 
 const num = d => (d === null || d === undefined ? null : Number(d));
 const MIN_RETRY_GAP_MS = 3000; // SRS FR-6.6: operator retries are rate limited
@@ -697,29 +697,12 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     }
 
     // ---------- lists, receipts, monitoring ----------
-    // "from"/"to" are Pakistan calendar days (YYYY-MM-DD), both included. A day that does not exist (2026-02-31, month 13) is refused.
-    const realDay = (text, what) => {
-        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(text).trim());
-        const d = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-        if (!d || d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) throw new PosError(400, `${what} must be a real date, written like 2026-10-19.`);
-        return m[0];
-    };
-    const rangeWhere = ({ from, to }) => {
-        const range = {};
-        if (from) range.gte = new Date(`${realDay(from, 'The "from" date')}T00:00:00+05:00`);
-        if (to) range.lte = new Date(`${realDay(to, 'The "to" date')}T23:59:59.999+05:00`);
-        return Object.keys(range).length ? { createdAt: range } : {};
-    };
-    async function listSales(ctx, { from, to, state, q, counterId, customerId, limit = 100, offset = 0 } = {}) {
+    // The filters (public/pos-scan.js is for scans; these are in src/pos/reports.js): dates, status, counter, branch, cashier, how paid,
+    // sale or return, customer, item, category, tax rate, bill size, and a word (invoice number, PRA number or buyer)
+    async function listSales(ctx, query = {}) {
         await sweepInterrupted(ctx);
-        const where = { tenantId: ctx.tenantId };
-        if (customerId) where.customerId = String(customerId);
-        if (state && ['DRAFT', 'AWAITING_FISCALIZATION', 'OUTCOME_UNKNOWN', 'FISCALIZED', 'REJECTED', 'CANCELLED'].includes(state)) where.state = state;
-        if (counterId) where.counterId = String(counterId);
-        Object.assign(where, rangeWhere({ from, to }));
-        const s = note(q, 60);
-        if (s) where.OR = [{ usin: { contains: s } }, { fiscalNumber: { contains: s, mode: 'insensitive' } }, { buyerName: { contains: s, mode: 'insensitive' } }];
-        const take = whole(limit, 100, 1, 500), skip = whole(offset, 0, 0, 1000000);
+        const where = R.saleWhere(ctx.tenantId, R.cleanFilters(query));
+        const take = whole(query.limit, 100, 1, 500), skip = whole(query.offset, 0, 0, 1000000);
         const [rows, total] = await Promise.all([
             prisma.posSale.findMany({ where, orderBy: { createdAt: 'desc' }, take, skip, include: BRIEF }),
             prisma.posSale.count({ where }),
@@ -811,7 +794,7 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
     // Totals for a date range (managers): fiscalized sales and returns, by payment mode and by item, and what is not fiscalized
     const money2 = n => Math.round(Number(n || 0) * 100) / 100;
     async function salesReport(ctx, filters = {}) {
-        const inRange = { tenantId: ctx.tenantId, ...rangeWhere(filters) };
+        const inRange = R.saleWhere(ctx.tenantId, { ...R.cleanFilters(filters), state: undefined });
         const where = { ...inRange, env: figuresEnv() };
         const [fis, other, sold, back, left] = await Promise.all([
             prisma.posSale.groupBy({ by: ['invoiceType', 'paymentMode'], where: { ...where, state: 'FISCALIZED' }, _count: { _all: true }, _sum: { totalSaleValue: true, totalDiscount: true, totalTax: true, totalBill: true } }),
@@ -851,12 +834,10 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
 
     // The sales of a date range as a spreadsheet (PRA's own POS component exports its invoices too). One row per sale, or per line.
     // Text that could be read as a formula by Excel is defused with a leading quote.
-    const csvText = v => { let t = v === undefined || v === null ? '' : String(v); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-    const csvNum = v => (v === undefined || v === null ? '' : Number(v).toFixed(2));
-    async function salesCsv(ctx, { from, to, state, detail } = {}) {
-        const where = { tenantId: ctx.tenantId, ...rangeWhere({ from, to }) };
-        if (state && ['AWAITING_FISCALIZATION', 'OUTCOME_UNKNOWN', 'FISCALIZED', 'REJECTED', 'CANCELLED'].includes(state)) where.state = state;
-        const perLine = detail === 'lines';
+    async function salesCsv(ctx, query = {}) {
+        const where = R.saleWhere(ctx.tenantId, R.cleanFilters(query));
+        const { from, to, state } = query;
+        const perLine = query.detail === 'lines';
         const rows = await prisma.posSale.findMany({
             where, orderBy: { createdAt: 'asc' }, take: 20000,
             select: {
@@ -925,7 +906,21 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         return { testMode: pra.isMock(), counters, items, profileComplete: profile.complete, paymentModes: C.PAYMENT_MODES };
     }
 
+    const reports = R.createReports({ prisma, pra, getProfile, listBranches });
+    // a report as a spreadsheet, with a note in the activity trail that it was taken
+    async function reportCsv(ctx, groupBy, query) {
+        const r = await reports.byReport(ctx, groupBy, query);
+        const out = [[r.title, 'Invoices', 'Quantity', 'Value before tax', 'Discount', 'Sales tax', 'Total', 'Returns', 'Returned total', 'Net quantity', 'Net value', 'Net sales tax', 'Net total', 'Share %'].map(csvText).join(',')];
+        const row = (label, x, share) => out.push([csvText(label), x.sales, x.quantity, csvNum(x.saleValue), csvNum(x.discount), csvNum(x.tax), csvNum(x.bill), x.returns, csvNum(x.returnBill), x.netQuantity, csvNum(x.netValue), csvNum(x.netTax), csvNum(x.netBill), share === undefined ? '' : Number(share).toFixed(1)].join(','));
+        for (const x of r.rows) row(['day', 'month'].includes(groupBy) ? x.key : x.label, x, x.share); // dates stay as 2026-10-19 in a spreadsheet, so they sort and filter there
+        row('Total', r.totals, 100);
+        const name = `pos-report-${groupBy}-${r.filters.from}-to-${r.filters.to}${r.scope === 'TEST' ? '-test' : ''}.csv`.replace(/[^A-Za-z0-9._-]/g, '');
+        await audit(ctx.req, { tenantId: ctx.tenantId, action: 'pos.export', entityType: 'PosSale', entityId: null, summary: `Exported the report by ${groupBy} (${r.filters.from} to ${r.filters.to}) to CSV` });
+        return { filename: name, csv: out.join('\r\n') + '\r\n', rows: r.rows.length };
+    }
+
     return {
+        reportBy: reports.byReport, reportClosing: reports.closing, reportOptions: reports.options, reportCsv,
         getProfile, saveProfile, listBranches, createBranch, updateBranch, createCounter, updateCounter, setToken, decommission,
         listItems, createItem, updateItem, searchPct, createSale, retry, updateBuyer, cancel, resolve, creditNote,
         listCustomers, createCustomer, updateCustomer, customerDetail, customersCsv, lookup,

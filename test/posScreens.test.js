@@ -12,7 +12,7 @@ const app = pub('app.html');
 const cut = re => { const m = re.exec(app); assert.ok(m, `app.html no longer has ${re}`); return m[0]; };
 const HELPERS = [
     /const esc = .*\n/, /const money = .*\n/, /const canManage = .*\n/, /const pkDate = .*\n/, /function newRequestId\(\) \{[\s\S]*?\n\}\n/,
-].map(cut).join('\n');
+].map(cut).join('\n').replace('const pkDate', 'let pkDate'); // (let: a test can say what day it is)
 
 function page(overrides = {}) {
     const registry = new Map(), made = [];
@@ -40,7 +40,7 @@ function page(overrides = {}) {
     box.self = box; box.window.document = box.document;
     const ctx = vm.createContext(box);
     // the same scripts, in the same order, as app.html loads them
-    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos.js', 'pos-camera.js', 'pos-customers.js']) vm.runInContext(pub(f), ctx, { filename: f });
+    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos.js', 'pos-camera.js', 'pos-customers.js', 'pos-reports.js']) vm.runInContext(pub(f), ctx, { filename: f });
     vm.runInContext(`
         const S = { token: 't', module: 'POS', tenantRole: 'OWNER' }, PAGE_ENTER = {};
         const $ = __$, api = __api, toast = __toast, go = __go, route = () => {}, renderNav = () => {}, syncModules = () => false, saveSession = () => {};
@@ -91,7 +91,7 @@ test('POS screen: the totals are only fetched again when the dates change (not f
     const p = page({ answers: { '/api/pos/report': { sales: { bill: 0, count: 0, tax: 0 }, returns: { bill: 0, count: 0 }, net: { bill: 0, saleValue: 0, tax: 0 }, byPayment: [], items: [], notFiscalized: { waiting: 0, refused: 0, unknown: 0, cancelled: 0 }, scope: 'LIVE', leftOut: 0 } } });
     p.run(SETUP);
     await p.run('posEnterSales()');
-    const reports = () => p.log.api.filter(u => u.startsWith('/api/pos/report')).length;
+    const reports = () => p.log.api.filter(u => u.startsWith('/api/pos/report?')).length;
     assert.strictEqual(reports(), 1);
     p.$('#psState').value = 'FISCALIZED';
     await p.run('posSalesFilter()');
@@ -418,4 +418,108 @@ test('POS screen: signing out of the cashier forgets the camera, the customer an
     p.run("POS.customer = { id: 'c1' }; POS.saveCustomer = true; posCust.rows = [1, 2]; posCust.q = 'khan'; posCust.active = ''; posScan.open = true");
     p.run('posReset()');
     assert.deepStrictEqual([p.run('POS.customer'), p.run('POS.saveCustomer'), p.run('posCust.rows.length'), p.run('posCust.q'), p.run('posCust.active'), p.run('posScan.open')], [null, false, 0, '', '1', false]);
+});
+
+// ---------- reports ----------
+const CLOSING = {
+    date: '2026-10-19', scope: 'TEST', leftOut: 1, business: { name: 'Al <b>Noor</b>', pntn: '1234567-8', address: 'x' }, counter: { name: 'Till 1', posId: '900001', branch: 'Main' }, cashier: null,
+    totals: { sales: 3, returns: 1, quantity: 6, saleValue: 4000, discount: 100, tax: 640, bill: 4640, returnValue: 1000, returnTax: 160, returnBill: 1160, returnQuantity: 1, netQuantity: 5, netValue: 3000, netTax: 480, netBill: 3480 },
+    byPayment: [{ key: '1', label: 'Cash', netBill: 2320, returnBill: 1160 }, { key: '2', label: 'Card', netBill: 1160, returnBill: 0 }],
+    byTaxRate: [{ key: '16.00', label: '16%', netValue: 3000, netTax: 480 }],
+    byCashier: [{ key: 'ali@test', label: 'ali', netBill: 2320, sales: 2 }, { key: 'sara@test', label: 'sara', netBill: 1160, sales: 1 }],
+    byCounter: [], cashExpected: 2320, firstSale: { usin: '000001', fiscalNumber: 'X1', at: '2026-10-19T04:00:00Z' }, lastSale: { usin: '000003', fiscalNumber: 'X3', at: '2026-10-19T12:00:00Z' },
+    returned: [{ usin: '000004', refUsin: '000001', bill: 1160, note: 'x', at: '2026-10-19T09:00:00Z' }], notFiscalized: { waiting: 0, refused: 1, unknown: 0, cancelled: 2 },
+};
+
+test('POS screen: the date presets are Pakistan days', () => {
+    const p = page();
+    p.run("pkDate = () => '2026-10-21'"); // a Wednesday
+    const range = n => JSON.parse(p.run(`JSON.stringify(posRange('${n}'))`));
+    assert.deepStrictEqual(range('today'), ['2026-10-21', '2026-10-21']);
+    assert.deepStrictEqual(range('yesterday'), ['2026-10-20', '2026-10-20']);
+    assert.deepStrictEqual(range('week'), ['2026-10-19', '2026-10-21'], 'Monday to today');
+    assert.deepStrictEqual(range('month'), ['2026-10-01', '2026-10-21']);
+    assert.deepStrictEqual(range('lastmonth'), ['2026-09-01', '2026-09-30']);
+    assert.deepStrictEqual(range('30'), ['2026-09-22', '2026-10-21']);
+    p.run("pkDate = () => '2026-03-01'"); // across the end of February
+    assert.deepStrictEqual(range('lastmonth'), ['2026-02-01', '2026-02-28']);
+    assert.deepStrictEqual(range('yesterday'), ['2026-02-28', '2026-02-28']);
+    p.run("pkDate = () => '2026-01-01'"); // across the new year; a Thursday: the week began on Monday 29 December
+    assert.deepStrictEqual(range('week'), ['2025-12-29', '2026-01-01']);
+    assert.deepStrictEqual(range('lastmonth'), ['2025-12-01', '2025-12-31']);
+    p.run("pkDate = () => '2026-10-18'"); // a Sunday: the week began on Monday the 12th
+    assert.deepStrictEqual(range('week'), ['2026-10-12', '2026-10-18']);
+    assert.strictEqual(p.run("posLong('2026-10-19')"), 'Monday, 19 October 2026');
+});
+
+test('POS screen: the report asks for exactly the filters that are chosen', () => {
+    const p = page();
+    p.run("posRep.from = '2026-10-01'; posRep.to = '2026-10-31'");
+    const q = () => Object.fromEntries(new URLSearchParams(p.run('posRepQuery().toString()')));
+    assert.deepStrictEqual(q(), { from: '2026-10-01', to: '2026-10-31' }, 'no filter: only the dates');
+    p.run("Object.assign(posRep.f, { counter: 'c:abc', cashier: 'ali@test', paymentMode: '2', invoiceType: 'sale', category: 'Food', taxRate: '16', minAmount: '500', maxAmount: '9000' })");
+    assert.deepStrictEqual(q(), { from: '2026-10-01', to: '2026-10-31', counterId: 'abc', cashier: 'ali@test', paymentMode: '2', invoiceType: 'sale', category: 'Food', taxRate: '16', minAmount: '500', maxAmount: '9000' });
+    p.run("posRep.f.counter = 'b:branch1'");
+    assert.deepStrictEqual([q().branchId, q().counterId], ['branch1', undefined], 'a branch is not a counter');
+
+    p.run("posRep.f.taxRate = '0'");
+    assert.strictEqual(q().taxRate, '0', 'a rate of 0 is a filter, not "no filter"');
+    // the filters in words, for the top of a printout
+    p.run("posRep.opts = { cashiers: [{ email: 'ali@test', name: 'Ali Khan' }], paymentModes: [{ id: 2, label: 'Card' }], branches: [{ id: 'branch1', name: 'Main', active: true, counters: [{ id: 'abc', name: 'Till 1', active: true }] }] }");
+    assert.match(p.run('posRepFilterWords()'), /^Filters: branch Main, cashier Ali Khan, paid by Card, sales only, category Food, tax rate 0%, bills from Rs 500, bills up to Rs 9000$/);
+    p.run("posRep.f = { counter: '', cashier: '', paymentMode: '', invoiceType: '', category: '', taxRate: '', minAmount: '', maxAmount: '' }");
+    assert.strictEqual(p.run('posRepFilterWords()'), 'No filters');
+});
+
+test('POS screen: a counter, and a payment type the list does not know, are still said in words', () => {
+    const p = page();
+    p.run("posRep.opts = { cashiers: [], paymentModes: [], branches: [{ id: 'branch1', name: 'Main', active: true, counters: [{ id: 'abc', name: 'Till 1', active: true }] }] }; posRep.f.counter = 'c:abc'");
+    assert.strictEqual(p.run('posRepFilterWords()'), 'Filters: Main · Till 1', 'a counter is named with its branch');
+    p.run("posRep.f.paymentMode = '4'");
+    assert.strictEqual(p.run('posRepFilterWords()'), 'Filters: Main · Till 1, paid by payment type 4');
+});
+
+test('POS screen: the closing sheet says what was sold, how it was paid and what the drawer should hold', () => {
+    const p = page();
+    const html = decode(p.run(`posClosingHtml(${JSON.stringify(CLOSING)}, { screen: true })`));
+    for (const need of ['DAILY CLOSING', 'Monday, 19 October 2026', 'Main · Till 1 (POS 900001)', 'All cashiers', '3 invoices', '4,640.00', 'NET TOTAL', '3,480.00', 'Net sales tax', '480.00',
+        'Cash', '2,320.00', '(− 1,160.00 returned)', 'Sales tax by rate', '16% on 3,000.00', 'By cashier', 'ali', 'First sale', '000001', 'Last sale', '000003',
+        'CASH THAT SHOULD BE IN THE DRAWER', 'Cash sales less cash given back', 'Returns made', '000004 for sale 000001', 'TEST SALES: NOT REAL FIGURES', '1 production sale is not counted', '2 cancelled']) {
+        assert.ok(html.includes(need), `the sheet says "${need}"`);
+    }
+    assert.match(html, /1 sale is not fiscalized yet/, 'it warns that one sale still needs sorting');
+    const raw = p.run(`posClosingHtml(${JSON.stringify(CLOSING)}, { screen: true })`);
+    assert.ok(!raw.includes('Al <b>Noor</b>') && raw.includes('Al &lt;b&gt;Noor&lt;/b&gt;'), 'the business name is text, never markup');
+    assert.ok(!html.includes('Count the drawer and write it here'), 'the screen has nothing to fill in');
+    assert.ok(html.includes('Print A4') && html.includes('Print 80 mm slip'));
+    // the paper copy has the lines to fill in and sign, and no buttons
+    const paper = decode(p.run(`posClosingHtml(${JSON.stringify(CLOSING)}, { paper: 'a4' })`));
+    assert.ok(paper.includes('Count the drawer and write it here') && paper.includes('Cashier') && paper.includes('Manager') && paper.includes('Printed'));
+    assert.ok(!paper.includes('Print A4'));
+    const slip = p.run(`posClosingHtml(${JSON.stringify(CLOSING)}, { paper: 'slip' })`);
+    assert.ok(slip.includes('width:80mm'));
+    assert.strictEqual(p.run('posClosingOpen.data.date'), '2026-10-19', 'what is showing is what the Print buttons print');
+    // a quiet day, in the live figures: nothing to warn about
+    const quiet = decode(p.run(`posClosingHtml(${JSON.stringify({ ...CLOSING, scope: 'LIVE', leftOut: 0, totals: { ...CLOSING.totals, sales: 0, returns: 0, bill: 0, returnBill: 0, netBill: 0, netTax: 0, saleValue: 0, tax: 0, discount: 0 }, firstSale: null, lastSale: null, returned: [], byPayment: [], byTaxRate: [], byCashier: [], cashExpected: 0, notFiscalized: { waiting: 0, refused: 0, unknown: 0, cancelled: 0 } })}, { screen: true })`));
+    assert.ok(quiet.includes('No sales on this day.') && !quiet.includes('TEST SALES') && !quiet.includes('not fiscalized yet') && !quiet.includes('Returns made'));
+});
+
+test('POS screen: the analysis table shows each group with its share, and a label cannot break out of the page', () => {
+    const p = page();
+    const row = (label, over = {}) => ({ key: label, label, sales: 2, returns: 0, quantity: 3, returnQuantity: 0, saleValue: 300, discount: 0, tax: 48, bill: 348, returnValue: 0, returnTax: 0, returnBill: 0, netQuantity: 3, netValue: 300, netTax: 48, netBill: 348, share: 50, ...over });
+    const report = { groupBy: 'item', title: 'Item', scope: 'LIVE', leftOut: 0, filters: { from: '2026-10-01', to: '2026-10-31' }, rows: [row('Chai <img src=x onerror=alert(1)>'), row('Biryani', { returns: 1, returnBill: 116, netBill: 232, discount: 10 })], totals: row('Total', { sales: 4, quantity: 6, netBill: 696, bill: 696 }) };
+    const html = p.run(`posAnalysisHtml(${JSON.stringify(report)})`);
+    assert.ok(!html.includes('<img src=x'), 'a name is text, never markup');
+    const text = decode(html);
+    for (const need of ['Sales by item', 'Thursday, 1 October 2026', 'Biryani', 'Net total', '696.00', '−116.00', '50%', 'Average bill', 'Discount given']) assert.ok(text.includes(need), `says "${need}"`);
+    assert.ok((html.match(/style="width:50%"/g) || []).length >= 2, 'the share is drawn as a bar');
+    // a share outside 0 to 100 never draws a bar wider than its box
+    assert.ok(p.run(`posAnalysisHtml(${JSON.stringify({ ...report, rows: [row('x', { share: 180 }), row('y', { share: -5 })] })})`).includes('style="width:100%"'));
+    // nothing to show
+    assert.ok(decode(p.run(`posAnalysisHtml(${JSON.stringify({ ...report, rows: [] })})`)).includes('No fiscalized sales match these filters.'));
+    // test-mode figures say so
+    assert.ok(decode(p.run(`posAnalysisHtml(${JSON.stringify({ ...report, scope: 'TEST', leftOut: 3 })})`)).includes('Test sales: not real figures.') && decode(p.run(`posAnalysisHtml(${JSON.stringify({ ...report, scope: 'TEST', leftOut: 3 })})`)).includes('3 production sales are not counted here.'));
+    // the tax summary: what the monthly return needs
+    const tax = decode(p.run(`posTaxHtml(${JSON.stringify({ ...report, groupBy: 'taxRate', title: 'Tax rate', rows: [row('16%', { returnValue: 100, returnTax: 16, netValue: 200, netTax: 32 })], totals: row('Total', { returnValue: 100, returnTax: 16, netValue: 200, netTax: 32, tax: 48, returns: 1 }) })})`));
+    for (const need of ['Sales tax by rate', 'Tax to pay (net)', '32.00', 'Value returned', '−100.00', '−16.00', 'taxed at the card rate']) assert.ok(tax.includes(need), `the tax summary says "${need}"`);
 });
