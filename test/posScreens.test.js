@@ -42,7 +42,7 @@ function page(overrides = {}) {
     box.self = box; box.window.document = box.document;
     const ctx = vm.createContext(box);
     // the same scripts, in the same order, as app.html loads them
-    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos-rates.js', 'pos-drill.js', 'pos.js', 'pos-camera.js', 'pos-customers.js', 'pos-reports.js', 'pos-accounts.js', 'pos-escpos.js', 'pos-printer.js', 'pos-extras.js', 'admin-rates.js']) vm.runInContext(pub(f), ctx, { filename: f });
+    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos-rates.js', 'pos-drill.js', 'pos.js', 'pos-camera.js', 'pos-customers.js', 'pos-reports.js', 'pos-accounts.js', 'pos-escpos.js', 'pos-printer.js', 'pos-extras.js', 'pos-import.js', 'admin-rates.js']) vm.runInContext(pub(f), ctx, { filename: f });
     vm.runInContext(`
         const S = { token: 't', module: 'POS', tenantRole: 'OWNER' }, PAGE_ENTER = {};
         const showPlanHint = () => {}; // (the plan-limit hint under a list: not what these tests are about)
@@ -1267,4 +1267,101 @@ test('rate schedule screens: an item that follows the schedule shows the schedul
     p.run("posRenderItems()");
     assert.ok(p.$('#piCards').innerHTML.includes('follows the rate schedule'));
     assert.ok(p.$('#piCards').innerHTML.includes('Tax 16%'), 'the list shows the rate it is sold at');
+});
+
+// ---------- bulk import (public/pos-import.js) ----------
+const xKeyForTest = h => String(h || '').replace(/\(.*?\)/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''); // the same as app.html's xKey
+test('import screens: headings from other systems are found whatever their capitals, stars, brackets and separators', () => {
+    const p = page();
+    p.run(`globalThis.xKey = ${xKeyForTest.toString()}`);
+    const key = (kind, h) => p.run(`posImpKey(${JSON.stringify(kind)}, ${JSON.stringify(h)})`);
+    for (const [h, want] of [['Item Name *', 'name'], ['PRODUCT_NAME', 'name'], ['SKU', 'code'], ['Item Code', 'code'], ['EAN', 'barcode'], ['Group', 'category'], ['HS Code', 'pct'], ['PCT Code *', 'pct'], ['Sales Tax %', 'taxRate'], ['GST', 'taxRate'], ['Tax (%)', 'taxRate'],
+        ['Sales tax % on card', 'taxRateCard'], ['Card Rate', 'taxRateCard'], ['Selling Price', 'price'], ['Unit price (before tax)', 'price'], ['Price includes tax', 'taxInclusive'], ['Follows the rate schedule', 'followSchedule'], ['On sale', 'active'], ['Price typed on each sale', 'openPrice']]) {
+        assert.strictEqual(key('items', h), want, `items: "${h}"`);
+    }
+    for (const [h, want] of [['Customer Name', 'name'], ['Mobile No.', 'phone'], ['NTN/PNTN', 'pntn'], ['CNIC', 'cnic'], ['Opening Balance', 'openingBalance'], ['Remarks', 'notes'], ['Customer ID', 'code']]) assert.strictEqual(key('customers', h), want, `customers: "${h}"`);
+    for (const [h, want] of [['Supplier', 'name'], ['Vendor Name', 'name'], ['NTN', 'ntn'], ['Payable', 'openingBalance'], ['Phone', 'phone']]) assert.strictEqual(key('vendors', h), want, `vendors: "${h}"`);
+    assert.strictEqual(key('items', 'Warehouse location'), null, 'a column it does not know is ignored, not guessed');
+    assert.strictEqual(key('items', ''), null);
+    assert.strictEqual(key('customers', 'Tax'), null, 'tax is not a customer column');
+});
+
+test('import screens: every column the server understands has a heading in the template and a way to be found again', () => {
+    const p = page();
+    p.run(`globalThis.xKey = ${xKeyForTest.toString()}`);
+    const { COLUMNS } = require('../src/pos/import');
+    for (const kind of ['items', 'customers', 'vendors']) {
+        const shown = JSON.parse(p.run(`JSON.stringify(POS_IMPORT.${kind}.columns.map(c => [c[0], c[1], c[2]]))`));
+        assert.deepStrictEqual(shown.map(c => c[0]).sort(), [...COLUMNS[kind].all].sort(), `${kind}: the template and the server know the same columns`);
+        for (const [key, label] of shown) assert.strictEqual(p.run(`posImpKey(${JSON.stringify(kind)}, ${JSON.stringify(label)})`), key, `${kind}: the template's own heading "${label}" is read back as ${key}`);
+        assert.deepStrictEqual(shown.filter(c => c[2]).map(c => c[0]), COLUMNS[kind].required, `${kind}: the required columns agree`);
+    }
+});
+
+test('import screens: the check report shows every problem with its row, as text, and offers no Import button while there are problems', () => {
+    const p = page();
+    const EVIL = '<img src=x onerror=alert(1)>';
+    p.run(`posImp.file = { name: ${JSON.stringify(EVIL + '.xlsx')}, kind: 'items', body: {}, ignored: [${JSON.stringify(EVIL)}] }`);
+    p.run(`posImpRender(${JSON.stringify({ errors: [{ sheet: 'Items', row: 7, name: EVIL, messages: ['Price must be a number.', EVIL] }], warnings: [{ sheet: 'Items', row: 3, name: 'x', messages: [EVIL] }] })})`);
+    const html = p.$('#imOut').innerHTML;
+    assert.ok(html.includes('2 problems found') && html.includes('nothing was saved'));
+    assert.ok(html.includes('Items, row 7') && html.includes('Price must be a number.'));
+    assert.ok(!html.includes('<img') && html.includes('&lt;img'), 'file names, names and messages are text');
+    assert.ok(!html.includes('posImpCommit'), 'no Import button while there are problems');
+});
+
+test('import screens: a clean file shows what would happen, and the Import button says when there are differences to choose', () => {
+    const p = page();
+    p.run("posImp.file = { name: 'menu.xlsx', kind: 'items', body: {}, ignored: ['Warehouse'] }");
+    p.run(`posImpRender(${JSON.stringify({ errors: [], warnings: [{ sheet: 'Items', row: 2, name: 'A', messages: ['not in the file, so your defaults were used: tax 16%'] }], new: 3, updates: [{ row: 5, name: 'Tea', existing: { id: 'x', name: 'Tea', code: 'ITM0001' }, fills: [{ label: 'Category' }], conflicts: [] }], preview: [{ row: 2, name: 'Biryani', code: '', detail: '9801.2000 · 16% · 500.00' }] })})`);
+    let html = p.$('#imOut').innerHTML;
+    assert.ok(html.includes('3 new items and 1 already saved in menu.xlsx. No problems.'));
+    assert.ok(html.includes('>Import</button>') && !html.includes('Choose differences'));
+    assert.ok(html.includes('will fill in what is missing: Category') && html.includes('9801.2000 · 16% · 500.00'));
+    assert.ok(html.includes('1 note about this file') && html.includes('Columns not used: Warehouse'));
+    p.run(`posImpRender(${JSON.stringify({ errors: [], warnings: [], new: 0, updates: [{ row: 5, name: 'Tea', existing: { id: 'x', name: 'Tea', code: 'ITM0001' }, fills: [], conflicts: [{ field: 'unitPrice', label: 'Price', saved: '50.00', file: '75.00' }] }], preview: [] })})`);
+    html = p.$('#imOut').innerHTML;
+    assert.ok(html.includes('Choose differences and import') && html.includes('1 difference to choose: Price'));
+    p.run(`posImpRender(${JSON.stringify({ errors: [], warnings: [], new: 0, updates: [], preview: [] })})`);
+    assert.ok(!p.$('#imOut').innerHTML.includes('posImpCommit'), 'an empty file has nothing to import');
+});
+
+test('import screens: the history says what each import did, and only an import not yet undone has an Undo button', async () => {
+    const batch = (o = {}) => ({ id: 'b1', kind: 'items', fileName: 'menu.xlsx', createdBy: 'm@x', createdAt: '2026-10-23T10:00:00Z', added: 12, updated: 3, undone: false, undoneBy: null, undoNote: '', ...o });
+    const p = page({ answers: { '/api/pos/import/batches': [batch(), batch({ id: 'b2', kind: 'customers', fileName: '<b>x</b>.csv', undone: true, undoneBy: 'o@x', undoNote: 'removed 4 that it added' })] } });
+    await p.run('posImpHistory()');
+    const html = p.$('#imHist').innerHTML;
+    assert.ok(html.includes('menu.xlsx') && html.includes("posImpUndoAsk('b1')"));
+    assert.ok(html.includes('undone by o@x') && html.includes('removed 4 that it added'));
+    assert.ok(!html.includes("posImpUndoAsk('b2')"), 'an undone import cannot be undone again');
+    assert.ok(!html.includes('<b>x</b>') && html.includes('&lt;b&gt;x&lt;/b&gt;'), 'a file name is text');
+});
+
+test('import screens: the Import buttons on the items, customers and vendors pages open the page on the right tab', () => {
+    const p = page();
+    for (const kind of ['items', 'customers', 'vendors']) {
+        p.run(`posImpGo(${JSON.stringify(kind)})`);
+        assert.strictEqual(p.run('posImp.kind'), kind);
+    }
+    assert.deepStrictEqual([...p.log.went], ['p-import', 'p-import', 'p-import']);
+    const pages = p.run("POS_PAGES.map(x => x.id).join()");
+    assert.ok(pages.includes('p-import'));
+    const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+    assert.ok(/\{ id: 'p-import'.*roles: \['OWNER', 'ACCOUNTANT'\]/.test(app) && app.includes('<script src="/pos-import.js"></script>'));
+    for (const f of ['pos.js', 'pos-customers.js', 'pos-accounts.js']) assert.ok(fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8').includes("posImpGo('"), `${f} has its Import button`);
+});
+
+test('read-only screens: the create buttons are hidden by one rule when the access period is over, and the menu and banner follow the server\'s word', () => {
+    const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+    assert.ok(/body\.readonly \.needs-write \{ display: none !important; \}/.test(app), 'one rule hides every create button');
+    assert.ok(/document\.body\.classList\.toggle\('readonly', on\)/.test(app), 'and the page says when it applies');
+    assert.ok(/READ_ONLY_HIDDEN = new Set\(\['c-new', 'c-import', 'p-sale', 'p-manual', 'p-import'\]\)/.test(app), 'the pages whose job is to make something are out of the menu');
+    assert.ok(/isReadOnly\(\) \? 'p-sales' : 'p-sale'/.test(app), 'a cashier does not land on the sale screen');
+    assert.ok(app.includes('id="roBanner"') && app.includes('S.settings.readOnlyMessage'), 'the banner shows the server\'s own message');
+    let tagged = 0;
+    for (const f of ['pos.js', 'pos-customers.js', 'pos-accounts.js']) tagged += (fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8').match(/class="needs-write /g) || []).length;
+    assert.ok(tagged >= 8, `the create and import buttons carry the class (${tagged})`);
+    // the screens that call renderReadOnly are the ones that load the client's settings
+    assert.ok(fs.readFileSync(path.join(__dirname, '..', 'public', 'pos.js'), 'utf8').includes('renderReadOnly()'));
+    assert.ok(/renderReadOnly\(\);\n\s+await loadLists\(\);/.test(app));
 });

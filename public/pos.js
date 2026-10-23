@@ -61,6 +61,7 @@ async function initPos() {
     S.settings = await api('/api/client/settings');
     if (syncModules()) return;
     if (S.settings.tenantRole && S.settings.tenantRole !== S.tenantRole) { S.tenantRole = S.settings.tenantRole; saveSession(); renderNav(); }
+    renderReadOnly(); // (the banner, and the menu without what needs a change: app.html)
   } catch (err) { toast(err.message); }
   $('#envBadge').classList.add('hidden'); // the FBR environment badge belongs to Digital Invoicing
   const host = $('#clientView');
@@ -162,7 +163,8 @@ function posPagesHtml() {
           <div class="flex flex-wrap gap-2 w-full sm:w-auto"><input id="piQ" type="search" placeholder="Search items…" oninput="posItemSearch(this.value)" class="flex-1 min-w-[9rem] sm:!w-52" autocomplete="off">
             <button type="button" onclick="posScanForItems()" class="border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap inline-flex items-center gap-1.5">${POS_ICON_SCAN}<span>Scan</span></button>
             <button type="button" onclick="posLabelsDialog()" class="border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">Print labels</button>
-            <button type="button" onclick="posItemForm()" class="bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ Add item</button></div>
+            <button type="button" onclick="posImpGo('items')" class="needs-write border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">Import from Excel</button>
+            <button type="button" onclick="posItemForm()" class="needs-write bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ Add item</button></div>
         </div>
         <p id="piPlanHint" class="text-xs mb-3"></p>
         <div id="piForm"></div>

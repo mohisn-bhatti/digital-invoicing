@@ -103,7 +103,7 @@ run('client access: what the administrator cannot enter is refused in plain word
     assert.strictEqual((await call(`/api/admin/clients/${W.a.id}/access`, { method: 'PUT', body: { unlimited: true } })).status, 401, 'nobody without a login');
 });
 
-run('client access: a client in its grace period can still log in; when the grace is over it is switched off and cannot', async () => {
+run('client access: a client in its grace period uses everything; when the grace is over it is made inactive and can only look', async () => {
     const owner = await login(W.a, W.password);
     assert.strictEqual(owner.status, 200, owner.text);
     const ownerToken = owner.json.token;
@@ -116,14 +116,17 @@ run('client access: a client in its grace period can still log in; when the grac
     // ended 8 days ago: the grace is over
     r = await setAccess(W.a.id, { integratedAt: sub.addMonths(plusDays(-8), -12), unit: 'YEAR', count: 1 });
     assert.strictEqual(r.json.access.status, 'EXPIRED');
-    assert.strictEqual(r.json.active, false, 'switched off at once');
+    assert.strictEqual(r.json.active, false, 'made inactive at once');
     assert.strictEqual(r.json.inactiveReason, 'EXPIRED');
-    const blocked = await login(W.a, W.password);
-    assert.strictEqual(blocked.status, 403);
-    assert.match(blocked.json.error, /access period has ended/);
-    const open = await call('/api/pos/alerts', { token: ownerToken }); // a session that was already open
-    assert.strictEqual(open.status, 401);
-    assert.match(open.json.error, /access period has ended/);
+    // it can still log in, to look at its records: a new login, and a session that was already open
+    assert.strictEqual((await login(W.a, W.password)).status, 200, 'the owner can still log in');
+    const open = await call('/api/pos/alerts', { token: ownerToken });
+    assert.strictEqual(open.status, 200, 'and read');
+    // but it cannot change anything
+    const write = await call('/api/pos/branches', { token: ownerToken, method: 'POST', body: { name: 'Should not be made' } });
+    assert.strictEqual(write.status, 403);
+    assert.match(write.json.error, /access period ended on .* but you cannot make changes/);
+    assert.strictEqual(write.json.readOnly, true);
     // the administrator cannot just switch it on again
     const on = await admin(`/api/admin/clients/${W.a.id}/settings`, { method: 'PUT', body: { active: true } });
     assert.strictEqual(on.status, 400);

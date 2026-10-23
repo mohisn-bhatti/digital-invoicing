@@ -99,11 +99,12 @@ test('renew: adds a period to the end date, or to today when it has passed', () 
     assert.throws(() => S.renew({ unit: 'YEAR', count: 0 }, running), S.AccessError);
 });
 
-test('who is let in: an inactive or lapsed client is not, and says why', () => {
+test('who is let in: only a client switched off by hand is turned away at the door; one whose period is over may come in and look', () => {
     const lapsed = tenant({ accessUnit: 'YEAR', accessCount: 1, accessEndsAt: S.atMidnight('2026-10-19') });
     assert.strictEqual(S.blockedMessage(lapsed, at('2026-10-26')), null, 'in the grace period: yes');
-    assert.strictEqual(S.blockedMessage(lapsed, at('2026-10-27')), S.ENDED_MESSAGE, 'the job may not have run yet: still no');
-    assert.strictEqual(S.blockedMessage({ ...lapsed, active: false, inactiveReason: 'EXPIRED' }, at('2026-10-20')), S.ENDED_MESSAGE);
+    assert.strictEqual(S.blockedMessage(lapsed, at('2026-10-27')), null, 'the period is over: still let in (to look)');
+    assert.strictEqual(S.blockedMessage({ ...lapsed, active: false, inactiveReason: 'EXPIRED' }, at('2026-10-20')), null, 'made inactive by the job: let in (to look)');
+    assert.strictEqual(S.blockedMessage({ ...lapsed, active: false, inactiveReason: 'ADMIN' }, at('2026-12-01')), S.INACTIVE_MESSAGE, 'switched off by hand, even if its period is also over: not let in');
     assert.strictEqual(S.blockedMessage(tenant({ active: false, inactiveReason: 'ADMIN' }), at('2026-10-20')), S.INACTIVE_MESSAGE);
     assert.strictEqual(S.blockedMessage(tenant({ active: false, inactiveReason: null }), at('2026-10-20')), S.INACTIVE_MESSAGE, 'older rows have no reason');
     assert.strictEqual(S.blockedMessage(tenant(), at('2026-10-20')), null);
@@ -136,4 +137,23 @@ test('switching off: only active clients whose grace is over, each once, with a 
     // earlier, only the yearly one is over
     rows.find(r => r.id === 'over').active = true; rows.find(r => r.id === 'grace').active = true;
     assert.deepStrictEqual(await S.expireDueClients({ prisma, audit, now: at('2026-10-29') }), ['over']);
+});
+
+test('what a client may do: use everything, only look (its period is over), or nothing (switched off by hand)', () => {
+    const lapsed = tenant({ accessUnit: 'YEAR', accessCount: 1, accessEndsAt: S.atMidnight('2026-10-19') });
+    const mode = (t, day) => S.accessMode(t, at(day));
+    for (const day of ['2026-01-01', '2026-10-01', '2026-10-19', '2026-10-26']) assert.strictEqual(mode(lapsed, day).mode, 'FULL', `${day}: running, ending or in the grace period`);
+    assert.strictEqual(mode(lapsed, '2026-10-27').mode, 'READ_ONLY', 'the first day after the grace, before the job has run');
+    assert.strictEqual(mode(lapsed, '2030-01-01').mode, 'READ_ONLY', 'and for as long as it is not renewed');
+    assert.strictEqual(mode({ ...lapsed, active: false, inactiveReason: 'EXPIRED' }, '2026-10-27').mode, 'READ_ONLY', 'after the job has run');
+    assert.strictEqual(mode({ ...lapsed, active: false, inactiveReason: 'EXPIRED' }, '2026-10-01').mode, 'READ_ONLY', 'the reason is what counts once the job has noted it');
+    assert.strictEqual(mode({ ...lapsed, active: false, inactiveReason: 'ADMIN' }, '2026-10-01').mode, 'BLOCKED');
+    assert.strictEqual(mode({ ...lapsed, active: false, inactiveReason: 'ADMIN' }, '2027-06-01').mode, 'BLOCKED', 'switched off by hand beats an ended period');
+    assert.strictEqual(mode(tenant({ active: false, inactiveReason: null }), '2026-10-01').mode, 'BLOCKED', 'an older row with no reason');
+    assert.strictEqual(mode(tenant({ accessEndsAt: null }), '2040-01-01').mode, 'FULL', 'no time limit');
+    assert.strictEqual(S.accessMode(null).mode, 'FULL');
+    assert.strictEqual(mode(lapsed, '2026-10-27').message, 'Your access period ended on 19 Oct 2026. You can look at, print and download your records, but you cannot make changes. Contact ETAX to renew it.');
+    assert.strictEqual(mode(lapsed, '2026-10-20').message, null);
+    assert.strictEqual(mode({ ...lapsed, active: false, inactiveReason: 'EXPIRED', accessEndsAt: null }, '2026-10-27').message, 'Your access period has ended. You can look at, print and download your records, but you cannot make changes. Contact ETAX to renew it.');
+    assert.strictEqual(mode(tenant({ active: false, inactiveReason: 'ADMIN' }), '2026-10-01').message, S.INACTIVE_MESSAGE);
 });

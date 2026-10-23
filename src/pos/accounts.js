@@ -446,7 +446,8 @@ function createAccountsService({ prisma, audit, now = () => new Date() }) {
         createPurchase, listPurchases, purchaseDetail, voidPurchase,
         receiveCash, payVendor, voidEntry, entryDetail, listEntries, cashBook, cashBookCsv,
         customerLedger, setCustomerOpening, customerBalances,
+        internals: { inTurn, nextVendorCode }, // shared with the bulk import (same lock, same codes)
     };
 }
 
-module.exports = { createAccountsService, METHODS, METHOD_LABEL };
+module.exports = { createAccountsService, METHODS, METHOD_LABEL, cleanVendor, cleanBalance };

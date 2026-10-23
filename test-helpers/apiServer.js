@@ -58,7 +58,7 @@ function createApi(label) {
         if (A.ok) {
             for (const id of A.tenants) {
                 await prisma.posSale.deleteMany({ where: { tenantId: id } });
-                for (const model of A.models || ['posManualInvoice', 'posCashEntry', 'posPurchase', 'posVendor', 'posCounter', 'posBranch', 'posItem', 'posCustomer', 'posProfile']) { try { await prisma[model].deleteMany({ where: { tenantId: id } }); } catch { /* a table this test never used */ } }
+                for (const model of A.models || ['posImportBatch', 'posManualInvoice', 'posCashEntry', 'posPurchase', 'posVendor', 'posCounter', 'posBranch', 'posItem', 'posCustomer', 'posProfile']) { try { await prisma[model].deleteMany({ where: { tenantId: id } }); } catch { /* a table this test never used */ } }
                 await prisma.user.deleteMany({ where: { tenantId: id } });
                 await prisma.auditLog.deleteMany({ where: { tenantId: id } }).catch(() => {});
                 await prisma.tenant.delete({ where: { id } }).catch(e => console.log('cleanup:', e.message));

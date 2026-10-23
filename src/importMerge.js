@@ -26,6 +26,9 @@ const kinds = {
         show: v => (v || []).map(t => `${t.name} ${t.kind === 'FIXED' ? `Rs ${t.value}` : `${t.value}%`} (${t.fbrField === 'fedPayable' ? 'FED Payable' : 'Extra Tax'})`).join(' · '),
     },
 };
+// POS: a price of 0 is "not set" (an open-price item has none), and a yes/no box is compared as yes/no
+kinds.price = { same: (a, b) => Number(a) === Number(b), show: v => (Number(v) ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''), empty: v => blank(v) || Number(v) === 0 };
+kinds.flag = { same: (a, b) => Boolean(a) === Boolean(b), show: v => (v ? 'Yes' : 'No') };
 const field = (key, label, kind = 'text') => ({ key, label, ...kinds[kind] });
 
 const BUYER_FIELDS = [
@@ -49,7 +52,7 @@ function compareRecord(saved, incoming, fields) {
         if (!(f.key in incoming)) continue;
         const a = saved[f.key], b = incoming[f.key];
         if (blank(b)) continue;
-        if (blank(a)) fills.push({ field: f.key, label: f.label, file: f.show(b) });
+        if (f.empty ? f.empty(a) : blank(a)) fills.push({ field: f.key, label: f.label, file: f.show(b) });
         else if (!f.same(a, b)) conflicts.push({ field: f.key, label: f.label, saved: f.show(a), file: f.show(b) });
     }
     return { fills, conflicts };
@@ -90,4 +93,4 @@ function diffRecord(before, after, fields) {
     return out;
 }
 
-module.exports = { diffRecord, compareRecord, mergeRecord, mergeMessage, BUYER_FIELDS, ITEM_FIELDS, RULE_KEYS, blank };
+module.exports = { field, kinds, diffRecord, compareRecord, mergeRecord, mergeMessage, BUYER_FIELDS, ITEM_FIELDS, RULE_KEYS, blank };
