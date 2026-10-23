@@ -45,6 +45,9 @@
     const qtyNum = q => Number(q) / 10000;
 
     // One item line. quantity × unitPrice (ex tax) − discount = the value tax is charged on.
+    // taxInclusive: the price (and the discount typed) already contain the sales tax, as on a shelf price. What the customer pays is
+    // quantity × price − discount; the tax is taken out of it (net = payable / (1 + rate), to the nearest paisa) and the bill total is
+    // exactly what was asked. The discount PRA is told about is the same discount without its tax.
     function calcLine(l) {
         const qty4 = scaled(l.quantity, 4, 'Quantity');
         if (qty4 <= 0n) throw new PosCalcError('Quantity must be more than zero.');
@@ -57,16 +60,26 @@
         if (discount > gross) throw new PosCalcError('A discount cannot be more than the item amount.');
         const rateBp = scaled(l.taxRate === undefined || l.taxRate === null || l.taxRate === '' ? 0 : l.taxRate, 2, 'Tax rate');
         if (rateBp > 10000n) throw new PosCalcError('A tax rate cannot be more than 100%.');
-        const net = gross - discount;
-        const tax = divRound(net * rateBp, 10000n);
+        const inclusive = l.taxInclusive === true || l.taxInclusive === 'true';
+        let net, tax, grossEx = gross, discountEx = discount;
+        if (inclusive) {
+            const payable = gross - discount;
+            net = divRound(payable * 10000n, 10000n + rateBp);
+            tax = payable - net;
+            discountEx = divRound(discount * 10000n, 10000n + rateBp);
+            grossEx = net + discountEx;
+        } else {
+            net = gross - discount;
+            tax = divRound(net * rateBp, 10000n);
+        }
         if (net + tax > MAX_MONEY) throw new PosCalcError('This line comes to too much: check the quantity and the price.');
-        return { qty4, price, gross, discount, rateBp, net, tax, total: net + tax };
+        return { qty4, price, gross, discount, rateBp, net, tax, total: net + tax, inclusive, grossEx, discountEx };
     }
 
     function lineOut(c) {
         return {
-            quantity: qtyNum(c.qty4), unitPrice: rupees(c.price), gross: rupees(c.gross), discount: rupees(c.discount),
-            taxRate: Number(c.rateBp) / 100, saleValue: rupees(c.net), taxCharged: rupees(c.tax), totalAmount: rupees(c.total),
+            quantity: qtyNum(c.qty4), unitPrice: rupees(c.price), gross: rupees(c.grossEx), discount: rupees(c.discountEx),
+            taxRate: Number(c.rateBp) / 100, saleValue: rupees(c.net), taxCharged: rupees(c.tax), totalAmount: rupees(c.total), taxInclusive: c.inclusive,
         };
     }
 
@@ -76,7 +89,7 @@
         let qty4 = 0n, net = 0n, discount = 0n, tax = 0n, total = 0n;
         const out = lines.map(l => {
             const c = calcLine(l);
-            qty4 += c.qty4; net += c.net; discount += c.discount; tax += c.tax; total += c.total;
+            qty4 += c.qty4; net += c.net; discount += c.discountEx; tax += c.tax; total += c.total;
             return lineOut(c);
         });
         if (total > MAX_MONEY) throw new PosCalcError('This sale comes to too much for one invoice: split it.');
@@ -114,10 +127,50 @@
         const part = (all, spent) => (upTo === origQ ? all : divRound(all * upTo, origQ)) - spent;
         const net = part(o.net, d.net), disc = part(o.disc, d.disc), tax = part(o.tax, d.tax);
         return {
-            quantity: qtyNum(retQ), unitPrice: Number(orig.unitPrice), discount: rupees(disc), taxRate: Number(orig.taxRate),
+            quantity: qtyNum(retQ), unitPrice: Number(orig.unitPrice), discount: rupees(disc), taxRate: Number(orig.taxRate), taxInclusive: Boolean(orig.taxInclusive),
             saleValue: rupees(net), gross: rupees(net + disc), taxCharged: rupees(tax), totalAmount: rupees(net + tax),
         };
     }
+
+    // A debit note (InvoiceType 2) adds to an earlier sale: more of an item, or a price raised after the sale. Each line is worked out like a
+    // sale line, at the sold line's own tax rate and, if that line's price contained the tax, the same way.
+    // orig: the sold line { taxRate, taxInclusive }; quantity and unitPrice: what is being added
+    function debitLine(orig, quantity, unitPrice) {
+        const c = calcLine({ quantity, unitPrice, discount: 0, taxRate: orig.taxRate, taxInclusive: orig.taxInclusive });
+        return lineOut(c);
+    }
+
+    // A phone number on an invoice or a profile. What is accepted, however it is typed (spaces, dashes and brackets are fine):
+    //   a Pakistani mobile  03001234567  +92 300 1234567  0092 300 1234567  923001234567
+    //   a Pakistani landline with its area code  042 35761234  +92 42 35761234
+    //   a number from another country with its country code  +971 50 123 4567  00971501234567
+    // Anything else is refused with what is wrong, so a number with too many digits or too few never reaches an invoice.
+    // phoneProblem: '' when it is fine (an empty one is fine too), else the problem in words. phoneDigits: the digits that are kept.
+    const PHONE_MAX_DIGITS = 13; // the longest number kept: a country code and a Pakistani number are 12 or 13 digits
+    function phoneParts(raw) {
+        const s = String(raw === undefined || raw === null ? '' : raw).trim();
+        if (!s) return { empty: true };
+        if (!/^\+?[\d\s()-]+$/.test(s)) return { bad: 'use digits only (spaces, dashes and a + at the start are fine)' };
+        let d = s.replace(/\D/g, ''), intl = s.startsWith('+');
+        if (!intl && d.startsWith('00')) { intl = true; d = d.slice(2); } // 00 is the way out of the country, not part of the number
+        return { d, intl };
+    }
+    const PK_MOBILE_HELP = 'a Pakistani mobile number has 11 digits and starts with 03 (like 0300 1234567); a landline starts with its area code (like 042 35761234); for another country start with + and the country code (like +971 50 123 4567)';
+    function phoneProblem(raw) {
+        const p = phoneParts(raw);
+        if (p.empty) return '';
+        if (p.bad) return p.bad;
+        const { d, intl } = p;
+        if (d.length > PHONE_MAX_DIGITS) return `it has too many digits (${PHONE_MAX_DIGITS} at most, with the country code)`;
+        if (!intl && d.startsWith('0')) {
+            const n = d.slice(1); // local Pakistani form
+            return /^3\d{9}$/.test(n) || /^[124-9]\d{7,10}$/.test(n) ? '' : PK_MOBILE_HELP;
+        }
+        if (d.startsWith('92')) { const n = d.slice(2); return /^3\d{9}$/.test(n) || /^[124-9]\d{7,10}$/.test(n) ? '' : PK_MOBILE_HELP; } // +92 / 0092 / 92
+        if (intl) return d.length >= 8 ? '' : 'a number with a country code has 8 to 13 digits';
+        return d.length >= 11 ? '' : PK_MOBILE_HELP; // typed with no 0 and no +: only a country code plus a number is long enough to be one
+    }
+    const phoneDigits = raw => { const p = phoneParts(raw); return p.empty || p.bad ? '' : p.d; };
 
     // PRA's e-IMS Rules 2019, rule 6: when the bill excluding sales tax is more than Rs 50,000, the invoice must also carry the
     // customer's name and CNIC (an individual) or NTN (a business). Returns what is missing, or '' when the sale may go ahead.
@@ -151,5 +204,5 @@
         };
     }
 
-    return { SALE_VALUE_BASIS, PAYMENT_MODES, CARD, INVOICE_TYPES, BUYER_REQUIRED_ABOVE, PosCalcError, calcLine, calcSale, discountFromPercent, rateFor, creditLine, totalsOf, itemAmounts, buyerProblem };
+    return { SALE_VALUE_BASIS, PAYMENT_MODES, CARD, INVOICE_TYPES, BUYER_REQUIRED_ABOVE, PosCalcError, phoneProblem, phoneDigits, calcLine, calcSale, discountFromPercent, rateFor, creditLine, debitLine, totalsOf, itemAmounts, buyerProblem };
 });

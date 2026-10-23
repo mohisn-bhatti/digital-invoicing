@@ -10,6 +10,7 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="/plans.js"></script>
+<script src="/authorities.js"></script>
 <style>
   html { scroll-behavior: smooth; }
   .receipt { font-family: ui-monospace, Menlo, monospace; }
@@ -260,6 +261,14 @@
   </div>
 </section>
 
+<section class="border-t bg-white">
+  <div class="max-w-6xl mx-auto px-4 py-8">
+    <p class="text-xs uppercase tracking-wider text-slate-500 text-center">Connects to</p>
+    <div class="mt-4 flex flex-wrap items-center justify-center gap-x-10 gap-y-4 text-sm text-slate-700">
+      <span data-authority-badge="FBR"></span><span data-authority-badge="PRA"></span></div>
+  </div>
+</section>
+
 <footer class="border-t">
   <div class="max-w-6xl mx-auto px-4 py-8 flex flex-col md:flex-row gap-4 justify-between text-sm text-slate-500">
     <div><span class="font-bold text-emerald-700">ETAX</span> · FBR Digital Invoicing and PRA Point of Sale for Pakistani businesses <span data-contact class="block mt-1"></span>
@@ -273,6 +282,7 @@
 </footer>
 
 <script>
+if (typeof Authorities !== 'undefined') Authorities.fill(); // (the logos are decoration: if that file did not load, the rest of this page still must)
 try { new QRCode(document.getElementById('heroQr'), { text: '1234567DI1791300004321', width: 80, height: 80, correctLevel: QRCode.CorrectLevel.L }); } catch {}
 
 // ---- Pricing (the plans, prices and features are in /plans.js: one price list for both products)

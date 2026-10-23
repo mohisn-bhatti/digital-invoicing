@@ -6,6 +6,7 @@
 //                                the day-end sheet (their own sales only), read the defaults
 //   Manager        (ACCOUNTANT)  also items, returns (credit notes), cancel, record the result of a manual PRA check, customers' history,
 //                                reports and spreadsheets
+//                                the accounts (vendors, purchase bills, cash paid and received, the cash book): managers and the owner only
 //   Administrator  (OWNER)       also the business profile, the defaults and the look of the receipt, branches, counters, PRA tokens,
 //                                decommissioning
 const { PosError } = require('./service');
@@ -13,7 +14,7 @@ const { PosCalcError } = require('./calc');
 const { PosValidationError } = require('./validate');
 const { PosStateError } = require('./states');
 
-function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError }) {
+function registerPosRoutes(app, { service, accounts, manual, rates, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError }) {
     const translate = e => {
         if (e instanceof PosError) return new HttpError(e.status, e.message);
         if (e instanceof PosValidationError || e instanceof PosCalcError || e instanceof PosStateError) return new HttpError(400, e.message);
@@ -61,6 +62,12 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
     app.get('/api/pos/settings', ...base, wrap(req => service.getSettings(req.user.tenantId)));
     app.put('/api/pos/settings', ...owner, wrap(req => service.saveSettings(ctxOf(req), req.body || {})));
 
+    // The receipt logo: everyone at the business may see it (the receipt shows it), the owner sets it
+    app.get('/api/pos/retention', ...owner, wrap(req => service.retentionStatus(ctxOf(req))));
+    app.get('/api/pos/logo', ...base, wrap(req => service.getLogo(req.user.tenantId)));
+    app.put('/api/pos/logo', ...owner, wrap(req => service.saveLogo(ctxOf(req), (req.body || {}).logo)));
+    app.delete('/api/pos/logo', ...owner, wrap(req => service.removeLogo(ctxOf(req))));
+
     app.get('/api/pos/branches', ...manager, wrap(req => service.listBranches(req.user.tenantId)));
     app.post('/api/pos/branches', ...owner, wrap(async req => { await service.createBranch(ctxOf(req), req.body || {}); return service.listBranches(req.user.tenantId); }));
     app.put('/api/pos/branches/:id', ...owner, wrap(async req => { await service.updateBranch(ctxOf(req), req.params.id, req.body || {}); return service.listBranches(req.user.tenantId); }));
@@ -72,6 +79,11 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
     app.get('/api/pos/items', ...base, wrap(req => service.listItems(req.user.tenantId, { q: req.query.q, activeOnly: req.query.active === '1' })));
     app.post('/api/pos/items', ...manager, wrap(req => service.createItem(ctxOf(req), req.body || {})));
     app.put('/api/pos/items/:id', ...manager, wrap(req => service.updateItem(ctxOf(req), req.params.id, req.body || {})));
+    // The rates in force today in PRA's schedule, for the quick-rate lists (everyone at the business may read them; only the super admin changes them)
+    app.get('/api/pos/rates', ...base, wrap(async () => {
+        const r = await rates.schedule({ authority: 'PRA', limit: 1000 });
+        return { date: r.date, rates: r.rates.filter(x => x.inForce) };
+    }));
     app.get('/api/pos/pct', ...manager, wrap(req => service.searchPct(req.query.q)));
 
     // What a scan or a typed code is: an item (with its price and tax rate) and/or a sale
@@ -88,6 +100,38 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
             res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' }).send('\uFEFF' + csv);
         } catch (e) { throw translate(e); }
     });
+
+    // Accounts (managers): vendors, purchase bills, cash paid to vendors and received from customers, and the cash book. Nothing here goes to PRA.
+    const csv = (fn) => async (req, res) => {
+        try {
+            const { filename, csv: text } = await fn(req);
+            res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' }).send('\uFEFF' + text);
+        } catch (e) { throw translate(e); }
+    };
+    app.get('/api/pos/vendors', ...manager, wrap(req => accounts.listVendors(ctxOf(req), req.query)));
+    app.post('/api/pos/vendors', ...manager, wrap(req => accounts.createVendor(ctxOf(req), req.body || {})));
+    app.get('/api/pos/vendors/:id', ...manager, wrap(req => accounts.vendorDetail(ctxOf(req), req.params.id)));
+    app.put('/api/pos/vendors/:id', ...manager, wrap(req => accounts.updateVendor(ctxOf(req), req.params.id, req.body || {})));
+    app.get('/api/pos/export/vendors', ...manager, csv(req => accounts.vendorsCsv(ctxOf(req), req.query)));
+    app.get('/api/pos/purchases', ...manager, wrap(req => accounts.listPurchases(ctxOf(req), req.query)));
+    app.post('/api/pos/purchases', ...manager, wrap(req => accounts.createPurchase(ctxOf(req), req.body || {})));
+    app.get('/api/pos/purchases/:id', ...manager, wrap(req => accounts.purchaseDetail(ctxOf(req), req.params.id)));
+    app.post('/api/pos/purchases/:id/void', ...manager, wrap(req => accounts.voidPurchase(ctxOf(req), req.params.id, (req.body || {}).reason)));
+    app.get('/api/pos/cash', ...manager, wrap(req => accounts.listEntries(ctxOf(req), req.query)));
+    app.get('/api/pos/cash/:id', ...manager, wrap(req => accounts.entryDetail(ctxOf(req), req.params.id)));
+    app.post('/api/pos/cash/receive', ...manager, wrap(req => accounts.receiveCash(ctxOf(req), req.body || {})));
+    app.post('/api/pos/cash/pay', ...manager, wrap(req => accounts.payVendor(ctxOf(req), req.body || {})));
+    app.post('/api/pos/cash/:id/void', ...manager, wrap(req => accounts.voidEntry(ctxOf(req), req.params.id, (req.body || {}).reason)));
+    app.get('/api/pos/cashbook', ...manager, wrap(req => accounts.cashBook(ctxOf(req), req.query)));
+    app.get('/api/pos/export/cashbook', ...manager, csv(req => accounts.cashBookCsv(ctxOf(req), req.query)));
+    app.get('/api/pos/customers/:id/ledger', ...manager, wrap(req => accounts.customerLedger(ctxOf(req), req.params.id)));
+    app.put('/api/pos/customers/:id/opening-balance', ...manager, wrap(req => accounts.setCustomerOpening(ctxOf(req), req.params.id, (req.body || {}).openingBalance)));
+
+    // Invoices written by hand during an outage: anyone at the till may record one, a manager says it was reported or voids it. Not fiscal, never sent to PRA.
+    app.get('/api/pos/manual', ...base, wrap(req => manual.list(ctxOf(req), req.query)));
+    app.post('/api/pos/manual', ...base, wrap(req => manual.create(ctxOf(req), req.body || {})));
+    app.post('/api/pos/manual/:id/report', ...manager, wrap(req => manual.markReported(ctxOf(req), req.params.id, (req.body || {}).note)));
+    app.post('/api/pos/manual/:id/void', ...manager, wrap(req => manual.voidSlip(ctxOf(req), req.params.id, (req.body || {}).reason)));
 
     app.post('/api/pos/sales', ...base, wrap(req => service.createSale(ctxOf(req), req.body || {})));
     app.get('/api/pos/report', ...manager, wrap(req => service.salesReport(ctxOf(req), req.query)));
@@ -115,6 +159,7 @@ function registerPosRoutes(app, { service, pra, authenticateToken, requireTenant
     app.post('/api/pos/sales/:id/retry', ...base, wrap(req => service.retry(ctxOf(req), req.params.id)));
     app.post('/api/pos/sales/:id/cancel', ...manager, wrap(async req => { await service.cancel(ctxOf(req), req.params.id, (req.body || {}).reason); return service.saleDetail(ctxOf(req), req.params.id); }));
     app.post('/api/pos/sales/:id/resolve', ...manager, wrap(async req => { await service.resolve(ctxOf(req), req.params.id, req.body || {}); return service.saleDetail(ctxOf(req), req.params.id); }));
+    app.post('/api/pos/sales/:id/debit-note', ...manager, wrap(req => service.debitNote(ctxOf(req), req.params.id, req.body || {})));
     app.post('/api/pos/sales/:id/credit-note', ...manager, wrap(req => service.creditNote(ctxOf(req), req.params.id, req.body || {})));
 }
 

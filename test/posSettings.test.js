@@ -11,7 +11,7 @@ const run = W.run;
 test('settings: set up a business', async t => { await W.setup(t); });
 test.after(() => W.teardown());
 
-const FRESH = { defaultPaymentMode: 1, receiptHeader: '', receiptWidth: 80, showCashier: true, itemPct: '', itemTaxRate: null, itemTaxRateCard: null, itemCategory: '' };
+const FRESH = { defaultPaymentMode: 1, receiptHeader: '', receiptWidth: 80, showCashier: true, itemPct: '', itemTaxRate: null, itemTaxRateCard: null, itemCategory: '', retentionYears: 6, hasLogo: false };
 
 run('settings: a business that never chose gets plain defaults (cash, 80 mm, cashier shown, nothing for new items)', async () => {
     assert.deepStrictEqual(await W.svc.getSettings(W.tenantId), FRESH, 'a business whose details were saved but whose settings were not');
@@ -20,7 +20,7 @@ run('settings: a business that never chose gets plain defaults (cash, 80 mm, cas
 
 run('settings: saved, read back, and one thing can change without the rest', async () => {
     const a = await W.svc.saveSettings(W.ctx, { defaultPaymentMode: 2, receiptHeader: '  Fine   dining since 1998 ', receiptWidth: 58, showCashier: false, itemPct: '9801.2000', itemTaxRate: '16', itemTaxRateCard: 8, itemCategory: ' Food ' });
-    assert.deepStrictEqual(a, { defaultPaymentMode: 2, receiptHeader: 'Fine dining since 1998', receiptWidth: 58, showCashier: false, itemPct: '98012000', itemTaxRate: 16, itemTaxRateCard: 8, itemCategory: 'Food' });
+    assert.deepStrictEqual(a, { defaultPaymentMode: 2, receiptHeader: 'Fine dining since 1998', receiptWidth: 58, showCashier: false, itemPct: '98012000', itemTaxRate: 16, itemTaxRateCard: 8, itemCategory: 'Food', retentionYears: 6, hasLogo: false });
     assert.deepStrictEqual(await W.svc.getSettings(W.tenantId), a, 'what is read is what was saved');
     // only the paper changes: everything else stays
     const b = await W.svc.saveSettings(W.ctx, { receiptWidth: '80' });

@@ -56,41 +56,41 @@ model User {
 }
 
 model Tenant {
-  id                  String          @id @default(uuid())
+  id                  String             @id @default(uuid())
   companyName         String
   // Seller block of every DI invoice
-  sellerNtnCnic       String          @default("") // the one number sent to FBR: the NTN, else the CNIC
-  sellerNtn           String          @default("")
-  sellerCnic          String          @default("")
-  mobile              String          @default("") // contact mobile: added by the admin or the client's owner
-  active              Boolean         @default(true) // inactive: the client's users can't log in (admin can still manage it)
-  sellerBusinessName  String          @default("")
-  sellerProvince      String          @default("")
-  sellerAddress       String          @default("")
+  sellerNtnCnic       String             @default("") // the one number sent to FBR: the NTN, else the CNIC
+  sellerNtn           String             @default("")
+  sellerCnic          String             @default("")
+  mobile              String             @default("") // contact mobile: added by the admin or the client's owner
+  active              Boolean            @default(true) // inactive: the client's users can't log in (admin can still manage it)
+  sellerBusinessName  String             @default("")
+  sellerProvince      String             @default("")
+  sellerAddress       String             @default("")
   // Sales tax registration no. — printed on invoices (STA s.23); not part of the DI API payload
-  sellerStrn          String          @default("")
+  sellerStrn          String             @default("")
   tokenIssuedAt       DateTime? // FBR token is valid for 5 years (spec §3.1)
   irisScenarios       Json? // sandbox scenarios as IRIS shows them (admin records): { assigned, passed, at, by }
   // PRAL security token, AES-256-GCM encrypted (src/crypto.js)
   fbrTokenEnc         String?
-  fbrEnv              FbrEnv          @default(SANDBOX)
+  fbrEnv              FbrEnv             @default(SANDBOX)
   // Further-tax % for unregistered buyers (4% confirmed by the CA)
-  furtherTaxRate      Decimal         @default(4) @db.Decimal(5, 2)
-  invoiceSeq          Int             @default(0)
+  furtherTaxRate      Decimal            @default(4) @db.Decimal(5, 2)
+  invoiceSeq          Int                @default(0)
   // As chosen in IRIS: decides the sandbox scenarios to pass (DI spec §10)
-  businessActivities  String[]        @default([])
-  sectors             String[]        @default([]) // IRIS lets several be ticked
-  modules             String[]        @default(["INVOICING"]) // products this client may use: INVOICING, POS (src/modules.js)
+  businessActivities  String[]           @default([])
+  sectors             String[]           @default([]) // IRIS lets several be ticked
+  modules             String[]           @default(["INVOICING"]) // products this client may use: INVOICING, POS (src/modules.js)
   // Internal invoice number printed next to the FBR number, e.g. INV-{YYYY}-{NNNN} → INV-2026-0042
-  invoiceNumberFormat String          @default("INV-{YYYY}-{NNNN}")
-  softwareRegNo       String          @default("") // software registration no. from PRAL/FBR, printed on receipts
+  invoiceNumberFormat String             @default("INV-{YYYY}-{NNNN}")
+  softwareRegNo       String             @default("") // software registration no. from PRAL/FBR, printed on receipts
   // Signed authorization (Form STR-13) letting the firm manage this client's FBR token / IRIS
-  authLetterRef       String          @default("")
+  authLetterRef       String             @default("")
   authLetterAt        DateTime?
   // How long the client may use the application (src/subscription.js). No end date = no limit (every client before this existed).
   // Dates are Pakistan calendar days kept at 00:00 Pakistan time. When the end date plus the grace days (3 for a monthly plan,
   // 7 for a yearly one) has passed the client is made inactive by itself, and renewing it makes it active again.
-  integratedAt        DateTime        @default(now()) // the day the client was integrated
+  integratedAt        DateTime           @default(now()) // the day the client was integrated
   accessUnit          String? // MONTH or YEAR: the length of the last period given (decides the grace days)
   accessCount         Int? // how many of them
   accessEndsAt        DateTime? // the last day of access
@@ -103,17 +103,21 @@ model Tenant {
   importBatches       ImportBatch[]
   stockEntries        StockEntry[]
   drafts              InvoiceDraft[]
-  createdAt           DateTime        @default(now())
+  createdAt           DateTime           @default(now())
   sandboxTests        SandboxTest[]
   supportTickets      SupportTicket[]
   // Point of Sale (PRA): its own tables and numbering, nothing shared with the FBR invoicing ones
-  posSeq              Int             @default(0) // last USIN number handed out
+  posSeq              Int                @default(0) // last USIN number handed out
   posProfile          PosProfile?
   posBranches         PosBranch[]
   posCounters         PosCounter[]
   posItems            PosItem[]
   posSales            PosSale[]
   posCustomers        PosCustomer[]
+  posVendors          PosVendor[]
+  posPurchases        PosPurchase[]
+  posCashEntries      PosCashEntry[]
+  posManualInvoices   PosManualInvoice[]
 }
 
 model Invoice {
@@ -527,6 +531,8 @@ model PosProfile {
   receiptHeader      String   @default("") // a line under the business name
   receiptWidth       Int      @default(80) // paper: 58 or 80 mm
   showCashier        Boolean  @default(true)
+  logo               String   @default("") // the business logo for the receipt: a small PNG or JPEG as a data: address (src/pos/validate.js: cleanLogo)
+  retentionYears     Int      @default(6) // how long sales and the trail are kept before they may be archived (the owner confirms the period with the CA)
   itemPct            String   @default("") // what a NEW item starts with (the account owner's choice; the item can differ)
   itemTaxRate        Decimal? @db.Decimal(5, 2)
   itemTaxRateCard    Decimal? @db.Decimal(5, 2)
@@ -571,21 +577,23 @@ model PosCounter {
 
 // What is sold: a service with its PCT code (Second Schedule) and tax rate
 model PosItem {
-  id          String   @id @default(uuid())
-  tenantId    String
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
-  code        String
-  barcode     String? // what a scanner or a QR label carries when that is not the code PRA gets (the maker's EAN, say); unique per business
-  name        String
-  category    String   @default("")
-  pctCode     String
-  taxRate     Decimal  @db.Decimal(5, 2)
-  taxRateCard Decimal? @db.Decimal(5, 2) // when set, used for card payments (restaurants pay less on card / QR)
-  unitPrice   Decimal  @default(0) @db.Decimal(14, 2) // before tax
-  openPrice   Boolean  @default(false) // the cashier types the price on each sale
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  code           String
+  barcode        String? // what a scanner or a QR label carries when that is not the code PRA gets (the maker's EAN, say); unique per business
+  name           String
+  category       String   @default("")
+  pctCode        String
+  taxRate        Decimal  @db.Decimal(5, 2)
+  taxRateCard    Decimal? @db.Decimal(5, 2) // when set, used for card payments (restaurants pay less on card / QR)
+  unitPrice      Decimal  @default(0) @db.Decimal(14, 2) // before tax
+  openPrice      Boolean  @default(false) // the cashier types the price on each sale
+  taxInclusive   Boolean  @default(false) // the price already contains the sales tax (the shelf price): the tax is taken out of it, not added on
+  followSchedule Boolean  @default(false) // the rates come from the rate schedule (TaxRate) for the day of the sale; the item's own rates are kept as the fallback
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@unique([tenantId, code])
   @@unique([tenantId, barcode])
@@ -595,23 +603,182 @@ model PosItem {
 // A regular customer (a company or a person) the cashier can pick instead of typing the buyer's details each time.
 // Never deleted: a sale may point at it. The sale keeps its own copy of the details as they were.
 model PosCustomer {
-  id        String    @id @default(uuid())
-  tenantId  String
-  tenant    Tenant    @relation(fields: [tenantId], references: [id])
-  code      String // CUS0001: handed out once, never changes
-  name      String
-  pntn      String    @default("")
-  cnic      String    @default("")
-  phone     String    @default("")
-  address   String    @default("")
-  notes     String    @default("")
-  active    Boolean   @default(true)
-  sales     PosSale[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id             String         @id @default(uuid())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id])
+  code           String // CUS0001: handed out once, never changes
+  name           String
+  pntn           String         @default("")
+  cnic           String         @default("")
+  phone          String         @default("")
+  address        String         @default("")
+  notes          String         @default("")
+  active         Boolean        @default(true)
+  openingBalance Decimal        @default(0) @db.Decimal(14, 2) // what they owed the business when the books were started here (can be negative: an advance already held)
+  sales          PosSale[]
+  cashEntries    PosCashEntry[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
   @@unique([tenantId, code])
   @@index([tenantId, name])
+}
+
+// ---- Accounts (an optional side of Point of Sale: what is bought, what is paid out, what is received). None of it goes to PRA. ----
+
+// Someone the business buys from. Never deleted: purchases and payments point at it.
+model PosVendor {
+  id             String         @id @default(uuid())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id])
+  code           String // VEN0001: handed out once, never changes
+  name           String
+  ntn            String         @default("")
+  phone          String         @default("")
+  address        String         @default("")
+  notes          String         @default("")
+  openingBalance Decimal        @default(0) @db.Decimal(14, 2) // what the business owed them when the books were started here (can be negative: paid in advance)
+  active         Boolean        @default(true)
+  purchases      PosPurchase[]
+  cashEntries    PosCashEntry[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([tenantId, code])
+  @@index([tenantId, name])
+}
+
+// A bill from a vendor (what the business bought). Never deleted: it can be voided, with who and why, and then no longer counts.
+model PosPurchase {
+  id         String            @id @default(uuid())
+  tenantId   String
+  tenant     Tenant            @relation(fields: [tenantId], references: [id])
+  vendorId   String
+  vendor     PosVendor         @relation(fields: [vendorId], references: [id])
+  number     String // PUR000001: our own number, handed out once
+  vendorRef  String            @default("") // the number on the vendor's own bill
+  billDate   DateTime          @db.Date
+  subtotal   Decimal           @db.Decimal(14, 2)
+  tax        Decimal           @default(0) @db.Decimal(14, 2) // the sales tax printed on the vendor's bill (input tax)
+  total      Decimal           @db.Decimal(14, 2)
+  note       String            @default("")
+  createdBy  String
+  createdAt  DateTime          @default(now())
+  voidedAt   DateTime?
+  voidedBy   String?
+  voidReason String            @default("")
+  lines      PosPurchaseLine[]
+  payments   PosCashEntry[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId, billDate])
+  @@index([tenantId, vendorId])
+}
+
+model PosPurchaseLine {
+  id         String      @id @default(uuid())
+  purchaseId String
+  purchase   PosPurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  sort       Int
+  itemName   String
+  quantity   Decimal     @db.Decimal(18, 4)
+  unitCost   Decimal     @db.Decimal(14, 2)
+  amount     Decimal     @db.Decimal(14, 2)
+
+  @@index([purchaseId])
+}
+
+enum PosCashKind {
+  RECEIPT // cash in: from a customer
+  PAYMENT // cash out: to a vendor
+}
+
+// One voucher of the cash book: money received from a customer, or paid to a vendor. Never deleted: it can be voided.
+model PosCashEntry {
+  id         String       @id @default(uuid())
+  tenantId   String
+  tenant     Tenant       @relation(fields: [tenantId], references: [id])
+  kind       PosCashKind
+  number     String // RCV000001 / PAY000001
+  entryDate  DateTime     @db.Date
+  amount     Decimal      @db.Decimal(14, 2)
+  method     String       @default("CASH") // CASH, BANK, CHEQUE or WALLET
+  reference  String       @default("") // cheque number, transfer reference ...
+  customerId String?
+  customer   PosCustomer? @relation(fields: [customerId], references: [id])
+  vendorId   String?
+  vendor     PosVendor?   @relation(fields: [vendorId], references: [id])
+  purchaseId String? // a payment can be set against one bill
+  purchase   PosPurchase? @relation(fields: [purchaseId], references: [id])
+  note       String       @default("")
+  createdBy  String
+  createdAt  DateTime     @default(now())
+  voidedAt   DateTime?
+  voidedBy   String?
+  voidReason String       @default("")
+
+  @@unique([tenantId, number])
+  @@index([tenantId, kind, entryDate])
+  @@index([tenantId, customerId])
+  @@index([tenantId, vendorId])
+  @@index([purchaseId])
+}
+
+// The rate schedule: what a tax authority charges on a service heading, from a date. Rows are never edited or deleted: a rate that changes is a new
+// row with its own effective-from date, and the one in force on a day is the latest live row on or before it, so an old invoice is worked out with
+// the rate of its own day. A row put in by mistake is voided (who and why), and then no longer counts. Only the super admin changes it.
+model TaxRate {
+  id            String    @id @default(uuid())
+  authority     String // PRA now; SRB, KPRA, BRA ... can be added without a change here
+  code          String // PRA: the 8-digit heading without the dot (9801.2000 is 98012000)
+  label         String
+  rate          Decimal   @db.Decimal(5, 2)
+  cardRate      Decimal?  @db.Decimal(5, 2) // the rate when the customer pays by card, wallet or QR (null = the same)
+  conditions    String    @default("")
+  effectiveFrom DateTime  @db.Date
+  sourceName    String    @default("") // the document the rate comes from
+  sourceRef     String    @default("") // the clause, serial number or page in it
+  sourceUrl     String    @default("")
+  note          String    @default("")
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  voidedAt      DateTime?
+  voidedBy      String?
+  voidReason    String    @default("")
+
+  @@index([authority, code, effectiveFrom])
+}
+
+// An invoice written by hand while the connection to PRA was down, entered afterwards so it is on record and can be tracked until it is
+// reported. It is NOT a fiscal invoice and never goes to PRA from here. Never deleted: it can be voided, with who and why.
+model PosManualInvoice {
+  id          String    @id @default(uuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  counterId   String?
+  bookNumber  String // the number printed or written on the paper slip
+  writtenAt   DateTime // when the slip was written (Pakistan time, as typed)
+  buyerName   String    @default("")
+  buyerPntn   String    @default("")
+  buyerCnic   String    @default("")
+  buyerPhone  String    @default("")
+  description String // what was sold
+  paymentMode Int       @default(1)
+  saleValue   Decimal   @db.Decimal(14, 2) // before tax
+  tax         Decimal   @default(0) @db.Decimal(14, 2)
+  total       Decimal   @db.Decimal(14, 2)
+  reason      String    @default("")
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  reportedAt  DateTime? // when it was told to PRA by hand (or otherwise dealt with)
+  reportedBy  String?
+  reportNote  String    @default("") // PRA's reference or what was done
+  voidedAt    DateTime?
+  voidedBy    String?
+  voidReason  String    @default("")
+
+  @@unique([tenantId, bookNumber])
+  @@index([tenantId, writtenAt])
 }
 
 // A sale (invoiceType 1), or a credit note (3) that returns part of an earlier one. Never deleted: it is a tax record.
@@ -669,23 +836,24 @@ model PosSale {
 }
 
 model PosSaleLine {
-  id          String  @id @default(uuid())
-  saleId      String
-  sale        PosSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  sort        Int
-  itemId      String?
-  itemCode    String
-  itemName    String
-  category    String  @default("") // the item's category when it was sold, so a report by category stays true when the item is moved
-  pctCode     String
-  quantity    Decimal @db.Decimal(18, 4)
-  unitPrice   Decimal @db.Decimal(14, 2)
-  discount    Decimal @db.Decimal(14, 2)
-  taxRate     Decimal @db.Decimal(5, 2)
-  saleValue   Decimal @db.Decimal(14, 2) // the value tax is charged on (after the discount)
-  taxCharged  Decimal @db.Decimal(14, 2)
-  totalAmount Decimal @db.Decimal(14, 2)
-  refLineId   String? // credit note: the sold line it returns
+  id           String  @id @default(uuid())
+  saleId       String
+  sale         PosSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  sort         Int
+  itemId       String?
+  itemCode     String
+  itemName     String
+  category     String  @default("") // the item's category when it was sold, so a report by category stays true when the item is moved
+  pctCode      String
+  quantity     Decimal @db.Decimal(18, 4)
+  unitPrice    Decimal @db.Decimal(14, 2)
+  discount     Decimal @db.Decimal(14, 2)
+  taxRate      Decimal @db.Decimal(5, 2)
+  saleValue    Decimal @db.Decimal(14, 2) // the value tax is charged on (after the discount)
+  taxCharged   Decimal @db.Decimal(14, 2)
+  totalAmount  Decimal @db.Decimal(14, 2)
+  refLineId    String? // credit note: the sold line it returns
+  taxInclusive Boolean @default(false) // unitPrice (and the discount typed) contained the tax
 
   @@index([saleId])
   @@index([refLineId])

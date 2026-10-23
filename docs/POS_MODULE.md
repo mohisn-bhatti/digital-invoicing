@@ -32,8 +32,8 @@ returns by credit note, an audit trail, and monitoring of what is waiting.
 Out (SRS 1.2): the local Software Fiscal Device, offline fiscalization, full accounting, complex inventory, payroll, multi-province,
 split bills and table sharing, delivery-app workflows.
 
-So the earlier idea of a trading-and-accounts system (vendors, purchases, cash and bank, stock) is **not** part of this module.
-It can come later as its own module if wanted.
+The SRS leaves accounting out, so the accounts side (vendors, purchase bills, cash paid and received, a cash book) is an **optional
+extra** kept apart from the fiscal flow: see *Accounts* below. It never goes to PRA. Stock is still not part of it.
 
 ## 3. What PRA's documents settled (the SRS's open items)
 
@@ -82,6 +82,28 @@ and never decides a rate itself, but its hints and the demo follow the current s
 - **Mixed** payments (cash + card) use the standard rate, so the card part may be taxed at 16% instead of 8%. Ask PRA or the CA how
   a mixed bill is to be split before relying on it.
 - Rates change with each Finance Act: the account owner confirms them against PRA's current schedule.
+
+### The rate schedule (super admin: *Service Tax Rates*)
+
+The rates above are no longer only a built-in list. They live in a table, `TaxRate` ([src/rates.js](../src/rates.js), migration `0048_tax_rates`),
+that **only the super admin** changes (*Service Tax Rates* in the admin menu; every change is in the activity log):
+- **One row = a heading, a rate, a card / wallet / QR rate if different, conditions, an effective-from date, and where it comes from** (the document, the
+  clause or page, a link). The row is never edited and never deleted. A rate that changes is a **new row from the date it changes**; the rate of a day is the
+  latest live row on or before it. So an invoice dated before a change keeps the old rate, however late the change is entered, and a change announced for
+  the future can be entered now and starts on its day. A row entered by mistake is **voided** (who, when, why): it stays in the history and stops counting.
+- **Authorities:** PRA is the one the point of sale reads. SRB, KPRA and BRA are accepted by the table (and the page) so they can be filled in later without a change
+  to it. FBR's rates are not here: they come live from FBR's own reference lists (sale type, date, province).
+- **Filling it in:** one rate at a time, or **Import from a spreadsheet** (CSV or a paste from Excel; columns found by name in any order). An import is checked row by
+  row and is all or nothing: with any problem nothing is saved and every problem is listed with its row. The schedule can be downloaded again as CSV.
+- **The point of sale:** the quick-rate lists in the item form and in Settings show the schedule's rates in force today. An item can be set to **Follow the rate
+  schedule**: it is shown and sold at the rate in force for its heading on the day of the sale (the card rate for a card payment), so a change by the super admin
+  reaches every such item on its day without anyone editing items. The rate typed on the item stays as its **own rate**, which is used if the schedule has no rate
+  for the heading (an item can only be set to follow a heading the schedule has a rate for). Sales already made keep the rate they were made at, and credit and
+  debit notes use the rate of the sale they refer to.
+- **What is in it today:** only the five rates this module has always suggested (restaurants 9801.2000, hotels 9801.1000, 16% or 8% on card; halls and lawns
+  9801.3000 and caterers 9801.5000, 8%; beauty parlours 9810.0000, 5%), from 1 July 2026, marked as first entered from an earlier reading of the Act. **The rest
+  of the Second Schedule is not in it**: PRA's site could not be reached to read the 2026-27 edition. Someone with the PDF fills it in (the import is for that), and
+  checks the five against it.
 
 ### Who must give their details: Rs 50,000
 
@@ -196,6 +218,65 @@ The reports use **Pakistan calendar days**, cover test or real sales only (see a
 items is one invoice), allow 400 days at most in one report, and add money exactly (a year of 150,000 sales answers in under a
 second). Each spreadsheet is noted in the activity trail, and text Excel could read as a formula is defused.
 
+### Accounts — optional, for managers and the owner
+
+Five pages under **Accounts** in the menu (a cashier sees none of them; every route is manager or owner only, in
+[routes.js](../src/pos/routes.js)). The code is [accounts.js](../src/pos/accounts.js) (one service, kept apart from the sale flow),
+[pos-accounts.js](../public/pos-accounts.js) (the screens) and migration `0046_pos_accounts` (new tables and one column with a default:
+nothing existing changes, so it is safe to apply to production before the new code is live).
+- **Vendors** (`VEN0001`…): name, NTN, phone, address, an *opening balance* (what you owed them when you started here; a minus sign if you
+  had paid in advance). Never deleted; switching one off stops new bills. Balance = opening + live bills - live payments.
+- **Purchase Invoice** (`PUR000001`…): a vendor, a date (not in the future), their own bill number, lines (item, quantity, price) and the
+  sales tax printed on their bill (input tax: kept as a figure, not claimed or sent anywhere). Amounts are worked in whole paisa on the
+  server, so the total is exactly the lines plus the tax; the screen's total is only a preview. A bill shows unpaid, part paid or paid.
+- **Pay Cash to Vendor** (`PAY000001`…): money out, on a particular bill or on account. A payment against a bill can never be more than what is
+  still unpaid on it (checked while nobody else is writing, so two screens cannot overpay it). On account may exceed what is owed: it shows
+  as paid in advance.
+- **Receive Cash** (`RCV000001`…): money in from a saved customer, with how it was paid. A customer's account is *opening balance - received*:
+  a negative figure is money you are holding for them (a banquet booking's advance). The opening balance and *Receive cash* are on the
+  customer's window in the Customers page.
+- **Cash book:** every live voucher of a period with a running balance, the opening balance (everything before the period), the closing
+  balance, totals by how it was paid, CSV and print. It is the sum of receipts and payments only: **sales are not in it** (a sale is paid at
+  the counter and is reported in the sales reports).
+- **Voiding** replaces deleting. A bill or voucher is voided with a reason, who and when are kept, and it no longer counts. A bill with a live
+  payment cannot be voided until the payment is. Everything is written to the activity log (amounts and names, never a token or a number
+  that identifies a person).
+- Numbers are handed out once per business and never reused; all writes of one business take turns, so two screens at once get two numbers.
+
+### Also built (branch `feature/pos-accounts`)
+
+- **Debit notes** (InvoiceType 2): *Sales & Receipts → open a fiscalized sale → Add to this sale (debit note)* (managers). For more of an item or a
+  price raised after the sale: each line names a sold line, the quantity added and (if different) the price; the sold line's tax rate, and whether
+  its price contained the tax, carry over. It goes to PRA with `RefUSIN` = the sale's USIN, is retried and cancelled like any sale, prints as DEBIT
+  NOTE, and **counts as a sale in every figure** (reports, the day's total, customers). It is not a return: it never touches what can still be
+  credited, and a debit note can be neither credited nor debited itself. Whether PRA wants a quantity on a debit note, or checks it against the
+  sale, is for the sandbox to show.
+- **Tax-inclusive prices** (Rule 45 style shelf prices): an item can be marked *the price already includes the sales tax*. What the customer pays is
+  quantity × price − discount (the discount is typed as an amount that includes tax too); the tax is taken out of it (`net = payable / (1 + rate)`,
+  half-up to the paisa) and the bill is exactly what was asked. PRA is told the sale value and the discount without tax. The receipt says
+  "(incl. tax)". Credit and debit notes on such a line work from the stored figures and still add up to the sale. Where the Rule 45 text itself
+  applies (which businesses may quote tax-inclusive prices) is for the CA: the screen just does the arithmetic.
+- **Receipt logo** (Settings, owner): a PNG or JPEG, shrunk in the browser, checked on the server by its own first bytes, its size (150 KB) and, for a
+  PNG, its width and height (SVG is refused: it can carry script). It is printed above the business name; the settings every cashier reads say only
+  whether one exists.
+- **Record-keeping:** nothing can be deleted (there is no route that deletes a sale, a note, a voucher, a bill or a slip, and the activity trail is
+  append-only in the database). *Settings → Keeping records* sets how many years (1 to 30, default 6) the business keeps them before they **may**
+  be archived, and shows where the records stand against that. It never archives or removes anything. **The period is not from PRA's documents
+  (the CA found none): the owner confirms it with the accountant.**
+- **Printing straight to a thermal printer** (Chrome on Android or a computer, over https): Bluetooth (Web Bluetooth) or USB (WebUSB), ESC/POS, 58 or
+  80 mm, with the printer's own QR command and the logo as a black-and-white picture. Plain letters only (no Urdu). iPhones and iPads cannot do
+  this; the ordinary Print button is what they use. **Tried only with stand-in devices in tests, never on a real printer**: print the test slip
+  from Settings first.
+- **Hand-written slips** (the *Hand-written Slips* page; anyone at the till records one, a manager marks it reported or voids it): a register of
+  invoices written on paper while PRA could not be reached. **It is not a fiscal invoice**: nothing is sent to PRA, no PRA number is made up, and the
+  slips are not in the sales reports. Sales are still blocked while PRA is unreachable (no rule the CA found allows manual invoices for an integrated
+  POS); this keeps track of what was written anyway until someone has dealt with it. Never deleted: voided with who and why.
+- **Phone numbers** on buyers, customers, vendors and slips are checked: a Pakistani mobile (03001234567, +92 300 1234567, 0092…), a landline with its
+  area code (042 35761234, a 042 111 222 333 line) or a number with a country code; more than 13 digits, too few, or anything else is refused with
+  what to type, live as it is typed and again on the server. The digits typed are kept, without a leading 00 (PRA's own sample `00923001234567` is kept as
+  `923001234567`). The FBR phone box takes the same pasted forms (+92 300 1234567, 0092 300 1234567, 923001234567, +971 …) and picks the country from them.
+- **Item counter on the sale screen:** each item's tile shows how many of it are in the sale being made.
+
 ### Defaults and the receipt — phase 2
 
 *Settings → Defaults and receipt* (owner; `GET/PUT /api/pos/settings`: everyone at the business reads, only the owner changes; a
@@ -294,15 +375,15 @@ administrator while the rehearsal ran): look at what changed, with its time, bef
 **Going live** needs `PRA_MOCK=false`, the production POS ID and token, and PRA to whitelist the server's IP (the static-IP proxy,
 see [static-ip-proxy.md](static-ip-proxy.md); the proxy must allow `ims.pral.com.pk`).
 
-**Not built (the accounts side of a trading POS):** Receive Cash, Purchase Invoice and Pay Cash to Vendor (vendors, purchases, payments
-and receipts, a cash book). The SRS leaves accounting out; if the owner wants it, a thin optional *Accounts* section can be added
-(it needs the CA's answers on credit sales and on withholding before it is built).
+**Accounts** (vendors, purchase bills, Pay Cash to Vendor, Receive Cash, the cash book) is built: see the *Accounts* section above. What it
+does **not** do, until the CA answers on credit sales and tax withheld: sales on credit (a sale is paid at the counter, so a customer's
+account only holds what they have paid in), withholding on payments, and stock (a purchase does not add to any stock).
 
 **Not built:** service charge and tips (the SRS says their tax treatment must be configurable; the Act's restaurant rules put service
-charge and hall rental in the taxable value, so they belong on the invoice as items, and tips off it); a screen for debit notes
-(InvoiceType 2 is in the model); tax-inclusive pricing; logo upload; product-catalogue sync with PRA; direct thermal-printer support
-from a phone (the receipt prints through the browser to an 80 mm printer); a retention policy for sales and the audit trail (the SRS
-says "multi-year, set from the law": nothing is deleted today); a screen to key in invoices issued by hand during an outage.
+charge and hall rental in the taxable value, so they belong on the invoice as items, and tips off it); **product-catalogue sync with PRA**
+(neither PRA document describes a catalogue interface, only the portal's Product Catalogue tab; it can be built once the sandbox shows whether
+`PostData` refuses an item that is not in the catalogue, and what the sync would call). Built since: debit notes, tax-inclusive prices, the
+receipt logo, the record-keeping period, direct printing to a thermal printer, and the register of hand-written slips: see *Also built* above.
 
 **Checked in a real browser, not on a real tablet, camera phone or printer.** The screens were checked at phone, tablet and laptop
 widths, and the receipt's print layout in Chrome's print mode on 58 mm and 80 mm pages (and on a sheet). Scanning was checked with a

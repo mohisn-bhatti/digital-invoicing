@@ -33,7 +33,7 @@ function createWorld(label, { start = '2026-10-19T08:00:00Z' } = {}) {
             return next ? (typeof next === 'function' ? next(args) : next) : accepted();
         },
     };
-    W.models = ['posCounter', 'posBranch', 'posItem', 'posCustomer', 'posProfile']; // what to empty, in order, besides the sales (more are added as the module grows)
+    W.models = ['posManualInvoice', 'posCashEntry', 'posPurchase', 'posVendor', 'posCounter', 'posBranch', 'posItem', 'posCustomer', 'posProfile']; // what to empty, in order, besides the sales (more are added as the module grows)
     W.now = () => new Date(W.clock);
     W.advance = ms => { W.clock += ms; };
     W.ctxFor = (tenantId, email = 'cashier@test') => ({ tenantId, email, req: null });

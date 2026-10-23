@@ -5,7 +5,7 @@ const V = require('../src/pos/validate');
 
 test('POS maths: quantity × price − discount, tax on what is left, half-up to the paisa', () => {
     const r = C.calcSale([{ quantity: 3, unitPrice: 1000, discount: 500, taxRate: 16 }]);
-    assert.deepStrictEqual(r.lines[0], { quantity: 3, unitPrice: 1000, gross: 3000, discount: 500, taxRate: 16, saleValue: 2500, taxCharged: 400, totalAmount: 2900 });
+    assert.deepStrictEqual(r.lines[0], { quantity: 3, unitPrice: 1000, gross: 3000, discount: 500, taxRate: 16, saleValue: 2500, taxCharged: 400, totalAmount: 2900, taxInclusive: false });
     assert.deepStrictEqual(r.totals, { quantity: 3, saleValue: 2500, discount: 500, tax: 400, bill: 2900 });
     // 0.5 paisa rounds up, 0.499 does not
     assert.strictEqual(C.calcSale([{ quantity: 1, unitPrice: 0.05, taxRate: 10 }]).totals.tax, 0.01);

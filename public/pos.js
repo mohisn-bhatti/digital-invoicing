@@ -15,7 +15,7 @@ const POS = {
   setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, modePicked: false, buyer: { name: '', pntn: '', cnic: '', phone: '' }, customer: null, saveCustomer: false,
   cat: '', q: '', busy: false, result: null, detail: null, settings: null, receiptWidth: 80, cashiers: null,
   sales: posBlankSales(), reportKey: null, items: [], itemQ: '', branches: [], profile: null, pctTimer: null,
-  ref: null, refSig: null, creditRef: null, alerts: null, alertTimer: null, tick: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false, watching: false,
+  ref: null, refSig: null, creditRef: null, debitRef: null, alerts: null, alertTimer: null, tick: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false, watching: false,
 };
 // Pages that the other Point of Sale scripts add (customers, reports, accounts ...): each pushes { id, html(), enter() } and gets its
 // place in the shell and its page-enter hook, so nothing here has to know about them.
@@ -28,7 +28,7 @@ function posReset() {
   Object.assign(POS, {
     setup: null, itemsById: new Map(), counterId: null, cart: [], mode: 1, modePicked: false, buyer: posBlankBuyer(), customer: null, saveCustomer: false, cat: '', q: '', busy: false, result: null, detail: null, settings: null, receiptWidth: 80, cashiers: null,
     sales: posBlankSales(), reportKey: null, items: [], itemQ: '', branches: [], profile: null,
-    ref: null, refSig: null, creditRef: null, alerts: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false,
+    ref: null, refSig: null, creditRef: null, debitRef: null, alerts: null, setupAt: 0, breakerAt: 0, lastLeft: -1, lost: false,
   });
   posCloseModal(); posCloseReceipt();
   POS_RESETS.forEach(f => f());
@@ -108,7 +108,7 @@ function posPagesHtml() {
                   <label class="col-span-2"><span>Name</span><input id="pbName" maxlength="150" oninput="posBuyer('name', this.value)" autocomplete="off"></label>
                   <label><span>PNTN</span><input id="pbPntn" maxlength="9" placeholder="1234567-8" oninput="posBuyer('pntn', this.value)" autocomplete="off"></label>
                   <label><span>CNIC</span><input id="pbCnic" maxlength="15" placeholder="13 digits" oninput="posBuyer('cnic', this.value)" inputmode="numeric" autocomplete="off"></label>
-                  <label class="col-span-2"><span>Phone</span><input id="pbPhone" maxlength="20" oninput="posBuyer('phone', this.value)" inputmode="tel" autocomplete="off"></label>
+                  <label class="col-span-2"><span>Phone</span><input id="pbPhone" maxlength="20" oninput="posBuyer('phone', this.value); posPhoneCheck(this)" inputmode="tel" autocomplete="off"></label>
                 </div>
                 <div id="pCustomerSave" class="mt-2"></div></details>
               <div class="flex gap-2">
@@ -184,7 +184,8 @@ function posEnsureModals() {
     <div id="posReceiptModal" class="hidden fixed inset-0 z-[60] bg-black/50 flex items-start justify-center overflow-y-auto p-2 sm:p-4" onclick="if (event.target === this) posCloseReceipt()">
       <div class="bg-white rounded-xl shadow-xl p-4 sm:p-5 mt-2 sm:mt-6 space-y-3">
         <div class="flex items-center justify-between gap-4"><h2 class="font-semibold">Receipt</h2>
-          <div class="flex gap-2"><button type="button" onclick="posPrintReceipt()" class="bg-emerald-700 text-white rounded px-4 py-2 text-sm">Print</button>
+          <div class="flex flex-wrap gap-2"><button type="button" onclick="posPrintReceipt()" class="bg-emerald-700 text-white rounded px-4 py-2 text-sm">Print</button>
+            <button type="button" id="posDirectBtn" onclick="posPrintDirect()" class="hidden border border-emerald-700 text-emerald-800 rounded px-4 py-2 text-sm">Print to printer</button>
             <button type="button" onclick="posCloseReceipt()" class="border rounded px-4 py-2 text-sm">Close</button></div></div>
         <div class="flex justify-center overflow-x-auto"><div id="posReceipt"></div></div></div></div>`);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { posCloseReceipt(); posCloseModal(); } });
@@ -286,10 +287,19 @@ function posSearchKey(e) {
   else if (!hits.length && PosScan.parse(typed).invoice) { posScanSale(typed); e.target.value = ''; POS.q = ''; posRenderGrid(); } // a receipt's address pasted in
   else toast(hits.length ? 'More than one item matches: tap the one you want.' : 'No item matches.');
 }
+// How many of an item are in the sale being made: shown on its tile, so a cashier sees at a glance that it was tapped once, twice, and so on
+const posInCart = id => Math.round(POS.cart.reduce((n, c) => (c.itemId === id ? n + (Number(c.qty) || 0) : n), 0) * 10000) / 10000;
+function posRenderBadges() {
+  document.querySelectorAll('#pGrid [data-item]').forEach(tile => {
+    const n = posInCart(tile.dataset.item), badge = tile.querySelector('.posBadge'); if (!badge) return;
+    badge.textContent = n || ''; badge.classList.toggle('hidden', !n);
+  });
+}
 function posRenderGrid() {
   const list = POS.setup.items.filter(i => (!POS.cat || (i.category || '__none') === POS.cat) && (!POS.q || (i.name + ' ' + i.code + ' ' + (i.barcode || '') + ' ' + i.category).toLowerCase().includes(POS.q)));
-  $('#pGrid').innerHTML = list.map(i => `<button type="button" onclick="posAdd('${i.id}')" class="text-left bg-white border rounded-xl p-3 min-h-[5rem] shadow-sm hover:border-emerald-600 active:bg-emerald-50">
-    <div class="font-medium leading-tight">${esc(i.name)}</div><div class="text-xs text-slate-500 mt-1">${i.openPrice ? 'Enter the price' : money(i.unitPrice)}</div></button>`).join('')
+  $('#pGrid').innerHTML = list.map(i => `<button type="button" data-item="${i.id}" onclick="posAdd('${i.id}')" class="relative text-left bg-white border rounded-xl p-3 min-h-[5rem] shadow-sm hover:border-emerald-600 active:bg-emerald-50">
+    <span class="posBadge ${posInCart(i.id) ? '' : 'hidden'} absolute top-1.5 right-1.5 min-w-[1.5rem] h-6 px-1.5 rounded-full bg-emerald-700 text-white text-xs font-semibold flex items-center justify-center" aria-label="In the sale">${posInCart(i.id) || ''}</span>
+    <div class="font-medium leading-tight pr-6">${esc(i.name)}</div><div class="text-xs text-slate-500 mt-1">${i.openPrice ? 'Enter the price' : money(i.unitPrice)}</div></button>`).join('')
     || `<p class="col-span-full text-sm text-slate-500 p-3">${POS.setup.items.length ? 'No item matches.' : ''}</p>`;
 }
 
@@ -328,7 +338,7 @@ function posPreview() {
   POS.cart.forEach((c, i) => {
     const item = POS.itemsById.get(c.itemId);
     try {
-      const base = { quantity: c.qty, unitPrice: item.openPrice ? c.price : item.unitPrice };
+      const base = { quantity: c.qty, unitPrice: item.openPrice ? c.price : item.unitPrice, taxInclusive: Boolean(item.taxInclusive) };
       if (item.openPrice && String(c.price).trim() === '') throw new Error('Enter the price.');
       let discount = String(c.disc || '').trim();
       if (discount.endsWith('%')) discount = PosCalc.discountFromPercent(base, discount.slice(0, -1).trim());
@@ -343,6 +353,7 @@ function posPreview() {
   return { lines, errors, ok: ok && Boolean(sale), needBuyer, sale, each: lines.map(l => { try { return l ? PosCalc.calcSale([l]).lines[0] : null; } catch { return null; } }) };
 }
 function posRenderCart() {
+  posRenderBadges();
   const el = $('#pCart');
   if (!POS.cart.length) { el.innerHTML = '<p class="text-sm text-slate-500 py-6 text-center">Tap an item to add it to the sale.</p>'; $('#pTotals').innerHTML = ''; posBuyerLabel(false); posRenderBar(null); posRenderGo(); return; }
   const pv = posPreview();
@@ -480,6 +491,7 @@ async function posShowReceipt(id) {
     POS.receiptWidth = look.width; // the paper the owner chose in Settings: the preview and the print both use it
     box.style.width = box.style.maxWidth = look.width + 'mm'; box.style.fontSize = look.width === 58 ? '10px' : ''; // (on paper the page's own width can make it narrower: see app.html)
     box.innerHTML = posReceiptHtml(rc);
+    if (typeof posReceiptShown === 'function') posReceiptShown(rc); // (the direct-to-printer button: pos-extras.js)
     $('#posReceiptModal').classList.remove('hidden');
     document.body.classList.add('print-pos'); // while this receipt is open, printing means this receipt (see the print rules in app.html)
     // the QR is drawn by a library from a CDN: if it cannot load, the address is printed instead so the receipt still carries it
@@ -494,25 +506,26 @@ const posReceiptLook = rc => {
   return { ...look, width: look.width === 58 ? 58 : 80 }; // two rolls exist: anything else is the usual one
 };
 function posReceiptHtml(rc) {
-  const s = rc.sale, b = rc.business, look = posReceiptLook(rc), credit = s.invoiceType === 3, rule = '<div style="border-top:1px dashed #000;margin:4px 0"></div>';
+  const s = rc.sale, b = rc.business, look = posReceiptLook(rc), credit = s.invoiceType === 3, debit = s.invoiceType === 2, rule = '<div style="border-top:1px dashed #000;margin:4px 0"></div>';
   // label left, amount right; a long label wraps and, if still too wide, the amount drops to the next line (80 mm paper)
   const row = (l, r, bold) => `<div style="display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:8px;${bold ? 'font-weight:bold;' : ''}"><span style="min-width:0;overflow-wrap:anywhere">${l}</span><span style="text-align:right;min-width:0;margin-left:auto;overflow-wrap:anywhere">${r}</span></div>`;
   const test = s.mock ? 'TEST MODE: NOT A FISCAL INVOICE' : s.env === 'SANDBOX' ? 'PRA SANDBOX TEST: NOT A REAL INVOICE' : '';
   const buyer = [s.buyer.name, s.buyer.pntn && 'PNTN ' + s.buyer.pntn, s.buyer.cnic && 'CNIC ' + s.buyer.cnic, s.buyer.phone].filter(Boolean);
   return `<div style="text-align:center">
+      ${b.logo ? `<img src="${esc(b.logo)}" alt="" style="display:block;margin:0 auto 4px;max-width:70%;max-height:64px">` : ''}
       ${test ? `<div style="border:2px solid #000;padding:2px;font-weight:bold;margin-bottom:4px">${test}</div>` : ''}
       <div style="font-weight:bold;font-size:13px">${esc(b.name)}</div>
       ${look.header ? `<div>${esc(look.header)}</div>` : ''}
       ${rc.branch ? `<div>${esc(rc.branch.name)}${rc.branch.address ? ', ' + esc(rc.branch.address) : ''}</div>` : ''}
       ${b.address ? `<div>${esc(b.address)}</div>` : ''}${b.phone ? `<div>Tel: ${esc(b.phone)}</div>` : ''}
       <div>PNTN / NTN: ${esc(b.pntn || '—')}</div></div>${rule}
-    <div style="text-align:center;font-weight:bold;font-size:12px">${credit ? 'CREDIT NOTE' : 'TAX INVOICE'}</div>
-    ${credit ? `<div style="text-align:center">Returns invoice ${esc(s.refUsin || '')}</div>` : ''}
+    <div style="text-align:center;font-weight:bold;font-size:12px">${credit ? 'CREDIT NOTE' : debit ? 'DEBIT NOTE' : 'TAX INVOICE'}</div>
+    ${credit ? `<div style="text-align:center">Returns invoice ${esc(s.refUsin || '')}</div>` : ''}${debit ? `<div style="text-align:center">Adds to invoice ${esc(s.refUsin || '')}</div>` : ''}
     ${row('PRA invoice no.', `<b style="word-break:break-all">${esc(s.fiscalNumber)}</b>`)}${row('Invoice no. (USIN)', esc(s.usin))}
     ${row('Date', esc(posWhen(s.at)))}${row('Counter', `${esc(rc.counter.name)} (POS ${esc(rc.counter.posId)})`)}${look.showCashier && s.cashier ? row('Cashier', esc(s.cashier)) : ''}
     ${buyer.length ? `<div>Buyer: ${buyer.map(esc).join(' · ')}</div>` : ''}${rule}
     ${s.lines.map(l => `<div style="margin-bottom:3px"><div style="font-weight:bold">${esc(l.itemName)}</div>
-      ${row(`${l.quantity} × ${money(l.unitPrice)}${l.discount ? ` − disc ${money(l.discount)}` : ''}`, money(l.saleValue))}
+      ${row(`${l.quantity} × ${money(l.unitPrice)}${l.taxInclusive ? ' (incl. tax)' : ''}${l.discount ? ` − disc ${money(l.discount)}` : ''}`, money(l.saleValue))}
       ${row(`Sales tax ${l.taxRate}%`, money(l.taxCharged))}${row('Item total', money(l.totalAmount))}</div>`).join('')}${rule}
     ${row('Total quantity', esc(s.totals.quantity))}${row('Value before tax', money(s.totals.saleValue))}${s.totals.discount ? row('Discount given', money(s.totals.discount)) : ''}${row('Sales tax', money(s.totals.tax))}
     ${row(credit ? 'TOTAL RETURNED' : 'TOTAL', money(s.totals.bill), true)}${row('Paid by', esc(posModeName(s.paymentMode)))}${rule}
@@ -660,7 +673,7 @@ async function posLoadSales(refreshReport = true) {
   try {
     const r = await api('/api/pos/sales?' + posSalesQuery({ limit: '200' }));
     $('#psNote').textContent = r.total > r.sales.length ? `Showing the latest ${r.sales.length} of ${r.total}. Narrow the dates or search to see the rest.` : `${r.total} ${r.total === 1 ? 'sale' : 'sales'}`;
-    const tags = s => `${s.invoiceType === 3 ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-slate-200">Credit note</span>' : ''}${s.mock ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">test</span>' : s.env === 'SANDBOX' ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">sandbox</span>' : ''}`;
+    const tags = s => `${s.invoiceType === 3 ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-slate-200">Credit note</span>' : s.invoiceType === 2 ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-slate-200">Debit note</span>' : ''}${s.mock ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">test</span>' : s.env === 'SANDBOX' ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">sandbox</span>' : ''}`;
     $('#psRows').innerHTML = r.sales.map(s => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onclick="posOpenSale('${s.id}')">
       <td class="py-2 pr-2 whitespace-nowrap">${esc(posWhenShort(s.createdAt))}</td>
       <td><span class="font-medium">${esc(s.usin)}</span>${tags(s)}<div class="text-xs text-slate-500">${esc(s.counterName || '')}</div></td>
@@ -677,7 +690,7 @@ async function posOpenSale(id) {
   try { POS.detail = await api(`/api/pos/sales/${id}`); posShowModal(posSaleHtml(POS.detail)); } catch (err) { toast(err.message); }
 }
 function posSaleHtml(d) {
-  const credit = d.invoiceType === 3, mgr = canManage();
+  const credit = d.invoiceType === 3, debit = d.invoiceType === 2, isNote = credit || debit, mgr = canManage();
   const note = {
     AWAITING_FISCALIZATION: posBanner('warn', `<b>Not fiscalized yet.</b> ${esc(d.lastError || 'It has not been sent to PRA.')}`),
     REJECTED: posBanner('bad', `<b>PRA refused this sale.</b> ${esc(d.lastError || '')} Correct the buyer details if needed and send it again, or cancel it.`),
@@ -686,7 +699,7 @@ function posSaleHtml(d) {
     CANCELLED: posBanner('info', `<b>Cancelled.</b> ${esc(d.note || '')}`),
   }[d.state] || '';
   const acts = [];
-  if (d.state === 'FISCALIZED') { acts.push(posBtn('Print receipt', `posShowReceipt('${d.id}')`, 'primary')); if (mgr && !credit) acts.push(posBtn('Return items…', `posCreditForm('${d.id}')`)); }
+  if (d.state === 'FISCALIZED') { acts.push(posBtn('Print receipt', `posShowReceipt('${d.id}')`, 'primary')); if (mgr && !isNote) acts.push(posBtn('Return items…', `posCreditForm('${d.id}')`), posBtn('Add to this sale (debit note)…', `posDebitForm('${d.id}')`)); }
   if (d.state === 'AWAITING_FISCALIZATION' || d.state === 'REJECTED') {
     acts.push(posBtn('Send to PRA again', `posRetry('${d.id}')`, 'primary'), posBtn('Correct buyer details', `posBuyerForm('${d.id}')`));
     if (mgr) acts.push(posBtn('Cancel sale', `posCancelForm('${d.id}')`, 'danger'));
@@ -694,22 +707,23 @@ function posSaleHtml(d) {
   if (d.state === 'OUTCOME_UNKNOWN' && mgr) acts.push(posBtn('Record what I found at PRA…', `posResolveForm('${d.id}')`, 'primary'));
   const th = c => `<th class="py-1 px-1 ${c || ''}">`;
   return `<div class="space-y-3">
-    <div class="flex items-start justify-between gap-3"><div><h2 class="text-lg font-semibold">${credit ? 'Credit note' : 'Sale'} ${esc(d.usin)} ${posChip(d.state)}</h2>
-      <div class="text-xs text-slate-500">${esc(d.counterName)} (POS ${esc(d.counterPosId)}, ${d.env === 'PRODUCTION' ? 'production' : 'sandbox'}) · ${esc(posWhen(d.finalizedAt || d.createdAt))} · by ${esc(d.createdBy)}${credit ? ` · returns invoice ${esc(d.refUsin)}` : ''}</div></div>
+    <div class="flex items-start justify-between gap-3"><div><h2 class="text-lg font-semibold">${credit ? 'Credit note' : debit ? 'Debit note' : 'Sale'} ${esc(d.usin)} ${posChip(d.state)}</h2>
+      <div class="text-xs text-slate-500">${esc(d.counterName)} (POS ${esc(d.counterPosId)}, ${d.env === 'PRODUCTION' ? 'production' : 'sandbox'}) · ${esc(posWhen(d.finalizedAt || d.createdAt))} · by ${esc(d.createdBy)}${credit ? ` · returns invoice ${esc(d.refUsin)}` : debit ? ` · adds to invoice ${esc(d.refUsin)}` : ''}</div></div>
       <button type="button" onclick="posCloseModal()" class="text-2xl leading-none text-slate-400 px-2" aria-label="Close">×</button></div>
     ${note}
     ${d.fiscalNumber ? `<div class="text-sm">PRA invoice no. <b class="font-mono break-all">${esc(d.fiscalNumber)}</b>${d.mock ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">test mode</span>' : ''}${d.resolvedBy ? ` <span class="text-xs text-slate-500">(confirmed by hand by ${esc(d.resolvedBy)})</span>` : ''}</div>` : ''}
     <div class="text-sm text-slate-700">Paid by <b>${esc(posModeName(d.paymentMode))}</b>${d.buyer.name || d.buyer.pntn || d.buyer.cnic || d.buyer.phone ? ` · Buyer: ${[d.buyer.name, d.buyer.pntn && 'PNTN ' + d.buyer.pntn, d.buyer.cnic && 'CNIC ' + d.buyer.cnic, d.buyer.phone].filter(Boolean).map(esc).join(' · ')}` : ''}</div>
-    <div class="hidden md:block overflow-x-auto"><table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr>${th()}Item</th>${th('text-right')}Qty</th>${th('text-right')}Price</th>${th('text-right')}Discount</th>${th('text-right')}Value</th>${th('text-right')}Tax</th>${th('text-right')}Total</th>${credit ? '' : th('text-right') + 'Returned</th>'}</tr></thead><tbody>
-      ${d.lines.map(l => `<tr class="border-b last:border-0"><td class="py-1 px-1">${esc(l.itemName)}<div class="text-[11px] text-slate-400">${esc(l.itemCode)} · PCT ${esc(l.pctCode)}</div></td><td class="text-right px-1">${l.quantity}</td><td class="text-right px-1">${money(l.unitPrice)}</td><td class="text-right px-1">${l.discount ? money(l.discount) : ''}</td><td class="text-right px-1">${money(l.saleValue)}</td><td class="text-right px-1">${money(l.taxCharged)} <span class="text-[11px] text-slate-400">${l.taxRate}%</span></td><td class="text-right px-1 font-medium">${money(l.totalAmount)}</td>${credit ? '' : `<td class="text-right px-1">${l.returned && l.returned.quantity ? l.returned.quantity : ''}</td>`}</tr>`).join('')}
-      <tr class="font-semibold"><td class="py-1 px-1" colspan="4">Total</td><td class="text-right px-1">${money(d.totals.saleValue)}</td><td class="text-right px-1">${money(d.totals.tax)}</td><td class="text-right px-1">${money(d.totals.bill)}</td>${credit ? '' : '<td></td>'}</tr></tbody></table></div>
+    <div class="hidden md:block overflow-x-auto"><table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr>${th()}Item</th>${th('text-right')}Qty</th>${th('text-right')}Price</th>${th('text-right')}Discount</th>${th('text-right')}Value</th>${th('text-right')}Tax</th>${th('text-right')}Total</th>${isNote ? '' : th('text-right') + 'Returned</th>'}</tr></thead><tbody>
+      ${d.lines.map(l => `<tr class="border-b last:border-0"><td class="py-1 px-1">${esc(l.itemName)}<div class="text-[11px] text-slate-400">${esc(l.itemCode)} · PCT ${esc(l.pctCode)}</div></td><td class="text-right px-1">${l.quantity}</td><td class="text-right px-1">${money(l.unitPrice)}</td><td class="text-right px-1">${l.discount ? money(l.discount) : ''}</td><td class="text-right px-1">${money(l.saleValue)}</td><td class="text-right px-1">${money(l.taxCharged)} <span class="text-[11px] text-slate-400">${l.taxRate}%</span></td><td class="text-right px-1 font-medium">${money(l.totalAmount)}</td>${isNote ? '' : `<td class="text-right px-1">${l.returned && l.returned.quantity ? l.returned.quantity : ''}</td>`}</tr>`).join('')}
+      <tr class="font-semibold"><td class="py-1 px-1" colspan="4">Total</td><td class="text-right px-1">${money(d.totals.saleValue)}</td><td class="text-right px-1">${money(d.totals.tax)}</td><td class="text-right px-1">${money(d.totals.bill)}</td>${isNote ? '' : '<td></td>'}</tr></tbody></table></div>
     <div class="md:hidden space-y-2">${d.lines.map(l => `<div class="border rounded-lg p-2.5 text-sm">
         <div class="font-medium break-words">${esc(l.itemName)}</div><div class="text-[11px] text-slate-400">${esc(l.itemCode)} · PCT ${esc(l.pctCode)}</div>
         <div class="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-slate-600">
           <span>${l.quantity} × ${money(l.unitPrice)}</span><span class="text-right">Value ${money(l.saleValue)}</span>
           <span>${l.discount ? `Discount ${money(l.discount)}` : ''}</span><span class="text-right">Tax ${l.taxRate}%: ${money(l.taxCharged)}</span>
-          <span>${!credit && l.returned && l.returned.quantity ? `Returned ${l.returned.quantity}` : ''}</span><span class="text-right text-sm font-semibold text-slate-900">${money(l.totalAmount)}</span></div></div>`).join('')}
+          <span>${!isNote && l.returned && l.returned.quantity ? `Returned ${l.returned.quantity}` : ''}</span><span class="text-right text-sm font-semibold text-slate-900">${money(l.totalAmount)}</span></div></div>`).join('')}
       <div class="flex justify-between font-semibold px-1 pt-1"><span>Total</span><span>${money(d.totals.bill)}</span></div></div>
+    ${(d.debitNotes || []).length ? `<div class="text-sm">Debit notes: ${d.debitNotes.map(c => `<a href="#" onclick="event.preventDefault(); posOpenSale('${c.id}')" class="underline text-emerald-700">${esc(c.usin)}</a> (${POS_STATES[c.state] ? POS_STATES[c.state][0] : c.state}, ${money(c.totalBill)})`).join(' · ')}</div>` : ''}
     ${d.creditNotes.length ? `<div class="text-sm">Credit notes: ${d.creditNotes.map(c => `<a href="#" onclick="event.preventDefault(); posOpenSale('${c.id}')" class="underline text-emerald-700">${esc(c.usin)}</a> (${POS_STATES[c.state] ? POS_STATES[c.state][0] : c.state}, ${money(c.totalBill)})`).join(' · ')}</div>` : ''}
     <div class="flex flex-wrap gap-2">${acts.join('')}</div>
     <div id="posForm"></div>
@@ -717,6 +731,15 @@ function posSaleHtml(d) {
       <ul class="mt-2 space-y-1 text-xs">${d.events.map(e => `<li><span class="text-slate-400">${esc(posWhen(e.at))}</span> · ${e.from && e.from !== e.to ? `${esc(e.from)} → ` : ''}<b>${esc(e.to)}</b> · ${esc(e.by)}${e.note ? ' · ' + esc(e.note) : ''}</li>`).join('')}</ul>
       ${d.tries.length ? `<table class="mt-2 text-xs w-full"><thead class="text-left text-slate-400"><tr><th>Sent</th><th>Took</th><th>Result</th><th>PRA said</th></tr></thead><tbody>${d.tries.map(t => `<tr><td>${esc(posWhen(t.at))}</td><td>${t.durationMs} ms</td><td>${esc(t.outcome)}${t.httpStatus ? ' (HTTP ' + t.httpStatus + ')' : ''}</td><td>${esc(t.message)}</td></tr>`).join('')}</tbody></table>` : ''}
       ${mgr && d.payload ? `<details class="mt-2"><summary class="cursor-pointer text-slate-500">What was sent to PRA</summary><pre class="text-[11px] bg-slate-50 border rounded p-2 overflow-x-auto">${esc(JSON.stringify(d.payload, null, 2))}</pre></details>` : ''}</details></div>`;
+}
+// A phone box says what is wrong with the number as it is typed (the server checks it again when the sale or the record is saved)
+function posPhoneCheck(el) {
+  const problem = PosCalc.phoneProblem(el.value);
+  el.classList.toggle('!border-red-400', Boolean(problem));
+  const host = el.closest('label') || el.parentElement;
+  let help = host.querySelector('.posPhoneHelp');
+  if (!help && problem) { help = document.createElement('div'); help.className = 'posPhoneHelp text-xs text-red-600 mt-1'; host.appendChild(help); }
+  if (help) help.textContent = problem ? `Phone number: ${problem}.` : '';
 }
 const posForm = html => { $('#posForm').innerHTML = html; $('#posForm').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); };
 async function posRefreshAfter(r, id) {
@@ -799,12 +822,39 @@ async function posCredit(id) {
   } catch (err) { toast(err.message); }
 }
 
+// A debit note adds to a fiscalized sale: more of an item, or a price raised after the sale. Each line takes the quantity being added and,
+// if it differs, the price (what the sold line's price meant about tax, and its tax rate, carry over).
+function posDebitForm(id) {
+  POS.debitRef = newRequestId();
+  const d = POS.detail;
+  posForm(`<div class="border rounded-lg p-3 space-y-2"><div class="font-medium text-sm">Add to this sale (debit note)</div>
+    <p class="text-xs text-slate-600">For more of an item, or a price raised after the sale. For something given back, use <b>Return items</b> instead.</p>
+    <table class="w-full text-sm"><thead class="text-left text-slate-500"><tr><th>Item</th><th class="text-right">Sold</th><th class="text-right">Add quantity</th><th class="text-right">Price${d.lines.some(l => l.taxInclusive) ? ' (incl. tax where it was)' : ''}</th></tr></thead><tbody>
+      ${d.lines.map(l => `<tr class="border-t"><td class="py-1">${esc(l.itemName)}</td><td class="text-right">${l.quantity} × ${money(l.unitPrice)}</td>
+        <td class="text-right"><input data-dline="${l.id}" inputmode="decimal" placeholder="0" class="!w-20 text-right" aria-label="Quantity to add of ${esc(l.itemName)}"></td>
+        <td class="text-right"><input data-dprice="${l.id}" inputmode="decimal" value="${esc(l.unitPrice)}" class="!w-24 text-right" aria-label="Price of ${esc(l.itemName)}"></td></tr>`).join('')}</tbody></table>
+    <label><span>Reason</span><input id="fdnReason" maxlength="300" autocomplete="off"></label>
+    <p class="text-xs text-slate-600">The debit note is sent to PRA at the sold line's tax rate. Print it for the customer once PRA accepts it.</p>
+    <div class="flex gap-2">${posBtn('Send debit note to PRA', `posDebit('${id}')`, 'primary')}${posBtn('Not now', "$('#posForm').innerHTML = ''")}</div></div>`);
+}
+async function posDebit(id) {
+  const lines = [...document.querySelectorAll('#posForm input[data-dline]')].map(i => ({ lineId: i.dataset.dline, quantity: i.value.trim(), unitPrice: (document.querySelector(`#posForm input[data-dprice="${i.dataset.dline}"]`) || { value: '' }).value.trim() })).filter(l => l.quantity && Number(l.quantity) > 0);
+  if (!lines.length) return toast('Enter how many of each item are being added.');
+  try {
+    toast('Sending the debit note to PRA…', true);
+    const r = await api(`/api/pos/sales/${id}/debit-note`, { method: 'POST', body: { lines, reason: $('#fdnReason').value, clientRef: POS.debitRef } });
+    POS.debitRef = null;
+    if (r.result.outcome === 'FISCALIZED') { toast(`Debit note ${r.sale.usin} fiscalized`, true); await posShowReceipt(r.sale.id); } else toast(`Debit note ${r.sale.usin}: ${r.result.message}`);
+    posOpenSale(r.result.outcome === 'FISCALIZED' ? id : r.sale.id); if (S.page === 'p-sales') posLoadSales();
+  } catch (err) { toast(err.message); }
+}
+
 /* ---------- items ---------- */
 async function posEnterItems() {
   posPollAlerts();
   // what a new item starts with (Settings) is read each time, so the owner's change shows at once; without it the form simply starts blank
   const defaults = api('/api/pos/settings').then(r => { POS.settings = r; }, () => { POS.settings = null; });
-  await posLoadItems(); await defaults;
+  await posLoadRates(); await posLoadItems(); await defaults;
   showPlanHint('piPlanHint', ['items']);
 }
 async function posLoadItems() {
@@ -817,17 +867,19 @@ function posRenderItems() {
   $('#piRows').innerHTML = POS.items.map(i => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer ${i.active ? '' : 'opacity-50'}" onclick="posItemForm('${i.id}')">
     <td class="py-2 font-mono text-xs">${esc(i.code)}${i.barcode ? `<div class="text-slate-400">${esc(i.barcode)}</div>` : ''}</td><td class="font-medium">${esc(i.name)}${i.openPrice ? ' <span class="text-xs text-slate-500">(price typed on each sale)</span>' : ''}${i.active ? '' : ' <span class="text-xs">(switched off)</span>'}</td>
     <td>${esc(i.category)}</td><td class="font-mono text-xs">${esc(pct(i))}</td><td class="text-right">${i.taxRate}</td><td class="text-right">${i.taxRateCard === null ? '<span class="text-slate-400">same</span>' : i.taxRateCard}</td>
-    <td class="text-right">${i.openPrice ? '—' : money(i.unitPrice)}</td><td class="text-right text-emerald-700 text-xs">Edit</td></tr>`).join('') || '<tr><td colspan="8" class="py-6 text-center text-slate-500">No items yet. Add the services you sell.</td></tr>';
+    <td class="text-right">${i.openPrice ? '—' : money(i.unitPrice)}${i.taxInclusive && !i.openPrice ? '<div class="text-[11px] text-slate-400">incl. tax</div>' : ''}</td><td class="text-right text-emerald-700 text-xs">Edit</td></tr>`).join('') || '<tr><td colspan="8" class="py-6 text-center text-slate-500">No items yet. Add the services you sell.</td></tr>';
   $('#piCards').innerHTML = POS.items.map(i => `<button type="button" onclick="posItemForm('${i.id}')" class="w-full text-left border rounded-lg p-3 hover:bg-slate-50 ${i.active ? '' : 'opacity-50'}">
     <div class="flex items-start justify-between gap-3"><div class="font-medium break-words min-w-0">${esc(i.name)}</div><div class="font-semibold whitespace-nowrap">${i.openPrice ? 'price on sale' : money(i.unitPrice)}</div></div>
     <div class="text-xs text-slate-500 mt-0.5">${esc(i.code)}${i.barcode ? ' · ' + esc(i.barcode) : ''}${i.category ? ' · ' + esc(i.category) : ''} · PCT ${esc(pct(i))}</div>
-    <div class="text-xs mt-1">Tax ${i.taxRate}%${i.taxRateCard === null ? '' : ` · on card ${i.taxRateCard}%`}${i.openPrice ? ' · price typed on each sale' : ''}${i.active ? '' : ' · switched off'}</div></button>`).join('') || '<p class="py-6 text-center text-sm text-slate-500">No items yet. Add the services you sell.</p>';
+    <div class="text-xs mt-1">Tax ${i.taxRate}%${i.taxRateCard === null ? '' : ` · on card ${i.taxRateCard}%`}${i.openPrice ? ' · price typed on each sale' : ''}${i.taxInclusive ? ' · price includes tax' : ''}${i.followSchedule ? (i.schedule ? ' · follows the rate schedule' : ' · follows the schedule (none for this heading: own rate used)') : ''}${i.active ? '' : ' · switched off'}</div></button>`).join('') || '<p class="py-6 text-center text-sm text-slate-500">No items yet. Add the services you sell.</p>';
 }
 // prefill: what a scan of an unknown barcode already knows (the form for a new item opens with it filled in)
 function posItemForm(id, prefill) {
   const d = POS.settings || {}; // what the owner chose for a new item (Settings); an existing item keeps its own
-  const i = id ? POS.items.find(x => x.id === id) : { code: '', barcode: '', name: '', category: d.itemCategory || '', pctCode: d.itemPct || '', taxRate: d.itemTaxRate ?? '', taxRateCard: d.itemTaxRateCard ?? null, unitPrice: '', openPrice: false, active: true, ...(prefill || {}) };
+  const i = id ? POS.items.find(x => x.id === id) : { code: '', barcode: '', name: '', category: d.itemCategory || '', pctCode: d.itemPct || '', taxRate: d.itemTaxRate ?? '', taxRateCard: d.itemTaxRateCard ?? null, unitPrice: '', openPrice: false, taxInclusive: false, active: true, ...(prefill || {}) };
   const cats = [...new Set(POS.items.map(x => x.category).filter(Boolean))];
+  // an item that follows the schedule is shown with the schedule's rate: the boxes hold its own rate, which is what it falls back to
+  const ownRate = i.ownTaxRate !== undefined ? i.ownTaxRate : i.taxRate, ownCard = i.ownTaxRate !== undefined ? i.ownTaxRateCard : i.taxRateCard;
   $('#piForm').innerHTML = `<div class="border rounded-lg p-4 mb-4 bg-slate-50 space-y-3">
     <div class="font-medium">${id ? `Edit ${esc(i.name)} <span class="text-xs text-slate-500">(code ${esc(i.code)} stays the same)</span>` : 'Add an item'}</div>
     <div class="grid sm:grid-cols-4 gap-3 items-end">
@@ -837,12 +889,14 @@ function posItemForm(id, prefill) {
         <button type="button" onclick="posScanIntoField('fiBarcode')" class="shrink-0 px-2.5 rounded-lg border bg-white hover:border-emerald-600" aria-label="Scan the barcode with the camera">${POS_ICON_SCAN}</button></div></label>
       <label class="sm:col-span-2"><span>Quick rate <span class="text-slate-400">(fills in the heading and the tax boxes below)</span></span>${posRateSelect('fi')}</label>
       <label><span>Category</span><input id="fiCat" value="${esc(i.category)}" maxlength="60" list="fiCats" autocomplete="off"><datalist id="fiCats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
-      <label><span>Price before tax</span><input id="fiPrice" value="${i.unitPrice === '' ? '' : esc(i.unitPrice)}" inputmode="decimal" ${i.openPrice ? 'disabled' : ''}></label>
+      <label><span>Price <span class="text-slate-400">(before tax, unless the box below is ticked)</span></span><input id="fiPrice" value="${i.unitPrice === '' ? '' : esc(i.unitPrice)}" inputmode="decimal" ${i.openPrice ? 'disabled' : ''}></label>
       <label><span>PCT code (8 digits)</span><input id="fiPct" value="${esc(i.pctCode ? i.pctCode.slice(0, 4) + '.' + i.pctCode.slice(4) : '')}" placeholder="9801.2000" oninput="posPctSearch(this.value, 'fi')" autocomplete="off"></label>
-      <label><span>Sales tax %</span><input id="fiRate" value="${esc(i.taxRate)}" inputmode="decimal"></label>
-      <label><span>Sales tax % when paid by card <span class="text-slate-400">(optional)</span></span><input id="fiRateCard" value="${i.taxRateCard === null ? '' : esc(i.taxRateCard)}" inputmode="decimal" placeholder="same as above"></label>
+      <label><span>Sales tax %${i.followSchedule ? ' <span class="text-slate-400">(used only if the schedule has no rate)</span>' : ''}</span><input id="fiRate" value="${esc(ownRate)}" inputmode="decimal"></label>
+      <label><span>Sales tax % when paid by card <span class="text-slate-400">(optional)</span></span><input id="fiRateCard" value="${ownCard === null || ownCard === undefined ? '' : esc(ownCard)}" inputmode="decimal" placeholder="same as above"></label>
       <div class="flex flex-col justify-end gap-1 text-sm">
         <label class="flex items-center gap-2"><input id="fiOpen" type="checkbox" style="width:auto" ${i.openPrice ? 'checked' : ''} onchange="$('#fiPrice').disabled = this.checked"> The cashier types the price on each sale</label>
+        <label class="flex items-start gap-2"><input id="fiFollow" type="checkbox" style="width:auto" class="mt-1" ${i.followSchedule ? 'checked' : ''}> <span>Follow the rate schedule: the tax rate for this heading comes from PRA's rate table and changes by itself on the day PRA's rate changes. Sales already made keep the rate they were made at.${i.schedule ? ` <b>Today: ${i.taxRate}%${i.taxRateCard === null ? '' : ` (${i.taxRateCard}% on card)`}</b>, in force from ${esc(posDayShort(i.schedule.from))}.` : ''}</span></label>
+        <label class="flex items-center gap-2"><input id="fiIncl" type="checkbox" style="width:auto" ${i.taxInclusive ? 'checked' : ''}> The price already includes the sales tax (a shelf price: the tax is taken out of it, not added on)</label>
         <label class="flex items-center gap-2"><input id="fiActive" type="checkbox" style="width:auto" ${i.active ? 'checked' : ''}> On sale (untick to hide it from the cashier)</label></div></div>
     <div id="fiPctHits" class="text-sm"></div><div id="fiRateNote" class="text-xs text-emerald-800"></div>
     <div class="text-xs text-slate-600 space-y-1">
@@ -867,7 +921,7 @@ function posPctSearch(v, p = 'fi') {
 function posPctPick(code, p = 'fi') { $('#' + p + 'Pct').value = code; $('#' + p + 'PctHits').innerHTML = ''; }
 // The "quick rate" box: suggestions for the usual kinds of business (public/pos-rates.js). They fill the three boxes; the owner or manager
 // still confirms them against the current schedule, and the item or the setting is checked when it is saved.
-const posRateSelect = p => `<select id="${p}Preset" onchange="posApplyRate(this.value, '${p}')"><option value="">Choose a kind of business…</option>${PosRates.PRESETS.map(r => `<option value="${r.id}">${esc(r.label)}: ${esc(PosRates.describe(r))}</option>`).join('')}</select>`;
+const posRateSelect = p => `<select id="${p}Preset" onchange="posApplyRate(this.value, '${p}')"><option value="">Choose a kind of business…</option>${PosRates.CURRENT.map(r => `<option value="${r.id}">${esc(r.label)}: ${esc(PosRates.describe(r))}</option>`).join('')}</select>`;
 function posApplyRate(id, p) {
   const r = PosRates.find(id); if (!r) return;
   $('#' + p + 'Pct').value = r.pct; $('#' + p + 'Rate').value = r.rate; $('#' + p + 'RateCard').value = r.card === null ? '' : r.card;
@@ -875,11 +929,17 @@ function posApplyRate(id, p) {
   const note = $('#' + p + 'RateNote');
   if (note) note.textContent = `Filled in for ${r.label.toLowerCase()}: ${PosRates.describe(r)}. Rates change with each Finance Act: check them against the current schedule.`;
   const hits = $('#' + p + 'PctHits'); if (hits) hits.innerHTML = '';
+  // a rate that comes from the schedule can keep following it: the item form offers that already ticked
+  const follow = p === 'fi' && r.scheduled ? $('#fiFollow') : null; if (follow) follow.checked = true;
+}
+// The rates in force today in PRA's schedule (the super admin keeps it up to date): they fill the quick-rate lists. Without them the five built-in suggestions stay.
+async function posLoadRates() {
+  try { const r = await api('/api/pos/rates'); PosRates.use(r.rates); POS.ratesDate = r.date; } catch { PosRates.use(null); }
 }
 async function posItemSave(id) {
   const body = {
     name: $('#fiName').value, ...(id ? {} : { code: $('#fiCode').value }), barcode: $('#fiBarcode').value, category: $('#fiCat').value, pctCode: $('#fiPct').value, taxRate: $('#fiRate').value, taxRateCard: $('#fiRateCard').value,
-    unitPrice: $('#fiPrice').value, openPrice: $('#fiOpen').checked, active: $('#fiActive').checked,
+    unitPrice: $('#fiPrice').value, openPrice: $('#fiOpen').checked, taxInclusive: $('#fiIncl').checked, followSchedule: $('#fiFollow').checked, active: $('#fiActive').checked,
   };
   try {
     await api(id ? `/api/pos/items/${id}` : '/api/pos/items', { method: id ? 'PUT' : 'POST', body });
@@ -919,8 +979,9 @@ function posShowState(state) { POS.sales = posBlankSales({ from: '', to: '', sta
 async function posEnterSettings() {
   posPollAlerts();
   try {
-    [POS.profile, POS.branches, POS.settings] = await Promise.all([api('/api/pos/profile'), api('/api/pos/branches'), api('/api/pos/settings')]);
+    [POS.profile, POS.branches, POS.settings] = await Promise.all([api('/api/pos/profile'), api('/api/pos/branches'), api('/api/pos/settings'), posLoadRates()]);
     posRenderSettings();
+    if (typeof posSettingsExtrasLoad === 'function') posSettingsExtrasLoad();
     api('/api/pos/egress-ip').then(r => { POS.ip = r.ip; const mail = $('#pEmail'); if (mail) mail.textContent = posWhitelistEmail(); const el = $('#pIp'); if (el) el.innerHTML = `<b class="font-mono">${esc(r.ip)}</b>${r.viaProxy ? ' (through the static-IP proxy)' : ' <span class="text-amber-700">(no static-IP proxy: this address can change)</span>'}`; }).catch(() => { const el = $('#pIp'); if (el) el.textContent = 'could not be checked'; });
   } catch (err) { toast(err.message); }
 }
@@ -936,6 +997,7 @@ function posRenderSettings() {
         <label class="sm:col-span-3"><span>Receipt footer <span class="text-slate-400">(optional)</span></span><input id="sfFoot" value="${esc(p.receiptFooter)}" maxlength="200" placeholder="Thank you for dining with us"></label></div>
       <div class="mt-3">${posBtn('Save business details', 'posSaveProfile()', 'primary')}</div></div>
     ${posSettingsCard()}
+    ${typeof posSettingsExtras === 'function' ? posSettingsExtras() : ''}
     <div class="bg-white rounded-xl shadow p-5 space-y-4"><div class="flex flex-wrap items-center justify-between gap-2"><h2 class="font-semibold">Branches and counters</h2>${posBtn('+ Add branch', 'posBranchForm()')}</div>
       <p id="sfPlanHint" class="text-xs"></p>
       <div id="sfForm"></div>

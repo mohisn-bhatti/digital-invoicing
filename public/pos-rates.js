@@ -17,9 +17,20 @@
         { id: 'beauty', label: 'Beauty parlour, salon', pct: '9810.0000', rate: 5, card: null },
     ];
 
-    const find = id => PRESETS.find(p => p.id === id) || null;
+    // The list the screens use: the five above until the rate schedule (the super admin's table of PRA rates, by heading and date) has been read, then
+    // the schedule's own list. A heading the five above know keeps their friendlier name.
+    let current = PRESETS;
+    const heading = code => `${String(code).slice(0, 4)}.${String(code).slice(4)}`;
+    function use(rows) {
+        if (!Array.isArray(rows) || !rows.length) { current = PRESETS; return; }
+        current = rows.map(r => {
+            const known = PRESETS.find(p => p.pct === heading(r.code));
+            return { id: r.code, label: known ? known.label : r.label, pct: heading(r.code), rate: r.rate, card: r.cardRate === null || r.cardRate === undefined ? null : r.cardRate, conditions: r.conditions || '', from: r.effectiveFrom || '', source: [r.sourceName, r.sourceRef].filter(Boolean).join(', '), scheduled: true };
+        }).sort((a, b) => a.pct.localeCompare(b.pct));
+    }
+    const find = id => current.find(p => p.id === id) || null;
     // how a suggestion reads in a list: "9801.2000 · 16% (8% on card)"
     const describe = p => `${p.pct} · ${p.rate}%${p.card === null ? '' : ` (${p.card}% on card)`}`;
 
-    return { PRESETS, find, describe };
+    return { PRESETS, get CURRENT() { return current; }, use, find, describe };
 });

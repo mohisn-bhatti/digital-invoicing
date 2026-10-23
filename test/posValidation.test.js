@@ -17,7 +17,7 @@ test('validation: buyer details are optional, and in PRA\'s format when given', 
         [{ pntn: '1234567-8' }, { ...blank, pntn: '1234567-8' }], [{ pntn: '12345678' }, { ...blank, pntn: '1234567-8' }], [{ pntn: ' 1234567 8 ' }, { ...blank, pntn: '1234567-8' }],
         [{ cnic: '3520212345671' }, { ...blank, cnic: '3520212345671' }], [{ cnic: '35202-1234567-1' }, { ...blank, cnic: '3520212345671' }],
         [{ phone: '0300-1234567' }, { ...blank, phone: '03001234567' }], [{ phone: '+92 300 1234567' }, { ...blank, phone: '923001234567' }],
-        [{ phone: '(042) 111-222-333' }, { ...blank, phone: '042111222333' }], [{ phone: '00923001234567' }, { ...blank, phone: '00923001234567' }, 'PRA\'s own sample'],
+        [{ phone: '(042) 111-222-333' }, { ...blank, phone: '042111222333' }], [{ phone: '00923001234567' }, { ...blank, phone: '923001234567' }, 'PRA\'s own sample: the 00 is the way out of the country, not part of the number'],
     ]);
     refuses(b => V.cleanBuyer({ pntn: b }), ['1234567', '123456789', 'ABC12345678', '1234567-8x', '1234567--8x', '12-34'], /PNTN/);
     refuses(b => V.cleanBuyer({ cnic: b }), ['35202123456', '35202123456712', 'abc3520212345', '3520212345671x'], /CNIC/);
@@ -102,4 +102,30 @@ test('validation: every figure in the PRA payload stays inside PRA\'s field size
     assert.match(p.DateTime, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     assert.strictEqual(p.DateTime, '2026-10-19 13:00:00', 'Pakistan time (UTC+5)');
     assert.ok([1, 2, 3, 4, 5, 6].includes(p.PaymentMode) && [1, 2, 3].includes(p.InvoiceType));
+});
+
+test('validation: a phone number is checked as a number, however it is typed, and a wrong one says what is wrong', () => {
+    const C = require('../public/pos-calc.js');
+    for (const ok of ['03001234567', '0300-1234567', '0300 123 4567', '+92 300 1234567', '+923001234567', '923001234567', '0092 300 1234567', '00923001234567', '042 35761234', '(042) 111-222-333', '+92 42 35761234', '+971 50 123 4567', '00971501234567', '+44 7400 123456', '']) {
+        assert.strictEqual(C.phoneProblem(ok), '', `${ok} is a good number`);
+    }
+    for (const bad of ['0300123456', '030012345678', '03001234', '+92300123456', '+9230012345678', '+923001234567890', '00923001234567890', '12345', '+92 300 1234567 8', '0092 300 1234567 89', '1234567', '0200', 'call me', '0300-ABC4567', '++923001234567', '+1234567', '3001234567']) {
+        assert.notStrictEqual(C.phoneProblem(bad), '', `${bad} is not a good number`);
+    }
+    // more than 13 digits is never a phone number here, with or without a country code (the 00 in front does not count)
+    assert.match(C.phoneProblem('12345678901234'), /too many digits \(13 at most/);
+    assert.match(C.phoneProblem('+12345678901234'), /too many digits/);
+    assert.match(C.phoneProblem('0092 300 1234567 89'), /too many digits/);
+    assert.strictEqual(C.phoneProblem('+971 50 123 4567'), '');
+    assert.strictEqual(C.phoneProblem('+49 1512 3456789'), '', 'thirteen digits is allowed');
+    // the digits kept are the digits typed
+    assert.strictEqual(C.phoneDigits('0300-123 4567'), '03001234567');
+    assert.strictEqual(C.phoneDigits('+92 300 1234567'), '923001234567');
+    assert.strictEqual(C.phoneDigits('00923001234567'), '923001234567', 'the 00 is not kept');
+    assert.strictEqual(C.phoneDigits('nonsense'), '');
+    // the message says what to do, in words a cashier can follow
+    assert.throws(() => V.cleanBuyer({ phone: '0300123456' }), /Buyer phone number: a Pakistani mobile number has 11 digits and starts with 03/);
+    assert.throws(() => V.cleanCustomer({ name: 'X', phone: '+92300123' }), /phone number/);
+    // an edited saved customer sends its own stored number back, and it still passes
+    for (const stored of ['923001234567', '971501234567', '04235761234', '00923001234567']) assert.doesNotThrow(() => V.cleanBuyer({ phone: stored }), stored);
 });

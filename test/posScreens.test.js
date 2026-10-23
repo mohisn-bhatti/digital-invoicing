@@ -42,7 +42,7 @@ function page(overrides = {}) {
     box.self = box; box.window.document = box.document;
     const ctx = vm.createContext(box);
     // the same scripts, in the same order, as app.html loads them
-    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos-rates.js', 'pos-drill.js', 'pos.js', 'pos-camera.js', 'pos-customers.js', 'pos-reports.js']) vm.runInContext(pub(f), ctx, { filename: f });
+    for (const f of ['pos-calc.js', 'pos-scan.js', 'pos-rates.js', 'pos-drill.js', 'pos.js', 'pos-camera.js', 'pos-customers.js', 'pos-reports.js', 'pos-accounts.js', 'pos-escpos.js', 'pos-printer.js', 'pos-extras.js', 'admin-rates.js']) vm.runInContext(pub(f), ctx, { filename: f });
     vm.runInContext(`
         const S = { token: 't', module: 'POS', tenantRole: 'OWNER' }, PAGE_ENTER = {};
         const showPlanHint = () => {}; // (the plan-limit hint under a list: not what these tests are about)
@@ -993,4 +993,278 @@ test('POS screen: a counter that is switched off is shown, not hidden behind "Al
     p.run("POS.sales = posBlankSales({ from: '', to: '', counterId: 'c1' })");
     await p.run('posFillSalesFilters()');
     assert.ok(!/switched off/.test(p.$('#psCounter').innerHTML), 'a counter that is in use is just itself');
+});
+
+
+// ---------- accounts screens (public/pos-accounts.js) ----------
+const EVIL = '<img src=x onerror=alert(1)>';
+const vendor = (over = {}) => ({ id: 'v1', code: 'VEN0001', name: 'Al-Noor', ntn: '', phone: '0300', address: '', notes: '', active: true, openingBalance: 0, purchases: 1, purchased: 1000, paid: 400, balance: 600, ...over });
+
+test('accounts screens: the pages are registered with a place for their rows, and the menu entries point at them', () => {
+    const p = page();
+    const ids = JSON.parse(p.run('JSON.stringify(POS_PAGES.map(x => x.id))'));
+    for (const id of ['p-vendors', 'p-purchases', 'p-pay', 'p-receive', 'p-cashbook']) assert.ok(ids.includes(id), id);
+    const html = p.run("POS_PAGES.map(x => x.html()).join('')");
+    for (const id of ['avRows', 'apRows', 'payRows', 'rcvRows', 'pBook']) assert.ok(html.includes(`id="${id}"`), id);
+    for (const id of ['p-vendors', 'p-purchases', 'p-pay', 'p-receive', 'p-cashbook']) assert.ok(new RegExp(`\\{ id: '${id}'.*roles: \\['OWNER', 'ACCOUNTANT'\\]`).test(app), `${id} is in the Point of Sale menu for managers only`);
+});
+
+test('accounts screens: what a vendor, a bill or a voucher is called can never run as script', async () => {
+    const p = page({ answers: { '/api/pos/vendors': { total: 1, vendors: [vendor({ name: EVIL })] } } });
+    await p.run('posEnterVendors()');
+    const html = p.$('#avRows').innerHTML;
+    assert.ok(html.includes('&lt;img'), 'the name is shown as text');
+    assert.ok(!html.includes('<img'), 'and is never markup');
+    const q = page();
+    q.run(`posAcct.p.rows = [${JSON.stringify({ id: 'b1', number: 'PUR000001', vendorName: EVIL, vendorRef: EVIL, date: '2026-10-01', total: 10, due: 10, status: 'UNPAID' })}]; posAcct.p.total = 1; posAcct.p.totals = { bills: 1, total: 10, tax: 0, due: 10 }; posBillRender()`);
+    assert.ok(!q.$('#apRows').innerHTML.includes('<img'));
+    q.run(`posAcct.cash.PAYMENT.rows = [${JSON.stringify({ id: 'e1', number: 'PAY000001', vendorName: EVIL, date: '2026-10-01', amount: 5, methodLabel: 'Cash', reference: EVIL })}]; posAcct.cash.PAYMENT.total = 1; posVoucherRender('PAYMENT')`);
+    assert.ok(!q.$('#payRows').innerHTML.includes('<img'));
+});
+
+test('accounts screens: filters that are empty are not sent, and the owing filter asks for what we owe', async () => {
+    assert.strictEqual(page().run("posAcctQuery({ q: '', status: 'OPEN', from: '', vendorId: null })"), 'status=OPEN');
+    const p = page({ answers: { '/api/pos/vendors': { total: 0, vendors: [], totalOwed: 0 } } });
+    p.run("posAcct.v.filter = 'owing'");
+    await p.run('posVendLoad(false)');
+    const url = p.log.api.find(u => u.startsWith('/api/pos/vendors'));
+    assert.match(url, /owing=1/);
+    assert.ok(!/active=/.test(url), 'a vendor we owe is shown even if switched off');
+    const q = page({ answers: { '/api/pos/vendors': { total: 0, vendors: [] } } });
+    await q.run('posVendLoad(false)');
+    assert.match(q.log.api.find(u => u.startsWith('/api/pos/vendors')), /active=1/, 'the default list is the vendors in use');
+});
+
+test('accounts screens: balances are said in words (we owe, paid in advance, owes us, we hold)', () => {
+    const p = page();
+    const text = code => decode(p.run(code)).replace(/<[^>]*>/g, '');
+    assert.strictEqual(text('posOweVendor(1500.5)'), 'We owe 1,500.50');
+    assert.strictEqual(text('posOweVendor(-20)'), 'Paid 20.00 in advance');
+    assert.strictEqual(text('posOweVendor(0)'), 'Nothing owed');
+    assert.strictEqual(text('posOweCustomer(300)'), 'Owes us 300.00');
+    assert.strictEqual(text('posOweCustomer(-50000)'), 'We hold 50,000.00 for them');
+});
+
+test('accounts screens: the bill form keeps what was typed when a line is added or taken away, and previews the total', () => {
+    const p = page();
+    const row = (name, qty, cost) => ({ querySelector: sel => ({ value: { '.fl-name': name, '.fl-qty': qty, '.fl-cost': cost }[sel] }) });
+    p.doc.querySelectorAll = sel => (sel === '#fbLines [data-line]' ? [row('Flour', '4', '5250.50'), row('Oil', '2.5', '1999.99')] : []);
+    p.run('posBillRead()');
+    assert.deepStrictEqual(JSON.parse(p.run('JSON.stringify(posAcct.lines)')), [{ itemName: 'Flour', quantity: '4', unitCost: '5250.50' }, { itemName: 'Oil', quantity: '2.5', unitCost: '1999.99' }]);
+    p.$('#fbTax').value = '3500.25';
+    p.run('posBillTotals()');
+    assert.match(p.$('#fbTotals').innerHTML, /Total 29,502\.2[23]/, 'a preview: the server\'s answer is the one that counts');
+    p.run("posAcct.lines = [{ itemName: 'a', quantity: '1', unitCost: '1' }, { itemName: 'b', quantity: '1', unitCost: '1' }]; posBillRead = () => {}; posBillDropLine(0)");
+    assert.strictEqual(JSON.parse(p.run('JSON.stringify(posAcct.lines)')).map(l => l.itemName).join(), 'b');
+});
+
+test('accounts screens: the cash book shows opening, every voucher with its running balance, and closing', () => {
+    const p = page();
+    p.run(`posAcct.book.data = ${JSON.stringify({ from: '2026-10-01', to: '2026-10-31', method: '', opening: 100, received: 50, paid: 20, closing: 130, truncated: false, count: 2, byMethod: { CASH: { label: 'Cash', in: 50, out: 20 }, BANK: { label: 'Bank transfer', in: 0, out: 0 } },
+        entries: [{ id: 'e1', kind: 'RECEIPT', number: 'RCV000001', date: '2026-10-02', amount: 50, methodLabel: 'Cash', customerName: EVIL, balance: 150 }, { id: 'e2', kind: 'PAYMENT', number: 'PAY000001', date: '2026-10-03', amount: 20, methodLabel: 'Cash', vendorName: 'Al-Noor', balance: 130 }] })}; $('#bkBody'); posBookRender()`);
+    const html = p.$('#bkBody').innerHTML;
+    assert.ok(html.includes('Opening balance') && html.includes('Closing balance'));
+    assert.ok(html.includes('150.00') && html.includes('130.00'));
+    assert.ok(!html.includes('<img'), 'a party name is text');
+});
+
+test('accounts screens: a login change forgets the accounts screens\' state', () => {
+    const p = page();
+    p.run("posAcct.v.q = 'x'; posAcct.lines = [1]; posAcct.cash.RECEIPT.q = 'y'; posReset()");
+    assert.strictEqual(p.run('posAcct.v.q'), '');
+    assert.strictEqual(p.run('posAcct.lines.length'), 0);
+    assert.strictEqual(p.run("posAcct.cash.RECEIPT.q"), '');
+});
+
+// ---------- tax-inclusive items, debit notes, logo, hand-written slips (pos.js, pos-extras.js) ----------
+const RCPT = (b = {}, s = {}) => JSON.stringify({
+    business: { name: 'Test Restaurant', pntn: '1234567-8', address: 'MM Alam Road', phone: '', footer: '', logo: '', ...b }, branch: null, look: { width: 80 }, counter: { name: 'Till 1', posId: '900001' },
+    sale: { usin: '000001', fiscalNumber: 'X1', verifyUrl: 'https://example.com/v', invoiceType: 1, paymentMode: 1, mock: false, env: 'PRODUCTION', at: '2026-10-19T08:00:00Z', cashier: 'a', buyer: { name: '', pntn: '', cnic: '', phone: '' },
+        totals: { quantity: 1, saleValue: 862.07, discount: 0, tax: 137.93, bill: 1000 }, lines: [{ itemName: 'Tea', quantity: 1, unitPrice: 1000, discount: 0, taxRate: 16, saleValue: 862.07, taxCharged: 137.93, totalAmount: 1000, taxInclusive: true }], ...s },
+});
+
+test('extras screens: the cart preview takes the tax out of a price that contains it', () => {
+    const p = page();
+    p.run(SETUP);
+    p.run("POS.itemsById.set('i1', { id: 'i1', code: 'A', name: 'Tea', taxRate: 16, taxRateCard: null, unitPrice: 1000, openPrice: false, taxInclusive: true }); POS.cart = [{ itemId: 'i1', qty: '1', price: '', disc: '' }]");
+    const pv = JSON.parse(p.run('JSON.stringify(posPreview())'));
+    assert.strictEqual(pv.ok, true);
+    assert.deepStrictEqual([pv.sale.totals.bill, pv.sale.totals.saleValue, pv.sale.totals.tax], [1000, 862.07, 137.93]);
+    p.run("POS.itemsById.get('i1').taxInclusive = false");
+    assert.strictEqual(JSON.parse(p.run('JSON.stringify(posPreview())')).sale.totals.bill, 1160, 'the same item with the tax on top');
+});
+
+test('extras screens: the receipt shows the logo, says Debit note, and marks a price that contained the tax; a logo cannot break out of its tag', () => {
+    const p = page();
+    p.run(SETUP);
+    const html = p.run(`posReceiptHtml(${RCPT({ logo: 'data:image/png;base64,iVBORw0KGgo=' }, { invoiceType: 2, refUsin: '000009' })})`);
+    assert.ok(html.includes('<img src="data:image/png;base64,iVBORw0KGgo="'), 'the logo is at the top');
+    assert.ok(html.indexOf('<img') < html.indexOf('Test Restaurant'), 'above the business name');
+    assert.ok(html.includes('DEBIT NOTE') && html.includes('Adds to invoice 000009'));
+    assert.ok(html.includes('(incl. tax)'));
+    const none = p.run(`posReceiptHtml(${RCPT()})`);
+    assert.ok(!none.includes('<img'), 'no logo, no picture');
+    assert.ok(none.includes('TAX INVOICE'));
+    const evil = p.run(`posReceiptHtml(${RCPT({ logo: 'x" onerror="alert(1)' })})`);
+    assert.ok(!evil.includes('onerror="alert'), 'the address is escaped as text');
+});
+
+test('extras screens: a sale with debit notes lists them, and a debit note is labelled and offers no returns column', () => {
+    const p = page();
+    p.run(SETUP);
+    const sale = { id: 's1', usin: '000001', invoiceType: 1, state: 'FISCALIZED', env: 'PRODUCTION', paymentMode: 1, counterName: 'Till 1', counterPosId: '1', createdBy: 'a', buyer: { name: '', pntn: '', cnic: '', phone: '' }, totals: { quantity: 1, saleValue: 1, discount: 0, tax: 0, bill: 1 }, lines: [{ id: 'l1', itemName: 'Tea', itemCode: 'A', pctCode: '98012000', quantity: 1, unitPrice: 1, discount: 0, saleValue: 1, taxCharged: 0, taxRate: 0, totalAmount: 1, returned: {}, taxInclusive: false }], events: [], tries: [], creditNotes: [], debitNotes: [{ id: 'd1', usin: '000002', state: 'FISCALIZED', totalBill: 5 }] };
+    const html = p.run(`posSaleHtml(${JSON.stringify(sale)})`);
+    assert.ok(html.includes('Debit notes:') && html.includes('000002'));
+    assert.ok(html.includes('Add to this sale (debit note)'), 'a manager can add to a fiscalized sale');
+    const debit = p.run(`posSaleHtml(${JSON.stringify({ ...sale, id: 'd1', invoiceType: 2, refUsin: '000001', debitNotes: [] })})`);
+    assert.ok(debit.includes('Debit note') && debit.includes('adds to invoice 000001'));
+    assert.ok(!debit.includes('Add to this sale (debit note)') && !debit.includes('Return items'), 'a debit note is not itself returned or added to');
+    assert.ok(!debit.includes('>Returned</th>'));
+});
+
+test('extras screens: the debit form asks only for what is being added and sends the price with it', async () => {
+    const p = page({ answers: { '/api/pos/sales/s1/debit-note': (url, opts) => { p.sent = JSON.parse(opts.body ? JSON.stringify(opts.body) : '{}'); return { result: { outcome: 'FISCALIZED' }, sale: { id: 'd1', usin: '000002' } }; } } });
+    p.run(SETUP);
+    p.run(`POS.detail = { id: 's1', lines: [{ id: 'l1', itemName: 'Tea', quantity: 2, unitPrice: 100, taxInclusive: false }, { id: 'l2', itemName: 'Rice', quantity: 1, unitPrice: 300, taxInclusive: true }] }; posDebitForm('s1')`);
+    const form = p.$('#posForm').innerHTML;
+    assert.ok(form.includes('data-dline="l1"') && form.includes('data-dprice="l2"') && form.includes('value="300"'));
+    assert.ok(form.includes('incl. tax where it was'), 'it says when a price contained the tax');
+});
+
+test('extras screens: a hand-written slip is shown as text and as not fiscal, and only a manager can report or void it', () => {
+    const EVIL2 = '<img src=x onerror=alert(1)>';
+    const slip = (over = {}) => ({ id: 'm1', bookNumber: EVIL2, writtenAt: '2026-10-20T09:30:00Z', description: EVIL2, buyer: { name: EVIL2, pntn: '', cnic: '', phone: '' }, paymentMode: 1, saleValue: 5000, tax: 800, total: 5800, reason: EVIL2, createdBy: 'a@x', createdAt: '2026-10-20T10:00:00Z', status: 'OPEN', ...over });
+    const p = page();
+    p.run(SETUP);
+    p.run(`posExtra.slips = [${JSON.stringify(slip())}]; posExtra.total = 1; posExtra.open = { count: 1, total: 5800 }; posManualRender()`);
+    const rows = p.$('#amRows').innerHTML;
+    assert.ok(!rows.includes('<img') && rows.includes('&lt;img'));
+    assert.ok(p.$('#amOpen').innerHTML.includes('1 slip is not reported yet'));
+    const html = p.run("POS_PAGES.find(x => x.id === 'p-manual').html()");
+    assert.ok(html.includes('These are not fiscal invoices'), 'the page says what these are not');
+    p.run('S.tenantRole = "OWNER"; posManualOpen("m1")');
+    const open = p.$('#posModalBody').innerHTML;
+    assert.ok(!open.includes('<img') && open.includes('Mark as reported'));
+    p.run('S.tenantRole = "CASHIER"; posManualOpen("m1")');
+    assert.ok(!p.$('#posModalBody').innerHTML.includes('Mark as reported'), 'a cashier only looks');
+    p.run(`posExtra.slips = [${JSON.stringify(slip({ status: 'REPORTED', reportedBy: 'm@x', reportedAt: '2026-10-21T10:00:00Z', reportNote: 'ref 8841' }))}]; S.tenantRole = 'OWNER'; posManualOpen("m1")`);
+    const rep = p.$('#posModalBody').innerHTML;
+    assert.ok(rep.includes('ref 8841') && !rep.includes('Mark as reported'));
+});
+
+test('extras screens: the direct-print button shows only where the browser can reach a printer, and Settings explains when it cannot', () => {
+    const p = page();
+    p.run(SETUP);
+    p.run('posEnsureModals()');
+    p.run('posReceiptButtons()');
+    assert.ok(p.$('#posDirectBtn').classList.contains('hidden'), 'this stand-in browser has neither Bluetooth nor USB');
+    const card = p.run('posSettingsExtras()');
+    assert.ok(card.includes('cannot talk to a printer directly'));
+    assert.ok(card.includes('Not yet tried on a real printer'), 'it is honest about what has been tried');
+    assert.ok(card.includes('Receipt logo') && card.includes('Keeping records'));
+});
+
+test('extras screens: signing out forgets the printer and the slips', () => {
+    const p = page();
+    p.run("posExtra.logo = 'data:image/png;base64,AA'; posExtra.slips = [1]; posExtra.q = 'x'; PosPrinter.conn = { kind: 'usb', name: 'P', send() {}, close() {} }; posReset()");
+    assert.strictEqual(p.run('posExtra.logo'), '');
+    assert.strictEqual(p.run('posExtra.slips.length'), 0);
+    assert.strictEqual(p.run('PosPrinter.conn'), null);
+});
+
+test('POS screen: each item tile shows how many of it are in the sale, and the count follows the cart', () => {
+    const p = page();
+    p.run(SETUP);
+    assert.strictEqual(p.run('posInCart("i1")'), 0);
+    p.run("posAdd('i1'); posAdd('i1'); posAdd('i2')");
+    assert.strictEqual(p.run('posInCart("i1")'), 2, 'tapped twice');
+    assert.strictEqual(p.run('posInCart("i2")'), 1);
+    assert.strictEqual(p.run('posInCart("i3")'), 0);
+    p.run("POS.cart.find(c => c.itemId === 'i1').qty = '3.5'");
+    assert.strictEqual(p.run('posInCart("i1")'), 3.5, 'a quantity typed in counts too');
+    // an item on two lines (an open price typed twice) counts as one total
+    p.run("POS.cart = [{ itemId: 'i3', qty: '1', price: '10', disc: '' }, { itemId: 'i3', qty: '2', price: '20', disc: '' }]");
+    assert.strictEqual(p.run('posInCart("i3")'), 3);
+    // the tile itself carries the badge, shown only when there is something to count
+    p.run("POS.cart = []; POS.q = ''; POS.cat = ''; posRenderGrid()");
+    const none = p.$('#pGrid').innerHTML;
+    assert.ok(/posBadge hidden/.test(none));
+    p.run("POS.cart = [{ itemId: 'i1', qty: '2', price: '', disc: '' }]; posRenderGrid()");
+    const some = p.$('#pGrid').innerHTML;
+    assert.ok(/data-item="i1"[\s\S]*?class="posBadge  absolute[\s\S]*?>2</.test(some), 'the tile for the item in the sale shows 2');
+});
+
+test('POS screens: the phone boxes tell the person what is wrong as they type, and stop saying it once it is right', () => {
+    const p = page();
+    p.run(SETUP);
+    p.run(`globalThis.posTestBox = { value: '0300123456', classList: { toggle(c, on) { (globalThis.__cls = globalThis.__cls || new Set())[on ? 'add' : 'delete'](c); } }, closest: () => globalThis.posTestHost, parentElement: null };
+           globalThis.posTestHost = { help: null, querySelector() { return this.help; }, appendChild(c) { this.help = c; } };
+           document.createElement = () => ({ className: '', textContent: '' });`);
+    p.run('posPhoneCheck(posTestBox)');
+    assert.match(p.run('posTestHost.help.textContent'), /^Phone number: a Pakistani mobile number has 11 digits/);
+    assert.ok(p.run("__cls.has('!border-red-400')"), 'the box turns red');
+    p.run("posTestBox.value = '0300-1234567'; posPhoneCheck(posTestBox)");
+    assert.strictEqual(p.run('posTestHost.help.textContent'), '', 'nothing is said about a good number');
+    assert.ok(!p.run("__cls.has('!border-red-400')"));
+    p.run("posTestBox.value = '12345678901234'; posPhoneCheck(posTestBox)");
+    assert.match(p.run('posTestHost.help.textContent'), /too many digits \(13 at most/);
+});
+
+// ---------- the rate schedule (public/admin-rates.js, public/pos-rates.js) ----------
+test('rate schedule screens: a spreadsheet is read by the names of its columns, in any order, with quotes and commas inside cells', () => {
+    const p = page();
+    const rows = JSON.parse(p.run(`JSON.stringify(arRowsFromCsv(${JSON.stringify('﻿EffectiveFrom,Heading,Service,Rate %,Card Rate,Source,Clause\r\n2026-07-01,9801.2000,"Restaurants, cafés and ""fast food""",16,8,"Act, 17th ed.",Second Schedule\r\n2026-07-01,9801.3000,Halls,8,,Act,"Serial 4\nline two"\r\n\r\n')}))`));
+    assert.strictEqual(rows.length, 2);
+    assert.deepStrictEqual(rows[0], { code: '9801.2000', label: 'Restaurants, cafés and "fast food"', rate: '16', cardRate: '8', effectiveFrom: '2026-07-01', sourceName: 'Act, 17th ed.', sourceRef: 'Second Schedule' });
+    assert.strictEqual(rows[1].cardRate, '');
+    assert.strictEqual(rows[1].sourceRef, 'Serial 4\nline two', 'a line break inside quotes is part of the cell');
+    assert.throws(() => p.run("arRowsFromCsv('code,label,rate\\n9801.2000,x,16')"), /no "effectiveFrom" column/);
+    assert.throws(() => p.run("arRowsFromCsv('code,label,rate,effectiveFrom')"), /heading row and at least one rate/);
+    // a tab-separated paste from a spreadsheet works too
+    const tabbed = JSON.parse(p.run(`JSON.stringify(arRowsFromCsv('code\\tlabel\\trate\\teffectiveFrom\\n98012000\\tRestaurants\\t16\\t2026-07-01'))`));
+    assert.deepStrictEqual(tabbed[0], { code: '98012000', label: 'Restaurants', rate: '16', effectiveFrom: '2026-07-01' });
+});
+
+test('rate schedule screens: headings, services and sources are shown as text, never as markup', () => {
+    const p = page();
+    const evil = '<img src=x onerror=alert(1)>';
+    p.run(`arState.rows = [${JSON.stringify({ authority: 'PRA', code: '98012000', heading: '9801.2000', label: evil, conditions: evil, rate: 16, cardRate: 8, effectiveFrom: '2026-07-01', sourceName: evil, sourceRef: evil, inForce: true, next: { rate: 18, cardRate: null, effectiveFrom: '2027-07-01' } })}]; arState.total = 1; arState.authorityName = 'PRA'; arState.day = '2026-10-23'; arRender()`);
+    const html = p.$('#arRows').innerHTML;
+    assert.ok(!html.includes('<img') && html.includes('&lt;img'));
+    assert.ok(html.includes('16%') && html.includes('8%'));
+    assert.ok(/18% from 01 Jul 2027/.test(html), 'the next change is shown with its date');
+    // a heading that has not started yet is shown as not yet
+    p.run(`arState.rows = [${JSON.stringify({ authority: 'PRA', code: '98012000', heading: '9801.2000', label: 'R', rate: 16, cardRate: null, effectiveFrom: '2027-01-01', sourceName: '', sourceRef: '', inForce: false, next: null })}]; arRender()`);
+    const later = p.$('#arRows').innerHTML;
+    assert.ok(later.includes('not yet') && later.includes('(starts later)'));
+});
+
+test('rate schedule screens: the quick-rate list is the schedule once it has been read, and the built-in five before that or if it cannot be read', async () => {
+    const p = page({ answers: { '/api/pos/rates': { date: '2026-10-23', rates: [{ code: '98012000', label: 'Services provided or rendered by restaurants', rate: 16, cardRate: 8, conditions: 'card 8', effectiveFrom: '2026-07-01', sourceName: 'Act', sourceRef: 'Second Schedule' }, { code: '98020000', label: 'Some other service', rate: 12, cardRate: null, effectiveFrom: '2026-07-01', sourceName: '', sourceRef: '' }] } } });
+    assert.strictEqual(p.run('PosRates.CURRENT.length'), 5, 'the five built-in suggestions to begin with');
+    await p.run('posLoadRates()');
+    assert.deepStrictEqual(JSON.parse(p.run('JSON.stringify(PosRates.CURRENT.map(r => [r.id, r.pct, r.rate, r.card, r.scheduled]))')), [['98012000', '9801.2000', 16, 8, true], ['98020000', '9802.0000', 12, null, true]]);
+    assert.strictEqual(p.run('PosRates.find("98012000").label'), 'Restaurant, café, fast food', 'a heading the built-in list knows keeps its friendly name');
+    assert.strictEqual(p.run('PosRates.find("98020000").label'), 'Some other service');
+    assert.match(p.run('posRateSelect("fi")'), /Some other service: 9802\.0000 · 12%/);
+    // the item form takes the schedule's rate and offers to follow it
+    p.run(SETUP);
+    p.run("posEnsureModals(); posItemForm(); posApplyRate('98012000', 'fi')");
+    // (a failed read puts the built-in list back)
+    const q = page();
+    await q.run('posLoadRates()');
+    assert.strictEqual(q.run('PosRates.CURRENT.length'), 5);
+});
+
+test('rate schedule screens: an item that follows the schedule shows the schedule\'s rate today, its own rate in the boxes, and says which it is', () => {
+    const p = page();
+    p.run(SETUP);
+    p.run("POS.items = [{ id: 'x', code: 'A', barcode: null, name: 'Dinner', category: '', pctCode: '98012000', taxRate: 16, taxRateCard: 8, ownTaxRate: 5, ownTaxRateCard: null, unitPrice: 100, openPrice: false, taxInclusive: false, followSchedule: true, active: true, schedule: { from: '2026-07-01', source: 'Act, Second Schedule' } }]; posItemForm('x')");
+    const form = p.$('#piForm').innerHTML;
+    assert.ok(form.includes('id="fiRate" value="5"'), 'the box holds the item\'s own rate (what it falls back to)');
+    assert.ok(form.includes('Today: 16% (8% on card)'), 'and the form says what the schedule gives today');
+    assert.ok(/id="fiFollow" type="checkbox"[^>]*checked/.test(form));
+    p.run("posRenderItems()");
+    assert.ok(p.$('#piCards').innerHTML.includes('follows the rate schedule'));
+    assert.ok(p.$('#piCards').innerHTML.includes('Tax 16%'), 'the list shows the rate it is sold at');
 });
