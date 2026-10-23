@@ -94,6 +94,10 @@ const MENU = [
         console.log(`\nWOULD REMOVE: all Point of Sale data of this client (${JSON.stringify(existing)}) and the logins ${logins.map(l => l.email).join(', ') || '(none)'}.`);
         if (!flag('yes')) { console.log('Nothing was changed (add --yes to do it).'); return; }
         await prisma.posSale.deleteMany({ where: { tenantId: tenant.id } }); // lines, events and attempts go with them
+        await prisma.posManualInvoice.deleteMany({ where: { tenantId: tenant.id } });
+        await prisma.posCashEntry.deleteMany({ where: { tenantId: tenant.id } });
+        await prisma.posPurchase.deleteMany({ where: { tenantId: tenant.id } }); // its lines go with it
+        await prisma.posVendor.deleteMany({ where: { tenantId: tenant.id } });
         await prisma.posCustomer.deleteMany({ where: { tenantId: tenant.id } });
         await prisma.posCounter.deleteMany({ where: { tenantId: tenant.id } });
         await prisma.posBranch.deleteMany({ where: { tenantId: tenant.id } });

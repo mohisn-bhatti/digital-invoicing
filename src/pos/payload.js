@@ -77,6 +77,7 @@ function reconcile(payload, basis) {
     if (payload.Items.some(i => paisa(i.TotalAmount) !== taxable(i) + paisa(i.TaxCharged) + paisa(i.FurtherTax))) problems.push('An item total is not its value plus its tax.');
     if (!payload.USIN || String(payload.USIN).length > 50) problems.push('The invoice number (USIN) is missing or too long.');
     if (payload.InvoiceType === INVOICE_TYPES.CREDIT && !payload.RefUSIN) problems.push('A credit note must name the invoice it returns (RefUSIN).');
+    if (payload.InvoiceType === INVOICE_TYPES.DEBIT && !payload.RefUSIN) problems.push('A debit note must name the invoice it adds to (RefUSIN).');
     return problems;
 }
 

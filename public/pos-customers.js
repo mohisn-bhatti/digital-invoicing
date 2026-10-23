@@ -68,7 +68,8 @@ function posCustCsv() { return posDownloadFile('/api/pos/export/customers?' + po
 // One customer: the details, what they have bought, and their latest sales
 async function posCustOpen(id) {
   try {
-    const c = posCust.current = await api(`/api/pos/customers/${id}`);
+    const [c, led] = await Promise.all([api(`/api/pos/customers/${id}`), api(`/api/pos/customers/${id}/ledger`)]);
+    posCust.current = c; c.ledger = led;
     const tile = (t, big, sub) => `<div class="border rounded-lg p-2.5"><div class="text-xs text-slate-500">${t}</div><div class="font-semibold break-words">${big}</div><div class="text-xs text-slate-500">${sub || ''}</div></div>`;
     posShowModal(`<div class="space-y-3">
       <div class="flex items-start justify-between gap-3"><div><h2 class="text-lg font-semibold">${esc(c.name)} <span class="text-xs font-mono text-slate-500">${esc(c.code)}</span>${c.active ? '' : ' <span class="text-xs px-1.5 py-0.5 rounded bg-slate-200 text-slate-600">switched off</span>'}</h2>
@@ -76,12 +77,27 @@ async function posCustOpen(id) {
         ${c.address ? `<div class="text-sm text-slate-600">${esc(c.address)}</div>` : ''}${c.notes ? `<div class="text-xs text-slate-500 mt-1">${esc(c.notes)}</div>` : ''}</div>
         <button type="button" onclick="posCloseModal()" class="text-2xl leading-none text-slate-400 px-2" aria-label="Close">×</button></div>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${tile('Bought', money(c.salesTotal), `${c.sales} ${c.sales === 1 ? 'sale' : 'sales'}`)}${tile('Returned', money(c.returnsTotal), `${c.returns} credit ${c.returns === 1 ? 'note' : 'notes'}`)}${tile('Net', money(c.net), '')}${tile('Last sale', c.lastSaleAt ? esc(posWhenShort(c.lastSaleAt)) : 'none yet', '')}</div>
+      <div class="border rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2"><div><div class="text-xs text-slate-500">Account (cash received from them)</div><div class="text-sm font-semibold">${posOweCustomer(led.balance)}</div>
+        <div class="text-xs text-slate-500">${led.receipts ? `${money(led.received)} received in ${led.receipts} ${led.receipts === 1 ? 'receipt' : 'receipts'}` : 'Nothing received yet'}${led.openingBalance ? ` · opening balance ${money(led.openingBalance)}` : ''}</div></div>
+        <div class="flex gap-2">${posBtn('Receive cash…', `posRcvForm('${c.id}')`)}${posBtn('Opening balance…', `posCustOpening('${c.id}')`)}</div></div>
       <div class="text-xs text-slate-500">${c.sales || c.returns ? 'Fiscalized sales only' + (POS.setup && POS.setup.testMode ? ', and only test sales while the server is in test mode' : '') + '.' : ''}</div>
       ${c.recent.length ? `<div><div class="text-sm font-medium mb-1">Latest sales</div><div class="border rounded-lg divide-y">${c.recent.map(s => `<button type="button" onclick="posOpenSale('${s.id}')" class="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center justify-between gap-3 text-sm">
           <span class="min-w-0"><b>${esc(s.usin)}</b>${s.invoiceType === 3 ? ' <span class="text-xs px-1.5 py-0.5 rounded bg-slate-200">Credit note</span>' : ''} <span class="text-xs text-slate-500">${esc(posWhenShort(s.createdAt))}</span></span>
           <span class="flex items-center gap-2 shrink-0"><span class="font-medium">${money(s.totalBill)}</span>${posChip(s.state)}</span></button>`).join('')}</div></div>` : '<p class="text-sm text-slate-500">No sales to this customer yet.</p>'}
       <div class="flex flex-wrap gap-2">${posBtn('Change details…', `posCustForm('${c.id}')`, 'primary')}${c.sales || c.returns || c.recent.length ? posBtn('All their sales', 'posCustSales()') : ''}${posBtn('Close', 'posCloseModal()')}</div></div>`);
   } catch (err) { toast(err.message); }
+}
+
+// What the customer owed (or had paid in advance) when the books were started here; changing it is written to the activity log
+function posCustOpening(id) {
+  const c = posCust.current; if (!c || c.id !== id) return;
+  posShowModal(`<div class="space-y-3">
+    <div class="flex items-start justify-between gap-3"><h2 class="text-lg font-semibold">Opening balance: ${esc(c.name)}</h2><button type="button" onclick="posCloseModal()" class="text-2xl leading-none text-slate-400 px-2" aria-label="Close">×</button></div>
+    <label><span>What they owed you when you started using this <span class="text-slate-400">(a minus sign if you were holding their money)</span></span><input id="fcOpen" value="${c.ledger && c.ledger.openingBalance ? esc(c.ledger.openingBalance) : ''}" inputmode="decimal" placeholder="0.00" autocomplete="off"></label>
+    <div class="flex gap-2">${posBtn('Save', `posCustOpeningSave('${id}')`, 'primary')}${posBtn('Cancel', `posCustOpen('${id}')`)}</div></div>`);
+}
+async function posCustOpeningSave(id) {
+  try { await api(`/api/pos/customers/${id}/opening-balance`, { method: 'PUT', body: { openingBalance: $('#fcOpen').value } }); toast('Saved', true); await posCustOpen(id); } catch (err) { toast(err.message); }
 }
 
 function posCustSales() { const c = posCust.current; if (!c) return; posCloseModal(); posSalesCustomer(c.id, c.name); }
@@ -97,7 +113,7 @@ function posCustForm(id) {
       <label class="sm:col-span-2"><span>Name (printed on the invoice)</span><input id="fcName" value="${esc(c.name)}" maxlength="150" autocomplete="off"></label>
       <label><span>PNTN <span class="text-slate-400">(like 1234567-8)</span></span><input id="fcPntn" value="${esc(c.pntn)}" maxlength="10" autocomplete="off"></label>
       <label><span>CNIC <span class="text-slate-400">(13 digits)</span></span><input id="fcCnic" value="${esc(c.cnic)}" maxlength="15" inputmode="numeric" autocomplete="off"></label>
-      <label><span>Phone</span><input id="fcPhone" value="${esc(c.phone)}" maxlength="20" inputmode="tel" autocomplete="off"></label>
+      <label><span>Phone</span><input id="fcPhone" value="${esc(c.phone)}" maxlength="20" inputmode="tel" oninput="posPhoneCheck(this)" autocomplete="off"></label>
       <label><span>Address <span class="text-slate-400">(optional)</span></span><input id="fcAddress" value="${esc(c.address)}" maxlength="250" autocomplete="off"></label>
       <label class="sm:col-span-2"><span>Notes <span class="text-slate-400">(optional, for your staff only)</span></span><input id="fcNotes" value="${esc(c.notes)}" maxlength="300" autocomplete="off"></label>
       ${id ? `<label class="flex items-center gap-2 text-sm sm:col-span-2"><input id="fcActive" type="checkbox" style="width:auto" ${c.active ? 'checked' : ''}> In use (untick to hide this customer from the sale screen)</label>` : ''}</div>

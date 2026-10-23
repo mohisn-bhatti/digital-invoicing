@@ -13,7 +13,7 @@ const C = require('./calc');
 const { ciEquals, ciContains, contains } = require('./like');
 
 const STATES = ['DRAFT', 'AWAITING_FISCALIZATION', 'OUTCOME_UNKNOWN', 'FISCALIZED', 'REJECTED', 'CANCELLED'];
-const TYPE_OF = { sale: 1, return: 3 };
+const TYPE_OF = { sale: [1, 2], return: [3] }; // a debit note is money in, like a sale: the report counts it with the sales, so the list's "sales" does too
 const MAX_REPORT_DAYS = 400; // a report adds up every line in the range: a year and a bit is the most it takes in one go
 const money2 = n => Math.round(Number(n || 0) * 100) / 100;
 const qty4 = n => Math.round(Number(n || 0) * 10000) / 10000;
@@ -91,7 +91,7 @@ function saleWhere(tenantId, f) {
     if (f.branchId) where.counter = { branchId: f.branchId };
     if (f.cashier) where.createdBy = ciEquals(f.cashier);
     if (f.paymentMode) where.paymentMode = f.paymentMode;
-    if (f.invoiceType) where.invoiceType = TYPE_OF[f.invoiceType];
+    if (f.invoiceType) where.invoiceType = { in: TYPE_OF[f.invoiceType] };
     if (f.customerId) where.customerId = f.customerId === 'none' ? null : f.customerId;
     if (f.minAmount !== undefined || f.maxAmount !== undefined) where.totalBill = { ...(f.minAmount !== undefined ? { gte: f.minAmount } : {}), ...(f.maxAmount !== undefined ? { lte: f.maxAmount } : {}) };
     const line = {};
@@ -114,7 +114,7 @@ function sqlConditions(tenantId, f, env) {
     if (f.branchId) c.push(Prisma.sql`s."counterId" IN (SELECT "id" FROM "PosCounter" WHERE "tenantId" = ${tenantId} AND "branchId" = ${f.branchId})`);
     if (f.cashier) c.push(Prisma.sql`lower(s."createdBy") = ${f.cashier.toLowerCase()}`);
     if (f.paymentMode) c.push(Prisma.sql`s."paymentMode" = ${f.paymentMode}`);
-    if (f.invoiceType) c.push(Prisma.sql`s."invoiceType" = ${TYPE_OF[f.invoiceType]}`);
+    if (f.invoiceType) c.push(Prisma.sql`s."invoiceType" IN (${Prisma.join(TYPE_OF[f.invoiceType])})`);
     if (f.customerId) c.push(f.customerId === 'none' ? Prisma.sql`s."customerId" IS NULL` : Prisma.sql`s."customerId" = ${f.customerId}`);
     if (f.minAmount !== undefined) c.push(Prisma.sql`s."totalBill" >= ${f.minAmount}`);
     if (f.maxAmount !== undefined) c.push(Prisma.sql`s."totalBill" <= ${f.maxAmount}`);
@@ -153,16 +153,16 @@ const WEEKDAYS = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'S
 
 // the figures of one group (or of everything): sales, returns (credit notes) and what is left
 const FIGURES = Prisma.sql`
-    count(DISTINCT s."id") FILTER (WHERE s."invoiceType" = 1) AS sales,
+    count(DISTINCT s."id") FILTER (WHERE s."invoiceType" IN (1, 2)) AS sales,
     count(DISTINCT s."id") FILTER (WHERE s."invoiceType" = 3) AS returns,
-    coalesce(sum(l."quantity") FILTER (WHERE s."invoiceType" = 1), 0) AS qty,
+    coalesce(sum(l."quantity") FILTER (WHERE s."invoiceType" IN (1, 2)), 0) AS qty,
     coalesce(sum(l."quantity") FILTER (WHERE s."invoiceType" = 3), 0) AS return_qty,
-    coalesce(sum(l."saleValue") FILTER (WHERE s."invoiceType" = 1), 0) AS value,
+    coalesce(sum(l."saleValue") FILTER (WHERE s."invoiceType" IN (1, 2)), 0) AS value,
     coalesce(sum(l."saleValue") FILTER (WHERE s."invoiceType" = 3), 0) AS return_value,
-    coalesce(sum(l."discount") FILTER (WHERE s."invoiceType" = 1), 0) AS discount,
-    coalesce(sum(l."taxCharged") FILTER (WHERE s."invoiceType" = 1), 0) AS tax,
+    coalesce(sum(l."discount") FILTER (WHERE s."invoiceType" IN (1, 2)), 0) AS discount,
+    coalesce(sum(l."taxCharged") FILTER (WHERE s."invoiceType" IN (1, 2)), 0) AS tax,
     coalesce(sum(l."taxCharged") FILTER (WHERE s."invoiceType" = 3), 0) AS return_tax,
-    coalesce(sum(l."totalAmount") FILTER (WHERE s."invoiceType" = 1), 0) AS bill,
+    coalesce(sum(l."totalAmount") FILTER (WHERE s."invoiceType" IN (1, 2)), 0) AS bill,
     coalesce(sum(l."totalAmount") FILTER (WHERE s."invoiceType" = 3), 0) AS return_bill`;
 const figures = r => {
     const bill = money2(r.bill), returnBill = money2(r.return_bill);
@@ -248,8 +248,8 @@ function createReports({ prisma, pra, getProfile, listBranches }) {
         const totals = pay.totals;
         const fiscalized = { ...header, state: 'FISCALIZED', env: env() };
         const [first, last, others, returned, profile, counterRow] = await Promise.all([
-            prisma.posSale.findFirst({ where: { ...fiscalized, invoiceType: 1 }, orderBy: { createdAt: 'asc' }, select: { usin: true, fiscalNumber: true, createdAt: true } }),
-            prisma.posSale.findFirst({ where: { ...fiscalized, invoiceType: 1 }, orderBy: { createdAt: 'desc' }, select: { usin: true, fiscalNumber: true, createdAt: true } }),
+            prisma.posSale.findFirst({ where: { ...fiscalized, invoiceType: { in: [1, 2] } }, orderBy: { createdAt: 'asc' }, select: { usin: true, fiscalNumber: true, createdAt: true } }),
+            prisma.posSale.findFirst({ where: { ...fiscalized, invoiceType: { in: [1, 2] } }, orderBy: { createdAt: 'desc' }, select: { usin: true, fiscalNumber: true, createdAt: true } }),
             prisma.posSale.groupBy({ by: ['state'], where: { ...header, state: { not: 'FISCALIZED' }, env: env() }, _count: { _all: true } }),
             prisma.posSale.findMany({ where: { ...fiscalized, invoiceType: 3 }, orderBy: { createdAt: 'asc' }, take: 100, select: { usin: true, refUsin: true, totalBill: true, note: true, createdAt: true } }),
             getProfile(ctx.tenantId),

@@ -114,8 +114,8 @@ _Last updated: 2026-10-19 (Point of Sale phase 2 is on production; access period
 
 ## Saved for later (needed before going live)
 1. **Products import.** Upload products from Excel/CSV.
-2. **The accounts side of a trading POS:** Receive Cash, Purchase Invoice, Pay Cash to Vendor (vendors, purchases, payments, a cash
-   book). Not in the SRS: the owner decides; the CA's answers on credit sales and withholding are needed first.
+2. **The accounts side of a trading POS:** built on branch `feature/pos-accounts` (vendors, purchase bills, Pay Cash to Vendor, Receive Cash, cash
+   book: see [POS_MODULE.md](POS_MODULE.md), "Accounts"). Still waiting for the CA: credit sales, tax withheld, stock.
 3. **The Digital Invoicing 80 mm receipt:** its print page size `80mm auto` is ignored by Chrome (the POS receipt no longer asks for
    one). Sizing the page to the receipt needs a thermal printer to try.
 

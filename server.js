@@ -1035,6 +1035,28 @@ app.post('/api/admin/tax-rules', authenticateToken, ADMIN, async (req, res) => {
         throw err;
     }
 });
+// The rate schedule (PRA's Second Schedule, and other authorities later): only the super admin changes it. A rate is never edited: a change is a new
+// row from its own date, so an old invoice keeps the rate of its day (src/rates.js).
+const { createRatesService, RateError } = require('./src/rates');
+const ratesService = createRatesService({ prisma, audit });
+const rateCall = fn => async (req, res) => {
+    try { res.json(await fn(req)); } catch (e) { throw e instanceof RateError ? new HttpError(e.status, e.message) : e; }
+};
+const rateCtx = req => ({ req, email: req.user.email });
+app.get('/api/admin/rates', authenticateToken, ADMIN, rateCall(req => ratesService.schedule(req.query)));
+app.get('/api/admin/rates/history', authenticateToken, ADMIN, rateCall(req => ratesService.history(req.query.authority, req.query.code)));
+app.post('/api/admin/rates', authenticateToken, ADMIN, rateCall(req => ratesService.create(rateCtx(req), req.body || {})));
+app.post('/api/admin/rates/import', authenticateToken, ADMIN, rateCall(req => ratesService.importRows(rateCtx(req), (req.body || {}).rows, { dryRun: (req.body || {}).dryRun !== false })));
+app.post('/api/admin/rates/:id/void', authenticateToken, ADMIN, rateCall(req => ratesService.voidRate(rateCtx(req), req.params.id, (req.body || {}).reason)));
+app.get('/api/admin/rates/export', authenticateToken, ADMIN, async (req, res) => {
+    let rows;
+    try { rows = await ratesService.exportRows(req.query); } catch (e) { throw e instanceof RateError ? new HttpError(e.status, e.message) : e; }
+    const cell = v => { let t = v === undefined || v === null ? '' : String(v); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    const head = ['authority', 'code', 'label', 'rate', 'cardRate', 'effectiveFrom', 'conditions', 'sourceName', 'sourceRef', 'sourceUrl', 'note'];
+    const lines = [head.join(','), ...rows.map(r => head.map(k => cell(k === 'code' ? r.heading : r[k])).join(','))];
+    await audit(req, { tenantId: null, action: 'taxrate.export', entityType: 'TaxRate', entityId: null, summary: `Exported ${rows.length} rates to CSV` });
+    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="tax-rates.csv"', 'Cache-Control': 'no-store' }).send('\uFEFF' + lines.join('\r\n') + '\r\n');
+});
 // Tax rules data bank: every client's current tax rule against each item, with the client's name and industry
 // from their DI settings (the rest as the client defined it)
 app.get('/api/admin/item-tax-rules', authenticateToken, ADMIN, async (req, res) => {
@@ -2450,11 +2472,13 @@ app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNT
     const { createBreaker } = require('./src/pos/breaker');
     const { createPosService } = require('./src/pos/service');
     const { registerPosRoutes } = require('./src/pos/routes');
+    const { createAccountsService } = require('./src/pos/accounts');
+    const { createManualService } = require('./src/pos/manual');
     // After this many failed calls in a row the counter's sales are paused for a short rest (SRS: new sales are blocked while PRA is unreachable)
     const breaker = createBreaker({ threshold: Number(process.env.POS_BREAKER_FAILS) || 1, coolDownMs: (Number(process.env.POS_BREAKER_REST_SECONDS) || 15) * 1000 });
-    const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker, limits });
+    const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker, limits, rates: ratesService });
     posAdmin.service = posService;
-    registerPosRoutes(app, { service: posService, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
+    registerPosRoutes(app, { service: posService, accounts: createAccountsService({ prisma, audit }), manual: createManualService({ prisma, audit }), rates: ratesService, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
 }
 
 // ---------- Errors ----------

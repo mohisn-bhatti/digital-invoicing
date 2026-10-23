@@ -16,7 +16,7 @@ run('settings API: everyone at the business can read them, a stranger cannot', a
     for (const who of ['owner', 'manager', 'cashier']) {
         const r = await get(who);
         assert.strictEqual(r.status, 200, `${who}: ${r.text}`);
-        assert.deepStrictEqual(r.json, { defaultPaymentMode: 1, receiptHeader: '', receiptWidth: 80, showCashier: true, itemPct: '', itemTaxRate: null, itemTaxRateCard: null, itemCategory: '' });
+        assert.deepStrictEqual(r.json, { defaultPaymentMode: 1, receiptHeader: '', receiptWidth: 80, showCashier: true, itemPct: '', itemTaxRate: null, itemTaxRateCard: null, itemCategory: '', retentionYears: 6, hasLogo: false });
     }
     assert.strictEqual((await A.call('/api/pos/settings')).status, 401);
     assert.strictEqual((await A.call('/api/pos/settings', { token: 'not-a-token' })).status, 401);
@@ -31,7 +31,7 @@ run('settings API: only the account owner changes them', async () => {
     assert.strictEqual((await get('owner')).json.receiptWidth, 80, 'refused changes changed nothing');
     const r = await put('owner', { defaultPaymentMode: 2, receiptHeader: 'Fine dining', receiptWidth: 58, showCashier: false, itemPct: '9801.2000', itemTaxRate: 16, itemTaxRateCard: 8, itemCategory: 'Food' });
     assert.strictEqual(r.status, 200, r.text);
-    assert.deepStrictEqual(r.json, { defaultPaymentMode: 2, receiptHeader: 'Fine dining', receiptWidth: 58, showCashier: false, itemPct: '98012000', itemTaxRate: 16, itemTaxRateCard: 8, itemCategory: 'Food' });
+    assert.deepStrictEqual(r.json, { defaultPaymentMode: 2, receiptHeader: 'Fine dining', receiptWidth: 58, showCashier: false, itemPct: '98012000', itemTaxRate: 16, itemTaxRateCard: 8, itemCategory: 'Food', retentionYears: 6, hasLogo: false });
     for (const who of ['manager', 'cashier']) assert.deepStrictEqual((await get(who)).json, r.json, `${who} sees what the owner chose`);
 });
 
