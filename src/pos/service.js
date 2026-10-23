@@ -1085,6 +1085,11 @@ function createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker,
         listItems, createItem, updateItem, searchPct, createSale, retry, updateBuyer, cancel, resolve, creditNote,
         listCustomers, createCustomer, updateCustomer, customerDetail, customersCsv, lookup, debitNote, retentionStatus, getLogo, saveLogo, removeLogo,
         listSales, saleDetail, receipt, overview, attention, cashierSetup, sweepInterrupted, salesReport, salesCsv, adminFigures, adminSummary,
+        // what the bulk import shares with the screens, so an import takes the same locks, hands out codes the same way and holds to the same rules
+        internals: {
+            inTurn, nextItemCode, nextCustomerCode, assertScanFree, assertCustomerFree, assertScheduled, withSchedule,
+            assertItemRoom: (ctx, adding) => limits.assertRoom(ctx.tenantId, 'items', { adding, user: userOf(ctx) }),
+        },
     };
 }
 

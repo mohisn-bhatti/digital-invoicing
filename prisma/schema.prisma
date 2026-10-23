@@ -118,6 +118,7 @@ model Tenant {
   posPurchases        PosPurchase[]
   posCashEntries      PosCashEntry[]
   posManualInvoices   PosManualInvoice[]
+  posImportBatches    PosImportBatch[]
 }
 
 model Invoice {
@@ -747,6 +748,28 @@ model TaxRate {
   voidReason    String    @default("")
 
   @@index([authority, code, effectiveFrom])
+}
+
+// One bulk import of items, customers or vendors from a spreadsheet. It keeps what it added and what it changed (the saved value before and the one the file
+// set), so the whole import can be undone: what it added is removed unless it has been used since (then it is only switched off), and what it changed is
+// put back unless someone has changed it again. Never deleted itself: an undone import stays in the list.
+model PosImportBatch {
+  id        String    @id @default(uuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  kind      String // ITEMS, CUSTOMERS or VENDORS
+  fileName  String    @default("")
+  createdBy String
+  createdAt DateTime  @default(now())
+  added     Int       @default(0)
+  updated   Int       @default(0)
+  addedIds  Json // the ids of the records it added
+  changes   Json // [{ id, name, before: {field: value}, after: {field: value} }] for the records it changed
+  undoneAt  DateTime?
+  undoneBy  String?
+  undoNote  String    @default("") // what the undo did, in words
+
+  @@index([tenantId, createdAt])
 }
 
 // An invoice written by hand while the connection to PRA was down, entered afterwards so it is on record and can be tracked until it is

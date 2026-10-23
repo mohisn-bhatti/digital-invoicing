@@ -50,9 +50,15 @@ so the first page can take about a minute to load.
 months or years a client may use the application, counted from its integration date (which can be changed). The last day is the
 integration date plus the period (19 Oct 2026 + 1 year = 19 Oct 2027). After it the client keeps working for a few days of
 grace: **3 days for a monthly plan, 7 days for a yearly one**. When the grace is over the client is **made inactive by itself**
-(checked when the server starts, every ten minutes, and on every login and request) and its users see "Your access period has
-ended". **Renew** adds a period to the last day, or to today if it had already ended, and makes the client active again. A client
-with no end date has no time limit (all clients before this existed). Everything is written to the Activity log.
+(checked when the server starts, every ten minutes, and on every login and request) and from then on it is **read-only**: its users
+can still log in and **look at, print and download** their invoices, sales, vouchers and reports (businesses must keep their records),
+but every change is refused with the message "Your access period ended on … you cannot make changes. Contact ETAX to renew it." A
+banner says so on every page, and the buttons that create something are hidden. What a read-only client may still do: log out, change
+its own password, and send a message to ETAX (Help & feedback) to ask for a renewal. Nothing is lost and nothing is deleted while it is
+read-only. **Renew** adds a period to the last day, or to today if it had already ended, and the client can change things again at
+once, with the same login. A client **you switch off by hand** (*Manage → Overview*) is different: it cannot log in at all, even to
+look. An administrator working inside a client's workspace is not held to read-only. A client with no end date has no time limit (all
+clients before this existed). Everything is written to the Activity log.
 
 **Plans and prices (website).** The landing page has a *Pricing* section with a switch between FBR Digital Invoicing and PRA Point of
 Sale. Both products have the **same prices**, and plans are **annual only, shown at 50% off** with the full price beside it:

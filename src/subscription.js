@@ -13,7 +13,7 @@ async function expireDueClients({ prisma, audit, now = new Date() }) {
         const r = await prisma.tenant.updateMany({ where: { id: t.id, active: true }, data: { active: false, inactiveReason: 'EXPIRED' } });
         if (!r.count) continue;
         expired.push(t.id);
-        if (audit) await audit(null, { tenantId: t.id, action: 'client.expired', entityType: 'Tenant', entityId: t.id, summary: `Access period ended on ${a.endsOn} (grace until ${a.graceUntil}): client made inactive automatically`, userEmail: 'system' });
+        if (audit) await audit(null, { tenantId: t.id, action: 'client.expired', entityType: 'Tenant', entityId: t.id, summary: `Access period ended on ${a.endsOn} (grace until ${a.graceUntil}): client made inactive automatically (it can still log in to look at its records, read-only)`, userEmail: 'system' });
     }
     return expired;
 }

@@ -17,7 +17,8 @@ POS_PAGES.push({
           <input id="pcQ" type="search" placeholder="Name, code, phone, CNIC or PNTN…" oninput="posCustSearchList(this.value)" class="flex-1 min-w-[10rem] sm:!w-64" autocomplete="off">
           <select id="pcActive" onchange="posCustFilter()" class="!w-auto" aria-label="Which customers"><option value="1">In use</option><option value="">All</option><option value="0">Switched off</option></select>
           <button type="button" onclick="posCustCsv()" class="border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">Download CSV</button>
-          <button type="button" onclick="posCustForm()" class="bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ Add customer</button></div></div>
+          <button type="button" onclick="posImpGo('customers')" class="needs-write border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">Import from Excel</button>
+          <button type="button" onclick="posCustForm()" class="needs-write bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ Add customer</button></div></div>
       <div id="pcNote" class="text-xs text-slate-500 mb-2"></div>
       <div id="pcCards" class="md:hidden space-y-2"></div>
       <div class="hidden md:block overflow-x-auto"><table class="w-full text-sm">

@@ -43,6 +43,7 @@ const OWNER_OR_ACCOUNTANT = requireTenantRole('OWNER', 'ACCOUNTANT');
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 app.use('/api/import', express.json({ limit: '10mb' })); // spreadsheet rows
 app.use(['/api/products/import', '/api/buyers/import'], express.json({ limit: '10mb' })); // items / buyers from Excel
+app.use('/api/pos/import', express.json({ limit: '10mb' })); // a spreadsheet of items, customers or vendors
 app.use(express.json({ limit: '1mb' }));
 
 // Basic security headers (CSP is left out: the pages use the Tailwind CDN, which injects styles at runtime)
@@ -732,7 +733,8 @@ app.get('/api/admin/egress-ip', authenticateToken, requireRole('SUPER_ADMIN'), a
 // Read-only for clients; only the super admin changes FBR settings
 app.get('/api/client/settings', authenticateToken, requireTenant, async (req, res) => {
     const t = await prisma.tenant.findUniqueOrThrow({ where: { id: req.user.tenantId } });
-    res.json({ ...clientTenant(t), modules: tenantModules(t), workspace: Boolean(req.user.impersonatedBy), tenantRole: req.user.tenantRole,
+    const mode = req.user.impersonatedBy ? { mode: 'FULL' } : sub.accessMode(t); // the screens show a banner and hide what cannot be done when the access period is over
+    res.json({ ...clientTenant(t), modules: tenantModules(t), workspace: Boolean(req.user.impersonatedBy), tenantRole: req.user.tenantRole, readOnly: mode.mode === 'READ_ONLY', readOnlyMessage: mode.mode === 'READ_ONLY' ? mode.message : null,
         nextInvoiceNo: formatInvoiceNo(t.invoiceNumberFormat, t.invoiceSeq + 1, todayPKT()) }); // shown on the form; taken only when the invoice is created
 });
 
@@ -2474,11 +2476,13 @@ app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNT
     const { registerPosRoutes } = require('./src/pos/routes');
     const { createAccountsService } = require('./src/pos/accounts');
     const { createManualService } = require('./src/pos/manual');
+    const { createImportService } = require('./src/pos/import');
     // After this many failed calls in a row the counter's sales are paused for a short rest (SRS: new sales are blocked while PRA is unreachable)
     const breaker = createBreaker({ threshold: Number(process.env.POS_BREAKER_FAILS) || 1, coolDownMs: (Number(process.env.POS_BREAKER_REST_SECONDS) || 15) * 1000 });
     const posService = createPosService({ prisma, audit, encrypt, decrypt, mask, pra, breaker, limits, rates: ratesService });
     posAdmin.service = posService;
-    registerPosRoutes(app, { service: posService, accounts: createAccountsService({ prisma, audit }), manual: createManualService({ prisma, audit }), rates: ratesService, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
+    const posAccounts = createAccountsService({ prisma, audit });
+    registerPosRoutes(app, { service: posService, accounts: posAccounts, imports: createImportService({ prisma, audit, service: posService, accounts: posAccounts, rates: ratesService }), manual: createManualService({ prisma, audit }), rates: ratesService, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
 }
 
 // ---------- Errors ----------

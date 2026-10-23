@@ -42,7 +42,7 @@ const run = (name, fn) => test(name, async t => { if (!ok) return t.skip('no loc
 test.after(async () => {
     for (const c of Object.values(T)) {
         await prisma.posSale.deleteMany({ where: { tenantId: c.id } });
-        for (const m of ['posManualInvoice', 'posCashEntry', 'posPurchase', 'posVendor', 'posCustomer', 'posCounter', 'posBranch', 'posItem', 'posProfile', 'auditLog']) await prisma[m].deleteMany({ where: { tenantId: c.id } }).catch(() => {});
+        for (const m of ['posImportBatch', 'posManualInvoice', 'posCashEntry', 'posPurchase', 'posVendor', 'posCustomer', 'posCounter', 'posBranch', 'posItem', 'posProfile', 'auditLog']) await prisma[m].deleteMany({ where: { tenantId: c.id } }).catch(() => {});
         await prisma.user.deleteMany({ where: { tenantId: c.id } });
         await prisma.tenant.delete({ where: { id: c.id } }).catch(e => console.log('cleanup:', e.message));
     }

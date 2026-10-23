@@ -108,6 +108,7 @@
   #receipt .qr img, #receipt .qr canvas { width: 1in !important; height: 1in !important; }
   #posReceipt { width: 80mm; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #000; }
   #posReceipt .posqr img, #posReceipt .posqr canvas { width: 1in !important; height: 1in !important; }
+  body.readonly .needs-write { display: none !important; } /* the access period is over: buttons that would make or change something are not offered (the server refuses them anyway) */
   #posPrintArea { display: none; } /* QR labels and reports are put here to be printed (pos.js: posPrint) */
   #invoiceA4 { width: 190mm; font-family: Arial, Helvetica, sans-serif; font-size: 10.5px; color: #000; background: #fff; }
   #invoiceA4 table { border-collapse: collapse; width: 100%; }
@@ -263,6 +264,9 @@
           <button onclick="exitWorkspace()" class="bg-white text-indigo-800 rounded px-3 py-1 font-medium">Back to admin</button>
         </div>
       </div>
+      <div id="roBanner" class="hidden bg-amber-100 text-amber-950 text-sm border-t border-amber-300" role="status">
+        <div class="px-4 md:px-6 py-2"><b>Read-only.</b> <span id="roText"></span></div>
+      </div>
     </header>
 
     <main class="flex-1 p-4 md:p-6">
@@ -362,7 +366,7 @@
       <div class="font-medium pb-2">Renew</div>
       <label><span>Add</span><div class="flex gap-2"><input id="renewCount" type="number" min="1" max="120" step="1" inputmode="numeric" class="!w-24" aria-label="How many"><select id="renewUnit" aria-label="Months or years"><option value="MONTH">months</option><option value="YEAR">years</option></select></div></label>
       <button type="button" onclick="renewAccess()" class="border border-emerald-600 text-emerald-700 rounded px-4 py-2 font-medium hover:bg-emerald-50">Renew</button>
-      <span class="text-xs text-slate-500 pb-2">Added to the last day, or to today if the period has already ended. A client switched off because its period ended becomes active again.</span>
+      <span class="text-xs text-slate-500 pb-2">Added to the last day, or to today if the period has already ended. A client whose period ended can still log in to look at, print and download its records, but changes nothing; renewing makes it active again. A client you switch off by hand cannot log in at all.</span>
     </div>
   </section>
   <section id="mpPlan" data-mp-tab="overview" class="step-card bg-white rounded-xl shadow">
@@ -1181,6 +1185,7 @@
 <script src="/pos-escpos.js"></script>
 <script src="/pos-printer.js"></script>
 <script src="/pos-extras.js"></script>
+<script src="/pos-import.js"></script>
 <script src="/authorities.js"></script>
 <script src="/admin-rates.js"></script>
 <script>
@@ -1261,6 +1266,7 @@ const NAV = {
     { id: 'p-sales', label: 'Sales & Receipts', icon: 'list', crumb: 'Sales' },
     { id: 'p-manual', label: 'Hand-written Slips', icon: 'draft', crumb: 'Sales' },
     { id: 'p-items', label: 'Items', icon: 'box', crumb: 'Catalogue', roles: ['OWNER', 'ACCOUNTANT'] },
+    { id: 'p-import', label: 'Import Data', icon: 'upload', crumb: 'Catalogue', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'p-customers', label: 'Customers', icon: 'users', crumb: 'Catalogue', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'p-vendors', label: 'Vendors', icon: 'building', crumb: 'Accounts', group: 'accounts', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'p-purchases', label: 'Purchase Invoice', icon: 'draft', crumb: 'Accounts', group: 'accounts', roles: ['OWNER', 'ACCOUNTANT'] },
@@ -1291,7 +1297,18 @@ const PAGE_ENTER = {
   'a-dashboard': () => loadAdminDash(), 'a-clients': () => loadClients(), 'a-reports': () => fillReportClients(),
   'a-itemrules': () => loadItemBank(), 'a-rates': () => loadRates(), 'a-activity': () => loadAudit('a'), 'a-leads': () => loadLeads(), 'a-system': () => loadSystem(),
 };
-const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : (S.module === 'POS' ? NAV.pos : NAV.client).filter(n => !n.roles || n.roles.includes(S.tenantRole || 'OWNER'));
+// When the access period is over the client can only look (src/subscription.js refuses every change): the pages whose job is to make something new are left out
+// of the menu, and a banner says why. Looking, printing and downloading stay.
+const isReadOnly = () => Boolean(S.settings && S.settings.readOnly && !S.adminSession);
+const READ_ONLY_HIDDEN = new Set(['c-new', 'c-import', 'p-sale', 'p-manual', 'p-import']);
+function renderReadOnly() {
+  const on = isReadOnly();
+  $('#roBanner').classList.toggle('hidden', !on);
+  document.body.classList.toggle('readonly', on);
+  if (on) $('#roText').textContent = S.settings.readOnlyMessage || 'Your access period has ended. You can look at, print and download your records, but you cannot make changes. Contact ETAX to renew it.';
+  renderNav();
+}
+const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : (S.module === 'POS' ? NAV.pos : NAV.client).filter(n => (!n.roles || n.roles.includes(S.tenantRole || 'OWNER')) && !(isReadOnly() && READ_ONLY_HIDDEN.has(n.id)));
 const canManage = () => ['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER'); // cashier can't
 // Menu groups that open and close (remembered per browser); a group opens by itself when one of its pages is shown
 const NAV_GROUPS = { sales: { label: 'Sales / Revenue', icon: 'sales' }, accounts: { label: 'Accounts', icon: 'layers' } };
@@ -1340,7 +1357,7 @@ function route() {
   if (id === 'c-taxrules') { id = 'c-products'; history.replaceState(null, '', '#/c-products'); } // merged into Items with Tax Rules
   const meta = list.find(n => n.id === id);
   if (!meta || !document.querySelector(`${view} [data-page="${id}"]`) || (id === 'a-client' && !S.manageId)) {
-    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : (S.module === 'POS' ? (['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER') ? 'p-dashboard' : 'p-sale') : (S.adminSession ? 'c-new' : 'c-dashboard'));
+    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : (S.module === 'POS' ? (['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER') ? 'p-dashboard' : isReadOnly() ? 'p-sales' : 'p-sale') : (S.adminSession ? 'c-new' : 'c-dashboard'));
     history.replaceState(null, '', '#/' + id);
   }
   const m = list.find(n => n.id === id);
@@ -1540,7 +1557,7 @@ function renderClients() {
         <div class="mt-0.5 flex flex-wrap items-center gap-1">${di ? chip('sky', 'FBR', 'text-[10px] leading-4') : ''}${mods.includes('POS') ? chip('emerald', 'POS', 'text-[10px] leading-4') : ''}${c.plan ? chip('violet', esc(planName(c.plan)), 'text-[10px] leading-4') : ''}</div>
         ${di ? `<div class="text-xs text-slate-500 mt-0.5">${c.sellerNtnCnic ? `NTN ${esc(c.sellerNtnCnic)}` : 'NTN —'} · ${esc((c.sectors || []).join(', ') || 'sector not set')}</div>` : ''}</td>
       <td class="text-xs"><div class="break-all">${esc(c.emails.join(', '))}</div>${c.mobile ? `<div class="font-mono text-slate-600 whitespace-nowrap mt-0.5">${esc(c.mobile)}</div>` : ''}</td>
-      <td class="text-xs whitespace-nowrap">${chip(c.active ? 'emerald' : 'red', c.active ? 'Active' : 'Inactive')}${ended ? '<div class="text-slate-500 whitespace-normal">period ended</div>' : ''}
+      <td class="text-xs whitespace-nowrap">${chip(c.active ? 'emerald' : 'red', c.active ? 'Active' : 'Inactive')}${ended ? '<div class="text-slate-500 whitespace-normal">period ended: read-only</div>' : ''}
         <div>${ended ? `<button type="button" class="mt-1 underline text-emerald-700" onclick="manageClient('${c.id}', 'overview')">Renew…</button>` : `<button type="button" class="mt-1 underline text-slate-600" onclick="setClientActive('${c.id}', ${!c.active})">${c.active ? 'Make inactive' : 'Make active'}</button>`}</div></td>
       <td class="text-xs"><div class="whitespace-nowrap text-slate-600">Since ${fmtDay(c.integratedAt)}</div>${ClientsView.periodText(c) ? `<div class="mt-0.5 text-slate-500 whitespace-nowrap">${ClientsView.periodText(c)} allowed</div>` : ''}</td>
       <td class="text-xs">${di ? `<div>${esc(c.fbrEnv)} · ${c.fbrTokenMasked ? 'token ✔' : '<span class="text-amber-700">no token</span>'}</div><div class="mt-1">${chip(live ? 'emerald' : 'amber', live ? 'Live' : `${ob.done}/${ob.total} steps`)}</div>
@@ -2246,6 +2263,7 @@ async function initClient() {
     S.settings = await api('/api/client/settings');
     if (syncModules()) return;
     if (S.settings.tenantRole && S.settings.tenantRole !== S.tenantRole) { S.tenantRole = S.settings.tenantRole; saveSession(); renderNav(); }
+    renderReadOnly();
     await loadLists();
     S.saleTypes = (await api('/api/sale-types').catch(() => null))?.list || null;
     if (!clientReady) setupInvoiceForm();
@@ -2392,7 +2410,7 @@ function fillAccess(s) {
   f.unlimited.checked = !s.accessEndsAt;
   f.count.value = s.accessCount || 1; f.unit.value = s.accessUnit || 'YEAR';
   $('#renewCount').value = s.accessCount || 1; $('#renewUnit').value = s.accessUnit || 'YEAR';
-  const state = !s.active && s.inactiveReason === 'EXPIRED' ? `${chip('red', 'Inactive: the period ended')}` : !s.active ? chip('red', 'Inactive (switched off by hand)') : '';
+  const state = !s.active && s.inactiveReason === 'EXPIRED' ? `${chip('red', 'Inactive: the period ended (read-only)')}` : !s.active ? chip('red', 'Inactive (switched off by hand)') : '';
   $('#mpAccessStatus').innerHTML = `${chip(lab.tone, esc(lab.text))} ${state}${lab.date ? `<div class="text-xs text-slate-500 mt-1">${lab.dateLabel} ${fmtDay(lab.date)}${a.status === 'GRACE' ? ', then inactive' : ''}</div>` : ''}`;
   syncAccessForm();
 }

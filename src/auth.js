@@ -1,5 +1,11 @@
 const jwt = require('jsonwebtoken');
-const { blockedMessage } = require('./subscription');
+const { accessMode } = require('./subscription');
+
+// A client whose access period is over can only LOOK (src/subscription.js, public/access.js). Everything that is not a read is refused, except what it needs to
+// leave, to keep its own password safe, and to write to ETAX to ask for a renewal.
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const READ_ONLY_ALLOWED = [/^POST \/api\/auth\/(logout|password)$/, /^POST \/api\/client\/tickets$/, /^POST \/api\/client\/tickets\/[^/]+\/messages$/];
+const mayWriteWhenReadOnly = req => READ_ONLY_ALLOWED.some(re => re.test(`${req.method} ${String(req.originalUrl || req.url).split('?')[0].replace(/\/+$/, '')}`));
 
 // tv = the user's tokenVersion when the token was issued; bumping it (password change/reset, deactivation)
 // makes every older token stop working.
@@ -40,9 +46,13 @@ function createAuth(prisma) {
             if (!user || !user.active || user.tokenVersion !== (payload.tv || 0)) {
                 return res.status(401).json({ error: 'Session ended, please log in again.' });
             }
-            // switched off by the administrator, or its access period (and grace) is over: whichever the job has already noted or not
-            const blocked = user.tenant && !payload.impersonatedBy ? blockedMessage(user.tenant) : null;
-            if (blocked) return res.status(401).json({ error: blocked });
+            // switched off by the administrator: nothing. Access period (and grace) over: look, but change nothing. Whichever the job has already noted or not.
+            const mode = user.tenant && !payload.impersonatedBy ? accessMode(user.tenant) : { mode: 'FULL' };
+            if (mode.mode === 'BLOCKED') return res.status(401).json({ error: mode.message });
+            if (mode.mode === 'READ_ONLY') {
+                req.readOnly = true;
+                if (!READ_METHODS.has(req.method) && !mayWriteWhenReadOnly(req)) return res.status(403).json({ error: mode.message, readOnly: true });
+            }
             req.user = payload.impersonatedBy
                 ? { ...payload, tenantRole: 'OWNER' }                     // admin in a workspace = owner rights there
                 : { ...payload, role: user.role, tenantId: user.tenantId, tenantRole: user.tenantRole };

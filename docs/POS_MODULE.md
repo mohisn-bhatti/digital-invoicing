@@ -277,6 +277,28 @@ nothing existing changes, so it is safe to apply to production before the new co
   `923001234567`). The FBR phone box takes the same pasted forms (+92 300 1234567, 0092 300 1234567, 923001234567, +971 …) and picks the country from them.
 - **Item counter on the sale screen:** each item's tile shows how many of it are in the sale being made.
 
+### Bulk import (items, customers, vendors): *Import Data*
+
+For a business moving in from other software ([import.js](../src/pos/import.js), [pos-import.js](../public/pos-import.js), migration `0049_pos_import_batches`; managers and
+the owner). Excel (.xlsx, .xls) or CSV, up to 2,000 rows a file. The browser reads the file and finds the columns by their names ("Product Name", "SKU", "GST",
+"Selling Price", "Mobile No." … all work; a column it does not know is ignored and listed); the **server checks every row** and decides everything.
+- **Nothing is saved while the file has a problem.** Every problem of every row comes back at once, with its row number, so the file is mended and sent again. A row is checked
+  with the very rules of typing the record by hand (`validate.js`, `accounts.js`), so an import can never make what the screens refuse. A file saves **entirely or not at all**.
+- **A row that is already saved never overwrites it.** Items are matched by code, then barcode, then (with neither) a name only one saved item has; customers by code, PNTN, CNIC,
+  then name and phone (or a name only one has, when the file gives no number); vendors by code, NTN, then a unique name. When it is unclear (two saved items with that name, or a
+  code and a barcode that belong to two different items) the row is an **error**, not a guess. For a match, what the saved record is missing is filled in and for every
+  difference the uploader chooses the file's value or the saved one (the same pop-up as FBR's import); a blank cell changes nothing.
+- **Opening balances (money owed) are only taken for a NEW customer or vendor**, in rupees, never changed on a saved one (the file says so in a note).
+- **For a new item, what the file leaves out takes the owner's defaults** from Settings ("A new item starts with": heading, rates, category), and the file says so; a saved item never gets them.
+  Following the rate schedule needs a rate in the schedule for that heading. The plan's item limit is checked first (a file that does not fit saves nothing).
+- **Excel's habits are mended and said:** 9801.2 is 9801.2000; 0.16 in a percentage cell is 16%; 3001234567 (a phone that lost its 0) is 03001234567; the template's code, barcode, heading, PNTN, CNIC
+  and phone columns are text, so they keep their zeros.
+- **Safe to run twice and at the same time:** importing the same file again finds everything already saved. Saving takes the same locks the screens use and reads codes again under the
+  lock, so two imports at once never share a code (the second is refused whole if they collide). At most 500 saved records are updated by one file.
+- **Undo** (the history under the page): what an import **added** is removed, unless it has been used since (a sale, a bill, a payment), in which case it is only **switched off**;
+  what it **changed** is put back field by field, unless it was changed again since (then the newer value stays). An import can be undone once, and the page says exactly what was done.
+  The activity log records each import and each undo (counts and the file name, never the rows).
+
 ### Defaults and the receipt — phase 2
 
 *Settings → Defaults and receipt* (owner; `GET/PUT /api/pos/settings`: everyone at the business reads, only the owner changes; a

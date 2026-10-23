@@ -39,7 +39,8 @@ POS_PAGES.push(
           <input id="avQ" type="search" placeholder="Name, code, phone or NTN…" oninput="posVendSearch(this.value)" class="flex-1 min-w-[10rem] sm:!w-64" autocomplete="off">
           <select id="avFilter" onchange="posVendFilter()" class="!w-auto" aria-label="Which vendors"><option value="">All in use</option><option value="owing">We owe them</option><option value="off">Switched off</option></select>
           <button type="button" onclick="posVendCsv()" class="border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">Download CSV</button>
-          <button type="button" onclick="posVendForm()" class="bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ Add vendor</button></div></div>
+          <button type="button" onclick="posImpGo('vendors')" class="needs-write border rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">Import from Excel</button>
+          <button type="button" onclick="posVendForm()" class="needs-write bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ Add vendor</button></div></div>
       <div id="avNote" class="text-xs text-slate-500 mb-2"></div>
       <div class="overflow-x-auto"><table class="w-full text-sm">
         <thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Code</th><th>Vendor</th><th class="hidden sm:table-cell">Phone</th><th class="hidden md:table-cell text-right">Bought</th><th class="hidden md:table-cell text-right">Paid</th><th class="text-right">Balance</th></tr></thead>
@@ -53,7 +54,7 @@ POS_PAGES.push(
     <div class="bg-white rounded-xl shadow p-4">
       <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
         <div><h2 class="font-semibold">Purchase bills</h2><p class="text-xs text-slate-500">What you bought from your vendors. Pay a bill from here or from Pay Vendors.</p></div>
-        <button type="button" onclick="posBillForm()" class="bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ New purchase bill</button></div>
+        <button type="button" onclick="posBillForm()" class="needs-write bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">+ New purchase bill</button></div>
       <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
         <label class="col-span-2"><span class="text-xs text-slate-500">Search</span><input id="apQ" type="search" placeholder="Number, vendor, their bill no…" oninput="posBillSearch(this.value)" autocomplete="off"></label>
         <label><span class="text-xs text-slate-500">Status</span><select id="apStatus" onchange="posBillFilter()"><option value="">All</option><option value="OPEN">Still unpaid</option><option value="PAID">Paid</option><option value="VOID">Voided</option></select></label>
@@ -252,7 +253,7 @@ function posVoucherPageHtml(kind) {
   return `<div class="bg-white rounded-xl shadow p-4">
     <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
       <div><h2 class="font-semibold">${k.title}</h2><p class="text-xs text-slate-500">${k.blurb}</p></div>
-      <button type="button" onclick="${kind === 'PAYMENT' ? 'posPayForm()' : 'posRcvForm()'}" class="bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">${k.add}</button></div>
+      <button type="button" onclick="${kind === 'PAYMENT' ? 'posPayForm()' : 'posRcvForm()'}" class="needs-write bg-emerald-700 text-white rounded px-3 min-h-[2.5rem] text-sm whitespace-nowrap">${k.add}</button></div>
     <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
       <label class="col-span-2"><span class="text-xs text-slate-500">Search</span><input id="${id}Q" type="search" placeholder="Number, name, reference…" oninput="posVoucherSearch('${kind}', this.value)" autocomplete="off"></label>
       <label><span class="text-xs text-slate-500">How</span><select id="${id}Method" onchange="posVoucherFilter('${kind}')"><option value="">Any</option>${POS_METHODS.map(m => `<option value="${m[0]}">${m[1]}</option>`).join('')}</select></label>

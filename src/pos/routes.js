@@ -14,7 +14,7 @@ const { PosCalcError } = require('./calc');
 const { PosValidationError } = require('./validate');
 const { PosStateError } = require('./states');
 
-function registerPosRoutes(app, { service, accounts, manual, rates, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError }) {
+function registerPosRoutes(app, { service, accounts, manual, rates, imports, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError }) {
     const translate = e => {
         if (e instanceof PosError) return new HttpError(e.status, e.message);
         if (e instanceof PosValidationError || e instanceof PosCalcError || e instanceof PosStateError) return new HttpError(400, e.message);
@@ -132,6 +132,19 @@ function registerPosRoutes(app, { service, accounts, manual, rates, pra, authent
     app.post('/api/pos/manual', ...base, wrap(req => manual.create(ctxOf(req), req.body || {})));
     app.post('/api/pos/manual/:id/report', ...manager, wrap(req => manual.markReported(ctxOf(req), req.params.id, (req.body || {}).note)));
     app.post('/api/pos/manual/:id/void', ...manager, wrap(req => manual.voidSlip(ctxOf(req), req.params.id, (req.body || {}).reason)));
+
+    // Bulk import of items, customers and vendors from a spreadsheet (managers and the owner): check the file, save it, see the history, undo one.
+    // A file with problems is a 400 that carries every problem with its row, so the file can be mended and sent again.
+    const importCall = fn => async (req, res) => {
+        try { res.json(await fn(req)); } catch (e) {
+            if (e instanceof PosError && e.errors) return res.status(e.status).json({ error: e.message, errors: e.errors, warnings: e.warnings || [] });
+            throw translate(e);
+        }
+    };
+    app.get('/api/pos/import/batches', ...manager, wrap(req => imports.history(ctxOf(req))));
+    app.post('/api/pos/import/batches/:id/undo', ...manager, wrap(req => imports.undo(ctxOf(req), req.params.id)));
+    app.post('/api/pos/import/:kind/check', ...manager, wrap(req => imports.check(ctxOf(req), req.params.kind, req.body || {})));
+    app.post('/api/pos/import/:kind/commit', ...manager, importCall(req => imports.commit(ctxOf(req), req.params.kind, req.body || {}, (req.body || {}).choices)));
 
     app.post('/api/pos/sales', ...base, wrap(req => service.createSale(ctxOf(req), req.body || {})));
     app.get('/api/pos/report', ...manager, wrap(req => service.salesReport(ctxOf(req), req.query)));
