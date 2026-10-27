@@ -5265,7 +5265,8 @@ async function wakeServer() {
   let awake = false;
   while (Date.now() < until) {
     try {
-      const r = await fetch('/api/health', { cache: 'no-store' });
+      const ctl = new AbortController(), cut = setTimeout(() => ctl.abort(), 15000); // a request that hangs must not stall the loop
+      const r = await fetch('/api/health?t=' + Date.now(), { cache: 'no-store', signal: ctl.signal }).finally(() => clearTimeout(cut));
       if (r.ok) { awake = true; break; }
     } catch {}
     await new Promise(res => setTimeout(res, 3000));

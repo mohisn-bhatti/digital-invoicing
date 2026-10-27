@@ -53,7 +53,8 @@ test('validation: how the sale was paid', () => {
 
 test('validation: business details, branches, counters and tokens', () => {
     accepts(p => V.cleanProfile(p).pntn, [[{ pntn: '1234567-8' }, '1234567-8'], [{ pntn: '1234567' }, '1234567'], [{ pntn: '' }, ''], [{}, '']]);
-    refuses(p => V.cleanProfile({ pntn: p }), ['ABC', 'PNTN 1234567-8', '1234', '-1234567', '1234567-', '1'.repeat(21)]);
+    assert.equal(V.cleanProfile({ pntn: 'H445237-7' }).pntn, 'H445237-7');
+    refuses(p => V.cleanProfile({ pntn: p }), ['ABC', 'HH445237-7', 'H44', 'PNTN 1234567-8', '1234', '-1234567', '1234567-', '1'.repeat(21)]);
     refuses(n => V.cleanProfile({ businessName: n }), ['x'.repeat(151)], /Business name/);
     refuses(a => V.cleanProfile({ address: a }), ['x'.repeat(251)], /Address/);
     refuses(n => V.cleanBranch({ name: n }), ['', '  ', 'x'.repeat(81)]);

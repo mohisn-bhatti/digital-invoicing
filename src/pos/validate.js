@@ -95,7 +95,7 @@ function cleanPaymentMode(v) {
 function cleanProfile(p) {
     p = isObject(p) ? p : {};
     const pntn = text(p.pntn, 20, 'PNTN / NTN');
-    if (pntn && !/^\d[\d-]{5,18}\d$/.test(pntn)) throw new PosValidationError('The PNTN / NTN is made of digits (and a dash), like 1234567-8.');
+    if (pntn && !/^[A-Za-z]?\d[\d-]{5,17}\d$/.test(pntn)) throw new PosValidationError('The PNTN / NTN is made of digits (and a dash), like 1234567-8. Some start with one letter, like H445237-7.'); // PRA issues some with a leading letter
     return {
         businessName: text(p.businessName, 150, 'Business name'),
         pntn,
