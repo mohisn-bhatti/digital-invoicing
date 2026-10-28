@@ -1459,12 +1459,22 @@ function show() {
 $('#loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = new FormData(e.target);
+  const btn = e.target.querySelector('button'), label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Signing in…';
   try {
+    // A tab left open while the free server slept would otherwise sit silent: ask the server to wake first, and say so
+    const slow = setTimeout(() => { btn.textContent = 'Waking the server, one moment…'; }, 3000);
+    for (let i = 0, ok = false; i < 30 && !ok; i++) {
+      try { const ctl = new AbortController(), cut = setTimeout(() => ctl.abort(), 15000); ok = (await fetch('/api/health?t=' + Date.now(), { cache: 'no-store', signal: ctl.signal }).finally(() => clearTimeout(cut))).ok; } catch {}
+      if (!ok) await new Promise(res => setTimeout(res, 3000));
+    }
+    clearTimeout(slow); btn.textContent = 'Signing in…';
     const d = await api('/api/auth/login', { method: 'POST', body: { email: f.get('email'), password: f.get('password') } });
     Object.assign(S, { token: d.token, role: d.role, company: d.companyName, tenantRole: d.tenantRole, name: d.name, modules: d.modules || [], module: null });
     saveSession(); e.target.reset(); show();
     if (d.mustChangePassword) openPw(true);
   } catch (err) { toast(err.message); }
+  finally { btn.disabled = false; btn.textContent = label; }
 });
 
 /* ---------- Admin ---------- */

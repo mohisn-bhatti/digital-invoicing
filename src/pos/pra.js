@@ -24,6 +24,7 @@ const timeoutMs = () => { const n = Number(process.env.POS_PRA_TIMEOUT_MS); retu
 
 // PRA needs the server's IP whitelisted for production; the static-IP proxy used for FBR does the same job here
 let proxyAgent = null;
+const proxyConfigured = () => Boolean(process.env.PRA_PROXY_URL || process.env.FBR_PROXY_URL);
 function agent() {
     const url = process.env.PRA_PROXY_URL || process.env.FBR_PROXY_URL;
     if (!url) return undefined;
@@ -117,7 +118,11 @@ const defaultPost = (url, body, { token, timeout, httpsAgent }) => axios.post(ur
 // deps.post: replaces the HTTP call (tests)
 async function submit({ env, token, payload }, deps = {}) {
     const started = Date.now();
-    const finish = r => ({ reason: null, mock: false, ...r, durationMs: Date.now() - started });
+    const finish = r => {
+        const done = { reason: null, mock: false, ...r, durationMs: Date.now() - started };
+        if (!done.mock) console.log(`[PRA] ${env} ${done.outcome}${done.reason ? ' ' + done.reason : ''}${done.code ? ' code ' + done.code : ''}${done.httpStatus ? ' http ' + done.httpStatus : ''} ${done.durationMs}ms${proxyConfigured() ? ' via proxy' : ' direct'}${done.netCode ? ' ' + done.netCode : ''}`); // never the token or the invoice
+        return done;
+    };
     if (isMock()) {
         const r = mockSubmit(payload);
         if (r.delayMs) await new Promise(res => setTimeout(res, r.delayMs));
@@ -134,7 +139,7 @@ async function submit({ env, token, payload }, deps = {}) {
         const res = await (deps.post || defaultPost)(url, payload, { token, timeout: timeoutMs(), httpsAgent });
         return finish(classifyResponse(res.status, res.data));
     } catch (err) {
-        return finish(classifyError(err));
+        return finish({ ...classifyError(err), netCode: err && err.code });
     }
 }
 
@@ -144,4 +149,24 @@ async function egressIp() {
     return { ip: res.data.ip, viaProxy: Boolean(agent()) };
 }
 
-module.exports = { egressIp, ENDPOINTS, VERIFY_URL, verifyUrl, isMock, timeoutMs, parseBody, classifyResponse, classifyError, mockSubmit, submit };
+// Can this server reach PRA's gateway at all? It posts a deliberately wrong token, so nothing is recorded: PRA answering "Invalid
+// Credentials" (401) proves the road is open; a reset, timeout or refusal shows where it is shut. It cannot say the real token is valid.
+async function checkConnection() {
+    const out = { mock: isMock(), viaProxy: proxyConfigured(), ip: null, targets: [] };
+    try { agent(); } catch { out.badProxy = true; return out; }
+    try { out.ip = (await egressIp()).ip; } catch (err) { out.ipError = err.code || err.message; }
+    for (const env of ['PRODUCTION', 'SANDBOX']) {
+        const t = { env, reachable: false };
+        const started = Date.now();
+        try {
+            const res = await axios.post(ENDPOINTS[env], {}, { headers: { Authorization: 'Bearer connection-check', 'Content-Type': 'application/json', Accept: 'application/json' }, timeout: 10000, httpsAgent: agent(), proxy: false, validateStatus: () => true, transformResponse: [x => x] });
+            t.httpStatus = res.status; t.reachable = res.status >= 200 && res.status < 500; // PRA's own "Invalid Credentials" is 401
+            t.fromPra = /"fault"|Invalid Credentials|ims/i.test(String(res.data || '')); // a proxy's refusal has no such body
+        } catch (err) { t.error = err.code || err.message; }
+        t.ms = Date.now() - started;
+        out.targets.push(t);
+    }
+    return out;
+}
+
+module.exports = { checkConnection, egressIp, ENDPOINTS, VERIFY_URL, verifyUrl, isMock, timeoutMs, parseBody, classifyResponse, classifyError, mockSubmit, submit };

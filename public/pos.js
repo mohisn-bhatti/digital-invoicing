@@ -987,6 +987,24 @@ async function posEnterSettings() {
     api('/api/pos/egress-ip').then(r => { POS.ip = r.ip; const mail = $('#pEmail'); if (mail) mail.textContent = posWhitelistEmail(); const el = $('#pIp'); if (el) el.innerHTML = `<b class="font-mono">${esc(r.ip)}</b>${r.viaProxy ? ' (through the static-IP proxy)' : ' <span class="text-amber-700">(no static-IP proxy: this address can change)</span>'}`; }).catch(() => { const el = $('#pIp'); if (el) el.textContent = 'could not be checked'; });
   } catch (err) { toast(err.message); }
 }
+// Asks the server (not this browser) whether PRA's gateway answers it. A wrong token is sent on purpose, so no invoice is made.
+async function posCheckConnection() {
+  const btn = $('#pCheckBtn'), box = $('#pCheck');
+  btn.disabled = true; box.textContent = 'Checking from the server…';
+  try {
+    const r = await api('/api/pos/check-connection');
+    const names = { PRODUCTION: 'PRA live (production)', SANDBOX: 'PRA test (sandbox)' };
+    const rows = r.targets.map(t => t.reachable && t.fromPra !== false
+      ? `<div class="text-emerald-700">✓ ${names[t.env]} answered (${t.ms} ms)</div>`
+      : `<div class="text-red-700">✗ ${names[t.env]}: ${t.error ? 'no answer (' + esc(t.error) + ')' : 'refused (HTTP ' + t.httpStatus + ')'}</div>`).join('');
+    if (r.badProxy) { box.innerHTML = '<div class="text-red-700">The proxy address set on the server is not valid. Ask the administrator to correct it.</div>'; btn.disabled = false; return; }
+    const mode = r.mock ? '<div class="text-amber-700">The server is in test mode: sales are not sent to PRA at all.</div>' : '';
+    const ip = `<div>Address PRA sees: <b class="font-mono">${esc(r.ip || 'unknown')}</b> ${r.viaProxy ? '(through the fixed-IP proxy)' : '(no proxy: this address can change)'}</div>`;
+    const hint = r.targets.some(t => !t.reachable) ? '<div class="text-slate-600">If PRA does not answer, ask PRA to allow the address above. This check cannot tell whether a token is valid.</div>' : '';
+    box.innerHTML = mode + ip + rows + hint;
+  } catch (err) { box.textContent = err.message; }
+  btn.disabled = false;
+}
 function posRenderSettings() {
   const p = POS.profile;
   $('#pSettings').innerHTML = `<div class="space-y-4">
@@ -1019,6 +1037,8 @@ function posRenderSettings() {
         <li><b>Testing:</b> on the <i>Generate Test POS</i> tab PRA gives test POS IDs. Add one here as a <b>Sandbox</b> counter with the <b>token</b> PRA shows for it (the token, not the access code: that is for PRA's own desktop program).</li>
         <li><b>Live:</b> use the real POS ID and its token (POS Details tab), as a <b>Production</b> counter. Then email <a class="underline text-emerald-700" href="mailto:eims@pra.punjab.gov.pk">eims@pra.punjab.gov.pk</a> your PNTN, business name, POS ID, <b>server IP</b> and server location, so PRA whitelists this server.</li></ol>
       <div>Server IP to give PRA: <span id="pIp" class="text-slate-500">checking…</span></div>
+      <div><button type="button" id="pCheckBtn" onclick="posCheckConnection()" class="px-3 min-h-[2.5rem] rounded-lg border text-sm">Check connection to PRA</button>
+        <div id="pCheck" class="text-xs mt-1 space-y-0.5" aria-live="polite"></div></div>
       <details class="text-xs"><summary class="cursor-pointer text-emerald-700">The whitelisting email, ready to copy</summary>
         <pre id="pEmail" class="mt-2 bg-slate-50 border rounded p-2 whitespace-pre-wrap break-words">${esc(posWhitelistEmail())}</pre>
         <button type="button" onclick="posCopyEmail()" class="mt-1 px-3 min-h-[2.5rem] rounded-lg border text-sm">Copy</button></details>

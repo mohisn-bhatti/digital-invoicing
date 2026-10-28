@@ -56,6 +56,7 @@ function registerPosRoutes(app, { service, accounts, manual, rates, imports, pra
     app.get('/api/pos/overview', ...base, wrap(req => service.overview(ctxOf(req))));
 
     app.get('/api/pos/egress-ip', ...owner, wrap(() => pra.egressIp()));
+    app.get('/api/pos/check-connection', ...owner, wrap(() => pra.checkConnection()));
     app.get('/api/pos/profile', ...base, wrap(req => service.getProfile(req.user.tenantId)));
     app.put('/api/pos/profile', ...owner, wrap(req => service.saveProfile(ctxOf(req), req.body || {})));
     // Defaults and the look of the receipt: everyone reads them (the cashier screen and the item form start from them), the owner sets them
