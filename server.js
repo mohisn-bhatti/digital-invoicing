@@ -34,7 +34,12 @@ for (const k of ['DATABASE_URL', 'JWT_SECRET', 'ENCRYPTION_KEY']) {
 }
 
 const app = express();
-const prisma = new PrismaClient();
+// The database is far from the server (Seoul) and a fresh connection through its pooler can take 5–7 s. Prisma's default 5 s connect
+// timeout then reports "Can't reach database server" though the database is fine, so allow longer unless the URL says otherwise.
+const dbUrl = process.env.DATABASE_URL;
+const prisma = new PrismaClient({
+    datasourceUrl: /[?&]connect_timeout=/.test(dbUrl) ? dbUrl : `${dbUrl}${dbUrl.includes('?') ? '&' : '?'}connect_timeout=20`,
+});
 const audit = createAudit(prisma);
 const { authenticateToken } = createAuth(prisma);
 const OWNER_OR_ACCOUNTANT = requireTenantRole('OWNER', 'ACCOUNTANT');
@@ -59,13 +64,15 @@ app.use((req, res, next) => {
     next();
 });
 
-// Render health check; /api/health is the same, reachable through the Vercel /api rewrite (used to wake a sleeping free instance)
-async function health(req, res) {
+// Render's health check (render.yaml) only asks "is the process up?": Render fails a check that takes over 5 s and restarts the instance
+// after a minute of failures. With the database query in it, a slow first connection on a freshly woken instance failed the check, Render
+// restarted it, and the wake-up never finished (the loading screen waited for ever). The database is checked by /api/health instead,
+// which the loading screen and the login use (through the Vercel /api rewrite) to know the app can really serve.
+app.get('/healthz', (req, res) => res.json({ ok: true }));
+app.get('/api/health', async (req, res) => {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ ok: true });
-}
-app.get('/healthz', health);
-app.get('/api/health', health);
+});
 app.use(express.static('public'));
 
 class HttpError extends Error {
