@@ -39,7 +39,7 @@ function createApi(label) {
             A[key] = { email };
         }
         A.port = await freePort();
-        A.child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { cwd: path.join(__dirname, '..'), env: { ...process.env, PORT: String(A.port), FBR_MOCK: 'true', PRA_MOCK: 'true', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
+        A.child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { cwd: path.join(__dirname, '..'), env: { ...process.env, PORT: String(A.port), FBR_MOCK: 'true', PRA_MOCK: 'true', CMP_SWEEP_DISABLED: 'true', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
         let out = '';
         const up = await new Promise(resolve => {
             const timer = setTimeout(() => resolve(false), 30000);

@@ -24,6 +24,8 @@ const { createAudit } = require('./src/audit');
 const { BUSINESS_ACTIVITIES, SECTORS } = require('./src/activityScenarios');
 const { MODULES, tenantModules, cleanModules } = require('./src/modules');
 const sub = require('./src/subscription');
+const CmpPerms = require('./public/cmp-perms');
+const CmpRules = require('./public/cmp-rules');
 const { SCENARIOS, PROVINCES, UOMS, RATES } = require('./src/scenarios');
 
 for (const k of ['DATABASE_URL', 'JWT_SECRET', 'ENCRYPTION_KEY']) {
@@ -592,7 +594,8 @@ app.post('/api/admin/clients', authenticateToken, requireRole('SUPER_ADMIN'), as
 // ---------- Users inside a client (Owner manages own staff; super admin manages any client) ----------
 const TENANT_ROLES = ['OWNER', 'ACCOUNTANT', 'CASHIER'];
 const userView = u => ({ id: u.id, email: u.email, name: u.name, tenantRole: u.tenantRole, active: u.active, pendingApproval: u.pendingApproval, requestedBy: u.requestedBy,
-    locked: Boolean(u.lockedUntil && u.lockedUntil > new Date()), mustChangePassword: u.mustChangePassword, lastLoginAt: u.lastLoginAt, createdAt: u.createdAt });
+    locked: Boolean(u.lockedUntil && u.lockedUntil > new Date()), mustChangePassword: u.mustChangePassword, lastLoginAt: u.lastLoginAt, createdAt: u.createdAt,
+    cmpPerms: u.cmpPerms || [] }); // shown to the owner too, but only the administrator changes it (PUT …/cmp-perms below)
 
 async function tenantUsers(tenantId) {
     const list = await prisma.user.findMany({ where: { tenantId, role: 'CLIENT_USER' }, orderBy: { createdAt: 'asc' } });
@@ -693,6 +696,19 @@ app.get('/api/admin/user-requests', authenticateToken, ADMIN, async (req, res) =
     res.json(list.map(u => ({ ...userView(u), tenantId: u.tenantId, companyName: u.tenant?.companyName })));
 });
 app.post('/api/admin/clients/:id/users/:uid/reset-password', authenticateToken, ADMIN, async (req, res) => res.json(await resetTenantUserPassword(req, req.params.id, req.params.uid, req.body?.password)));
+// What a user may do in Compliance & Deadlines (public/cmp-perms.js): set by the administrator only, never by the firm (the user's
+// screens follow on their next request). Logged as user.cmp_perms, outside the firm's own compliance log.
+app.put('/api/admin/clients/:id/users/:uid/cmp-perms', authenticateToken, ADMIN, async (req, res) => {
+    const u = await findTenantUser(req.params.id, req.params.uid);
+    const perms = CmpPerms.clean(req.body?.perms);
+    const before = CmpPerms.clean(u.cmpPerms);
+    const upd = await prisma.user.update({ where: { id: u.id }, data: { cmpPerms: perms } });
+    if (before.join() !== perms.join()) {
+        await audit(req, { tenantId: req.params.id, action: 'user.cmp_perms', entityType: 'User', entityId: u.id,
+            summary: `Compliance access of ${u.email}: ${CmpPerms.summary(before)} → ${CmpPerms.summary(perms)}`, details: { before, after: perms } });
+    }
+    res.json(userView(upd));
+});
 
 // Open a client's workspace (e.g. to run the sandbox scenarios). Returns a 2-hour client token for the admin.
 app.post('/api/admin/clients/:id/workspace', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
@@ -862,6 +878,16 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
             summary: `Settings changed: ${Object.keys(changed).join(', ')}${changed.Environment ? ` (now ${t.fbrEnv})` : ''}`,
             details: changed,
         });
+    }
+    // Compliance & Deadlines switched on for the first time: the active owners who have no access in it yet get full access (the
+    // administrator can change that under Users). Other users start with none until the administrator gives them some.
+    // ("first time": nobody's compliance access was ever set for this client, so an owner set to No access stays so after an off/on)
+    if (tenantModules(t).includes('COMPLIANCE') && !tenantModules(before).includes('COMPLIANCE') && !(await prisma.auditLog.count({ where: { tenantId, action: 'user.cmp_perms' } }))) {
+        const owners = await prisma.user.findMany({ where: { tenantId, role: 'CLIENT_USER', tenantRole: 'OWNER', active: true, cmpPerms: { isEmpty: true } } });
+        for (const o of owners) {
+            await prisma.user.update({ where: { id: o.id }, data: { cmpPerms: ['FULL'] } });
+            await audit(req, { tenantId, action: 'user.cmp_perms', entityType: 'User', entityId: o.id, summary: `Compliance access of ${o.email}: No access → Full access (owner, module switched on)`, details: { before: [], after: ['FULL'] } });
+        }
     }
     // New token: refresh the HS code list from FBR in the background
     if (b.fbrToken) hs.syncFromFbr(prisma, String(b.fbrToken).trim()).catch(err => console.error('HS sync failed:', err.message));
@@ -1767,26 +1793,33 @@ app.get('/api/import/batches/:id', authenticateToken, requireTenant, OWNER_OR_AC
 
 // ---------- Activity log ----------
 // Newest first; page with ?before=<ISO time of the last row>. format=csv exports (max 50,000 rows).
-async function listAudit(where, query, res, req) {
+// opts (the Compliance & Deadlines log of one firm): actionPrefix = only actions starting with it, whatever ?action= asks for (the two are
+// ANDed, so the filter cannot widen the view); timeZone = the firm's clock for the month and the times; exportAction / filename for the download.
+async function listAudit(where, query, res, req, opts = {}) {
     const q = String(query.q || '').trim();
     const w = { ...where };
-    if (query.action) w.action = { startsWith: String(query.action) };
+    const and = [];
+    if (opts.actionPrefix) and.push({ action: { startsWith: opts.actionPrefix } });
+    if (query.action) and.push({ action: { startsWith: String(query.action) } });
+    if (and.length) w.AND = and;
     if (q) w.OR = [{ summary: { contains: q, mode: 'insensitive' } }, { userEmail: { contains: q, mode: 'insensitive' } }];
     const range = query.month ? annexC.monthRange(String(query.month)) : null;
     if (query.month && !range) throw new HttpError(400, 'Month must be YYYY-MM.');
+    const tz = opts.timeZone || 'Asia/Karachi';
     const createdAt = {};
-    if (range) { createdAt.gte = new Date(range.from + 'T00:00:00+05:00'); createdAt.lte = new Date(range.to + 'T23:59:59.999+05:00'); }
-    if (query.before) { const d = new Date(String(query.before)); if (!Number.isNaN(d.getTime())) createdAt.lt = d; }
+    if (range && opts.timeZone) { createdAt.gte = CmpRules.zoned(range.from, 0, 0, tz); createdAt.lt = CmpRules.zoned(CmpRules.addDays(range.to, 1), 0, 0, tz); }
+    else if (range) { createdAt.gte = new Date(range.from + 'T00:00:00+05:00'); createdAt.lte = new Date(range.to + 'T23:59:59.999+05:00'); }
+    if (query.before) { const d = new Date(String(query.before)); if (!Number.isNaN(d.getTime())) createdAt.lt = createdAt.lt && createdAt.lt < d ? createdAt.lt : d; }
     if (Object.keys(createdAt).length) w.createdAt = createdAt;
 
     if (query.format === 'csv') {
         const rows = await prisma.auditLog.findMany({ where: w, orderBy: { createdAt: 'desc' }, take: 50000 });
         const cell = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-        const lines = ['Time (PKT),User,Action,Summary,IP,Details'].concat(rows.map(r => [
-            new Date(r.createdAt).toLocaleString('en-GB', { timeZone: 'Asia/Karachi' }), r.userEmail, r.action, r.summary, r.ip, r.details ? JSON.stringify(r.details) : '',
+        const lines = [`Time (${opts.timeZone ? tz.split('/').pop().replace(/_/g, ' ') : 'PKT'}),User,Action,Summary,IP,Details`].concat(rows.map(r => [
+            new Date(r.createdAt).toLocaleString('en-GB', { timeZone: tz }), r.userEmail, r.action, r.summary, r.ip, r.details ? JSON.stringify(r.details) : '',
         ].map(cell).join(',')));
-        res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="activity-log${query.month ? '-' + query.month : ''}.csv"` });
-        await audit(req, { tenantId: where.tenantId ?? null, action: 'report.audit_export', summary: `Activity log exported (${rows.length} entries)` });
+        res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${opts.filename || 'activity-log'}${query.month ? '-' + query.month : ''}.csv"` });
+        await audit(req, { tenantId: where.tenantId ?? null, action: opts.exportAction || 'report.audit_export', summary: `Activity log exported (${rows.length} entries)` });
         return res.send('\uFEFF' + lines.join('\r\n') + '\r\n');
     }
     const limit = Math.min(Number(query.limit) || 50, 200);
@@ -2491,6 +2524,15 @@ app.delete('/api/buyers/:id', authenticateToken, requireTenant, OWNER_OR_ACCOUNT
     const posAccounts = createAccountsService({ prisma, audit });
     registerPosRoutes(app, { service: posService, accounts: posAccounts, imports: createImportService({ prisma, audit, service: posService, accounts: posAccounts, rates: ratesService }), manual: createManualService({ prisma, audit }), rates: ratesService, pra, authenticateToken, requireTenant, requireTenantRole, tenantModules, prisma, HttpError });
 }
+
+// Compliance & Deadlines: a separate product, its own routes and tables (src/compliance). Its background job notes overdue years and
+// prepares next year's copies of recurring obligations: at start-up and every ten minutes (the screens never depend on it having run).
+const compliance = require('./src/compliance').createCompliance({ prisma, audit, encrypt, decrypt });
+require('./src/compliance/routes').registerCmpRoutes(app, { svc: compliance, authenticateToken, requireTenant, tenantModules, prisma, HttpError, listAudit });
+const runCmpSweep = () => compliance.sweep()
+    .then(r => { if (r.overdue || r.made) console.log(`Compliance: ${r.overdue} year(s) noted overdue, ${r.made} next-year copies made`); })
+    .catch(err => console.error('compliance sweep failed:', err.message));
+if (process.env.NODE_ENV !== 'test' && process.env.CMP_SWEEP_DISABLED !== 'true') { setTimeout(runCmpSweep, 20000).unref(); setInterval(runCmpSweep, 10 * 60 * 1000).unref(); }
 
 // ---------- Errors ----------
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));

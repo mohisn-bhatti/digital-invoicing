@@ -17,7 +17,9 @@ function load(extra = {}) {
 
 test('authorities: the products say which authority they connect to, and every such authority is in the list with its full name', () => {
     const { A } = load();
-    for (const m of MODULES) { assert.ok(m.authority, m.id); assert.ok(A.byId(m.authority), `${m.authority} is known`); assert.strictEqual(A.byId(m.authority).inUse, true, `${m.authority} is marked as in use`); }
+    // Compliance & Deadlines works for clients in any country: it has no one authority (its card shows no badge)
+    assert.deepStrictEqual(MODULES.filter(m => !m.authority).map(m => m.id), ['COMPLIANCE']);
+    for (const m of MODULES.filter(x => x.authority)) { assert.ok(A.byId(m.authority), `${m.authority} is known`); assert.strictEqual(A.byId(m.authority).inUse, true, `${m.authority} is marked as in use`); }
     assert.strictEqual(A.byId('pra').name, 'Punjab Revenue Authority', 'ids are not case sensitive');
     assert.strictEqual(A.byId('FBR').name, 'Federal Board of Revenue');
     assert.strictEqual(A.byId('nobody'), null);

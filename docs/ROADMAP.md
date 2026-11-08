@@ -1,8 +1,13 @@
 # Roadmap
 
-_Last updated: 2026-10-19 (Point of Sale phase 2 is on production; access periods, plans and limits)_ · summary: [GUIDE.md](GUIDE.md)
+_Last updated: 2026-11-08 (Compliance & Deadlines, a third product, all three phases of its SRS)_ · summary: [GUIDE.md](GUIDE.md)
 
 ## Done
+**Compliance & Deadlines (2026-11-08)**: a firm's own clients worldwide, obligations (yearly/quarterly/monthly) with reminders,
+WhatsApp from templates and a log, fee invoices and receipts with taxes per country, permissions per user set by the administrator,
+My Tasks, bulk actions, dashboard, calendar, reports, downloads. See [COMPLIANCE_MODULE.md](COMPLIANCE_MODULE.md) and
+[COMPLIANCE_SRS_CHECK.md](COMPLIANCE_SRS_CHECK.md).
+
 **Phase 1: filing invoices with FBR**
 - Multi-tenant login, FBR settings (token encrypted, STRN)
 - Invoices sent to the DI API v1.12: validate, then post

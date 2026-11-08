@@ -1186,6 +1186,17 @@
 <script src="/pos-printer.js"></script>
 <script src="/pos-extras.js"></script>
 <script src="/pos-import.js"></script>
+<script src="/cmp-countries.js"></script>
+<script src="/cmp-rules.js"></script>
+<script src="/cmp-perms.js"></script>
+<script src="/cmp.js"></script>
+<script src="/cmp-clients.js"></script>
+<script src="/cmp-obligations.js"></script>
+<script src="/cmp-setup.js"></script>
+<script src="/cmp-logs.js"></script>
+<script src="/cmp-invoices.js"></script>
+<script src="/cmp-tasks.js"></script>
+<script src="/cmp-reports.js"></script>
 <script src="/authorities.js"></script>
 <script src="/admin-rates.js"></script>
 <script>
@@ -1240,6 +1251,7 @@ const ICON = {
   users: 'M16 11a4 4 0 10-8 0 4 4 0 008 0zM4 21a8 8 0 0116 0',
   building: 'M4 21V5l8-3 8 3v16M9 21v-4h6v4M8 9h.01M12 9h.01M16 9h.01M8 13h.01M12 13h.01M16 13h.01',
   chart: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+  bell: 'M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0',
   clock: 'M12 7v5l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
   mail: 'M4 6h16v12H4zM4 6l8 7 8-7',
   layers: 'M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5M3 17l9 5 9-5',
@@ -1276,6 +1288,25 @@ const NAV = {
     { id: 'p-reports', label: 'Reports', icon: 'chart', crumb: 'Reports', roles: ['OWNER', 'ACCOUNTANT'] },
     { id: 'p-settings', label: 'Settings', icon: 'cog', crumb: 'Settings', roles: ['OWNER'] },
   ],
+  // Compliance & Deadlines: its own product (public/cmp*.js). perms: shown to a user with any of these (User.cmpPerms, set by the administrator)
+  cmp: [
+    { id: 'cm-none', label: 'No access yet', icon: 'home', crumb: 'Compliance', none: true },
+    { id: 'cm-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview', perms: ['REPORTS'] },
+    { id: 'cm-notify', label: 'Notifications', icon: 'bell', crumb: 'Overview', perms: ['REPORTS', 'WHATSAPP'] },
+    { id: 'cm-tasks', label: 'My Tasks', icon: 'draft', crumb: 'Work', perms: ['VIEW'] },
+    { id: 'cm-obligations', label: 'Obligations', icon: 'list', crumb: 'Work', perms: ['VIEW'] },
+    { id: 'cm-clients', label: 'Clients', icon: 'users', crumb: 'Work', perms: ['VIEW'] },
+    { id: 'cm-client', label: 'Client', crumb: 'Clients', parent: 'cm-clients', perms: ['VIEW'] },
+    { id: 'cm-calendar', label: 'Calendar', icon: 'clock', crumb: 'Work', perms: ['VIEW'] },
+    { id: 'cm-invoices', label: 'Invoices', icon: 'book', crumb: 'Billing', perms: ['INVOICE'] },
+    { id: 'cm-reports', label: 'Reports', icon: 'chart', crumb: 'Reports', perms: ['REPORTS'] },
+    { id: 'cm-messages', label: 'WhatsApp Log', icon: 'chat', crumb: 'Logs', group: 'cmlogs', perms: ['LOGS'] },
+    { id: 'cm-activity', label: 'Activity Log', icon: 'clock', crumb: 'Logs', group: 'cmlogs', perms: ['LOGS'] },
+    { id: 'cm-templates', label: 'Message Templates', icon: 'mail', crumb: 'Setup', group: 'cmsetup', perms: ['VIEW'] },
+    { id: 'cm-fields', label: 'Custom Fields', icon: 'layers', crumb: 'Setup', group: 'cmsetup', perms: ['VIEW'] },
+    { id: 'cm-taxes', label: 'Invoice Taxes', icon: 'chart', crumb: 'Setup', group: 'cmsetup', perms: ['INVOICE', 'SETUP'] },
+    { id: 'cm-settings', label: 'Settings', icon: 'cog', crumb: 'Setup', group: 'cmsetup', perms: ['VIEW'] },
+  ],
   admin: [
     { id: 'a-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },
     { id: 'a-clients', label: 'Clients', icon: 'building', crumb: 'Clients' },
@@ -1308,10 +1339,16 @@ function renderReadOnly() {
   if (on) $('#roText').textContent = S.settings.readOnlyMessage || 'Your access period has ended. You can look at, print and download your records, but you cannot make changes. Contact ETAX to renew it.';
   renderNav();
 }
-const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : (S.module === 'POS' ? NAV.pos : NAV.client).filter(n => (!n.roles || n.roles.includes(S.tenantRole || 'OWNER')) && !(isReadOnly() && READ_ONLY_HIDDEN.has(n.id)));
+// Each product's menu: NAV.client (Digital Invoicing), NAV.pos, NAV.cmp. Compliance pages follow the user's own permissions there.
+const cmpNavOk = n => {
+  if (!Array.isArray(S.cmpPerms)) return false; // (not read yet)
+  if (n.none) return !S.cmpPerms.length;
+  return !n.perms || n.perms.some(p => S.cmpPerms.includes(p));
+};
+const navList = () => S.role === 'SUPER_ADMIN' ? NAV.admin : (S.module === 'POS' ? NAV.pos : S.module === 'COMPLIANCE' ? NAV.cmp.filter(cmpNavOk) : NAV.client).filter(n => (!n.roles || n.roles.includes(S.tenantRole || 'OWNER')) && !(isReadOnly() && READ_ONLY_HIDDEN.has(n.id)));
 const canManage = () => ['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER'); // cashier can't
 // Menu groups that open and close (remembered per browser); a group opens by itself when one of its pages is shown
-const NAV_GROUPS = { sales: { label: 'Sales / Revenue', icon: 'sales' }, accounts: { label: 'Accounts', icon: 'layers' } };
+const NAV_GROUPS = { sales: { label: 'Sales / Revenue', icon: 'sales' }, accounts: { label: 'Accounts', icon: 'layers' }, cmlogs: { label: 'Logs', icon: 'clock' }, cmsetup: { label: 'Setup', icon: 'cog' } };
 const navOpen = id => { try { return localStorage.getItem('navGroup:' + id) !== 'closed'; } catch { return true; } };
 function renderNav() {
   const svg = icon => `<svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[icon]}"/></svg>`;
@@ -1353,11 +1390,12 @@ function go(id) { if (location.hash === '#/' + id) route(); else location.hash =
 function route() {
   if (!S.token || needsModuleChoice()) return;
   const list = navList(), view = S.role === 'SUPER_ADMIN' ? '#adminView' : '#clientView';
+  if (!list.length) return; // (a product's menu not ready yet: its start function routes when it is)
   let id = location.hash.replace(/^#\/?/, '');
   if (id === 'c-taxrules') { id = 'c-products'; history.replaceState(null, '', '#/c-products'); } // merged into Items with Tax Rules
   const meta = list.find(n => n.id === id);
   if (!meta || !document.querySelector(`${view} [data-page="${id}"]`) || (id === 'a-client' && !S.manageId)) {
-    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : (S.module === 'POS' ? (['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER') ? 'p-dashboard' : isReadOnly() ? 'p-sales' : 'p-sale') : (S.adminSession ? 'c-new' : 'c-dashboard'));
+    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : S.module === 'COMPLIANCE' ? list.find(n => !n.parent).id : (S.module === 'POS' ? (['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER') ? 'p-dashboard' : isReadOnly() ? 'p-sales' : 'p-sale') : (S.adminSession ? 'c-new' : 'c-dashboard'));
     history.replaceState(null, '', '#/' + id);
   }
   const m = list.find(n => n.id === id);
@@ -1436,6 +1474,8 @@ function resetScreen() {
   $('#receiptModal').classList.add('hidden');
   document.body.classList.remove('print-a4', 'print-pos');
   if (typeof posReset === 'function') posReset();
+  if (typeof cmpReset === 'function') cmpReset();
+  S.cmpPerms = undefined;
 }
 function show() {
   resetScreen();
@@ -1443,9 +1483,10 @@ function show() {
   if (!S.token) return $('#loginView').classList.remove('hidden');
   if (needsModuleChoice()) { showModuleChooser(); return; }
   $('#shell').classList.remove('hidden');
-  const posOpen = S.role !== 'SUPER_ADMIN' && S.module === 'POS'; // the name under the logo and the tab follow the product that is open
-  $('#brandSub').textContent = posOpen ? 'Point of Sale (PRA)' : 'FBR Digital Invoicing';
-  document.title = posOpen ? 'ETAX — Point of Sale' : 'ETAX — FBR Digital Invoicing';
+  // the name under the logo and the tab follow the product that is open
+  const open = S.role === 'SUPER_ADMIN' ? 'INVOICING' : S.module;
+  $('#brandSub').textContent = open === 'POS' ? 'Point of Sale (PRA)' : open === 'COMPLIANCE' ? 'Compliance & Deadlines' : 'FBR Digital Invoicing';
+  document.title = open === 'POS' ? 'ETAX — Point of Sale' : open === 'COMPLIANCE' ? 'ETAX — Compliance & Deadlines' : 'ETAX — FBR Digital Invoicing';
   $('#companyName').textContent = S.company;
   $('#userLine').textContent = S.adminSession ? 'Admin workspace' : (S.role === 'SUPER_ADMIN' ? 'Super admin' : `${S.name || ''} · ${(S.tenantRole || 'OWNER').toLowerCase()}`);
   $('#pwLink').classList.toggle('hidden', Boolean(S.adminSession));
@@ -1453,7 +1494,12 @@ function show() {
   $('#wsName').textContent = S.company;
   renderNav();
   if (S.role === 'SUPER_ADMIN') { $('#adminView').classList.remove('hidden'); $('#envBadge').classList.add('hidden'); initAdmin(); }
-  else { $('#clientView').classList.remove('hidden'); (S.module === 'POS' ? (typeof initPos === 'function' ? initPos() : toast('The Point of Sale screens did not load. Reload the page.')) : initClient()); }
+  else {
+    $('#clientView').classList.remove('hidden');
+    if (S.module === 'POS') typeof initPos === 'function' ? initPos() : toast('The Point of Sale screens did not load. Reload the page.');
+    else if (S.module === 'COMPLIANCE') typeof initCmp === 'function' ? initCmp() : toast('The Compliance & Deadlines screens did not load. Reload the page.');
+    else initClient();
+  }
 }
 
 $('#loginForm').addEventListener('submit', async e => {
@@ -1702,7 +1748,8 @@ async function loadUsers(prefix) {
     $(`#${prefix}UserRows`).innerHTML = list.map(u => `<tr class="border-b last:border-0 align-top">
       <td class="py-1.5"><div class="font-medium">${esc(u.name || '—')}</div><div class="text-xs text-slate-500">${esc(u.email)}${prefix === 'a' ? ` <button class="text-emerald-700 underline ml-1" onclick="editUserEmail('${u.id}','${esc(u.email)}')">Edit email</button>` : ''}</div></td>
       <td><select class="!w-auto !text-xs" ${u.pendingApproval && prefix === 'c' ? 'disabled' : ''} onchange="updateUser('${prefix}','${u.id}',{tenantRole:this.value})">
-        ${['OWNER', 'ACCOUNTANT', 'CASHIER'].map(r => `<option value="${r}" ${r === u.tenantRole ? 'selected' : ''}>${r[0] + r.slice(1).toLowerCase()}</option>`).join('')}</select></td>
+        ${['OWNER', 'ACCOUNTANT', 'CASHIER'].map(r => `<option value="${r}" ${r === u.tenantRole ? 'selected' : ''}>${r[0] + r.slice(1).toLowerCase()}</option>`).join('')}</select>
+        ${prefix === 'a' && mpHas('COMPLIANCE') ? `<div class="text-xs mt-1">Compliance: <b>${esc(CmpPerms.summary(u.cmpPerms))}</b> <button class="text-emerald-700 underline" onclick='cmpPermsDialog(${JSON.stringify(S.manageId)}, ${JSON.stringify(u.id)}, ${esc(JSON.stringify(u.email))}, ${esc(JSON.stringify(u.cmpPerms || []))})'>Edit</button></div>` : ''}</td>
       <td class="text-xs">${u.pendingApproval ? '<span class="text-amber-700">Waiting for admin approval</span>' : u.active ? '<span class="text-emerald-700">Active</span>' : '<span class="text-slate-500">Disabled</span>'}${u.locked ? ' · <span class="text-red-700">Locked</span>' : ''}${u.mustChangePassword ? ' · <span class="text-amber-700">must set password</span>' : ''}</td>
       <td class="text-xs">${u.lastLoginAt ? fmtDate(u.lastLoginAt) : '—'}</td>
       <td class="text-right whitespace-nowrap text-xs">${u.pendingApproval ? (prefix === 'a'
