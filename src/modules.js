@@ -3,6 +3,7 @@
 const MODULES = [
     { id: 'INVOICING', authority: 'FBR', label: 'FBR Digital Invoicing', blurb: 'File sale invoices with FBR, debit notes, Annex-C report, stock statement.' },
     { id: 'POS', authority: 'PRA', label: 'Point of Sale (PRA)', blurb: 'A cashier screen for restaurants, banquet halls and other Punjab service businesses: every sale is sent to PRA and printed with its fiscal number and QR code.' },
+    { id: 'COMPLIANCE', authority: null, label: 'Compliance & Deadlines', blurb: 'Your own clients anywhere in the world: their statutory deadlines every year, reminders sent on WhatsApp from your templates, and a full log.' },
 ];
 const MODULE_IDS = MODULES.map(m => m.id);
 const DEFAULT_MODULES = ['INVOICING'];
