@@ -163,7 +163,14 @@ function createInvoices({ prisma, audit, common, now }) {
         await log(ctx, 'cmp.invoice.create', 'CmpInvoice', inv.id, `Draft invoice for ${common.clientLabel(client)}${occ ? ` (${occ.obligation.name} ${R.periodName(occ)})` : ''}`, { clientId: client.id });
         return inv;
     }
+    // A new invoice: what was sent is checked first, so a refused one leaves no empty draft behind
     async function create(ctx, b) {
+        if (b.lines || b.taxes || b.currency) {
+            const currency = String(b.currency || 'USD').toUpperCase();
+            if (b.currency && !C.currencyOk(currency)) throw bad('Choose a currency from the list.');
+            if (b.lines || b.taxes) cleanBody({ lines: b.lines || [{ description: 'Fee', amount: 0 }], taxes: b.taxes || [] }, b.currency ? currency : 'USD');
+            if (!b.occurrenceId) await common.findClient(ctx.tenantId, b.clientId, { live: true });
+        }
         const inv = await draftFor(ctx, { clientId: b.clientId, occurrenceId: b.occurrenceId });
         if (b.lines || b.taxes || b.currency) return update(ctx, inv.id, b);
         return get(ctx, inv.id);
@@ -179,7 +186,9 @@ function createInvoices({ prisma, audit, common, now }) {
         const dueDate = b.dueDate !== undefined ? (b.dueDate ? V.day(b.dueDate, 'Payment due') : null) : ymd(inv.dueDate) || null;
         if (issueDate && dueDate && dueDate < issueDate) throw bad('The payment due date cannot be before the invoice date.');
         const notes = b.notes !== undefined ? V.multiline(b.notes, 1000, 'Notes') : inv.notes;
-        await prisma.$transaction(async tx => {
+        // in turn with issuing (the same lock): an edit can never land on an invoice that was issued a moment ago
+        await inTurn(ctx.tenantId, 'cmp-invoice-no', async tx => {
+            if ((await tx.cmpInvoice.findUnique({ where: { id: inv.id }, select: { status: true } })).status !== 'DRAFT') throw new CmpError(409, 'This invoice was issued a moment ago: it can no longer be changed.');
             await tx.cmpInvoiceLine.deleteMany({ where: { invoiceId: inv.id } });
             await tx.cmpInvoiceTax.deleteMany({ where: { invoiceId: inv.id } });
             await tx.cmpInvoice.update({ where: { id: inv.id }, data: {
@@ -231,7 +240,11 @@ function createInvoices({ prisma, audit, common, now }) {
         if (inv.status === 'CANCELLED') throw new CmpError(409, 'This invoice is already cancelled.');
         if (inv.receipts.some(r => !r.voidedAt)) throw new CmpError(409, 'Money has been received against this invoice. Void its receipts first.');
         const why = V.line(reason, 300, 'Reason', { required: true });
-        await prisma.cmpInvoice.update({ where: { id: inv.id }, data: { status: 'CANCELLED', cancelledAt: now(), cancelledBy: ctx.email, cancelReason: why } });
+        // in turn with receipts (the same lock): no payment can arrive between the check and the cancelling
+        await inTurn(ctx.tenantId, 'cmp-receipt-no', async tx => {
+            if (await tx.cmpReceipt.count({ where: { invoiceId: inv.id, voidedAt: null } })) throw new CmpError(409, 'Money has been received against this invoice. Void its receipts first.');
+            await tx.cmpInvoice.update({ where: { id: inv.id }, data: { status: 'CANCELLED', cancelledAt: now(), cancelledBy: ctx.email, cancelReason: why } });
+        });
         await log(ctx, 'cmp.invoice.cancel', 'CmpInvoice', inv.id, `Invoice ${inv.number} to ${common.clientLabel(inv.client)} cancelled: ${why}`, { clientId: inv.clientId });
         return get(ctx, inv.id);
     }
@@ -254,6 +267,11 @@ function createInvoices({ prisma, audit, common, now }) {
         if (!METHODS[method]) throw bad('Choose how it was paid.');
         const reference = V.line(b.reference, 120, 'Reference'), notes = V.multiline(b.notes, 500, 'Notes');
         const r = await inTurn(ctx.tenantId, 'cmp-receipt-no', async tx => {
+            // checked again inside the lock: two payments entered at once cannot both fit in what is owed, nor land on a cancelled invoice
+            const now2 = await tx.cmpInvoice.findUnique({ where: { id: inv.id }, include: { receipts: true } });
+            if (!['ISSUED', 'SENT', 'PARTIAL'].includes(now2.status)) throw new CmpError(409, now2.status === 'RECEIVED' ? 'This invoice is already paid in full.' : 'This invoice is cancelled.');
+            const owed = toMinor(now2.total, d) - now2.receipts.filter(x => !x.voidedAt).reduce((m, x) => m + toMinor(x.amount, d), 0);
+            if (toMinor(amount, d) > owed) throw bad(`That is more than is still owed (${amountText(fromMinor(owed, d), inv.currency)}).`);
             const s = await tx.cmpSettings.upsert({ where: { tenantId: ctx.tenantId }, create: { tenantId: ctx.tenantId, receiptSeq: 1 }, update: { receiptSeq: { increment: 1 } } });
             const row = await tx.cmpReceipt.create({ data: { tenantId: ctx.tenantId, invoiceId: inv.id, clientId: inv.clientId, seqNo: s.receiptSeq, number: formatNo(s.receiptFormat, s.receiptSeq, receivedOn), amount, receivedOn: dateOf(receivedOn), method, reference, notes, createdBy: ctx.email } });
             await recompute(tx, inv.id);

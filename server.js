@@ -881,7 +881,8 @@ app.put('/api/admin/clients/:id/settings', authenticateToken, requireRole('SUPER
     }
     // Compliance & Deadlines switched on for the first time: the active owners who have no access in it yet get full access (the
     // administrator can change that under Users). Other users start with none until the administrator gives them some.
-    if (tenantModules(t).includes('COMPLIANCE') && !tenantModules(before).includes('COMPLIANCE')) {
+    // ("first time": nobody's compliance access was ever set for this client, so an owner set to No access stays so after an off/on)
+    if (tenantModules(t).includes('COMPLIANCE') && !tenantModules(before).includes('COMPLIANCE') && !(await prisma.auditLog.count({ where: { tenantId, action: 'user.cmp_perms' } }))) {
         const owners = await prisma.user.findMany({ where: { tenantId, role: 'CLIENT_USER', tenantRole: 'OWNER', active: true, cmpPerms: { isEmpty: true } } });
         for (const o of owners) {
             await prisma.user.update({ where: { id: o.id }, data: { cmpPerms: ['FULL'] } });

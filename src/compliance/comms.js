@@ -189,10 +189,21 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
             || (b.view.actionable - a.view.actionable) || (firstActive(a) - firstActive(b)) || (+a.view.dueAt - +b.view.dueAt));
         return { summary, items: shown, settings };
     }
-    // The counts for the bell and the pop-up
+    // The counts for the bell and the pop-up: overdue and dates-to-confirm are counted by the database; "ready" needs each reminder's
+    // state, worked out from the few columns it depends on (a reminder is at most 366 days from its due date)
     async function alerts(ctx) {
-        const n = await notifications(ctx, {});
-        return n.summary;
+        const at = now(), settings = await common.settings(ctx.tenantId);
+        const live = { archivedAt: null, client: { archivedAt: null } };
+        const [overdue, confirm, rows] = await Promise.all([
+            prisma.cmpOccurrence.count({ where: { tenantId: ctx.tenantId, stage: { not: 'COMPLETED' }, dueAt: { lte: at }, obligation: live } }),
+            prisma.cmpOccurrence.count({ where: { tenantId: ctx.tenantId, datesConfirmed: false, stage: { not: 'COMPLETED' }, obligation: live } }),
+            prisma.cmpOccurrence.findMany({ where: { tenantId: ctx.tenantId, stage: { not: 'COMPLETED' }, obligation: { ...live, reminders: { some: {} } }, dueAt: { gte: new Date(+at - 367 * R.DAY), lte: new Date(+at + 367 * R.DAY) } },
+                select: { id: true, periodEnd: true, dueDate: true, stage: true, obligation: { select: { client: { select: { timeZone: true } }, reminders: { select: { id: true, offsetDays: true } } } } } }),
+        ]);
+        const sent = await obligations.sentMap(rows.map(r => r.id));
+        const ready = rows.filter(o => R.reminderStates(o, o.obligation.reminders, { tz: o.obligation.client.timeZone, hour: settings.reminderHour, now: at, sent: sent.get(o.id) || new Map() })
+            .some(r => r.state === 'HIGHLIGHTED' || r.state === 'MISSED')).length;
+        return { overdue, ready, confirm };
     }
 
     return { listTemplates, createTemplate, updateTemplate, deleteTemplate, prepare, send, voidMessage, listMessages, notifications, alerts };

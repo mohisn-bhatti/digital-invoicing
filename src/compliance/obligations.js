@@ -41,7 +41,7 @@ function createObligations({ prisma, audit, common, now }) {
     }
     const clientBrief = c => ({ id: c.id, code: c.code, name: c.name, country: c.country, timeZone: c.timeZone, archivedAt: c.archivedAt, assignedToId: c.assignedToId });
     const seriesView = ob => ({ id: ob.id, clientId: ob.clientId, name: ob.name, portalUrl: ob.portalUrl, frequency: ob.frequency, yearsTotal: ob.yearsTotal, notes: ob.notes, assignedToId: ob.assignedToId,
-        basePeriodStart: ymd(ob.basePeriodStart), basePeriodEnd: ymd(ob.basePeriodEnd), baseDueDate: ymd(ob.baseDueDate), archivedAt: ob.archivedAt, archivedBy: ob.archivedBy, createdAt: ob.createdAt });
+        basePeriodStart: ymd(ob.basePeriodStart), basePeriodEnd: ymd(ob.basePeriodEnd), baseDueDate: ymd(ob.baseDueDate), baseSeq: ob.baseSeq, archivedAt: ob.archivedAt, archivedBy: ob.archivedBy, createdAt: ob.createdAt });
 
     const INCLUDE = { client: true, reminders: { include: { template: { select: { id: true, name: true, active: true } } } }, occurrences: { orderBy: { seq: 'asc' } } };
     async function presentSeries(tenantId, list) {
@@ -71,7 +71,7 @@ function createObligations({ prisma, audit, common, now }) {
         if (!ob || ob.archivedAt || ob.client.archivedAt) return null;
         const seq = (ob.occurrences[0] ? ob.occurrences[0].seq : 0) + 1, limit = R.periodsAllowed(ob.yearsTotal, ob.frequency);
         if (limit && seq > limit) return null;
-        const dates = R.periodDates({ periodStart: ob.basePeriodStart, periodEnd: ob.basePeriodEnd, dueDate: ob.baseDueDate }, seq, ob.frequency);
+        const dates = R.periodDates({ periodStart: ob.basePeriodStart, periodEnd: ob.basePeriodEnd, dueDate: ob.baseDueDate }, seq - ob.baseSeq + 1, ob.frequency);
         if (!manual && R.instants(dates, ob.client.timeZone).dueAt <= now()) return null;
         try {
             const occ = await prisma.cmpOccurrence.create({ data: { tenantId: ob.tenantId, clientId: ob.clientId, obligationId: ob.id, seq, ...occData(dates, ob.client.timeZone), datesConfirmed: false } });
@@ -163,13 +163,13 @@ function createObligations({ prisma, audit, common, now }) {
         const ob = occ.obligation, client = ob.client;
         const old = { periodStart: ymd(occ.periodStart), periodEnd: ymd(occ.periodEnd), dueDate: ymd(occ.dueDate) };
         const data = {}, what = [];
-        let futureBase = null;
+        let futureBase = null; // these dates, as the pattern from this period on
         if (b.periodStart !== undefined || b.periodEnd !== undefined || b.dueDate !== undefined || b.applyFuture === true) {
             const d = V.cleanDates({ periodStart: b.periodStart ?? old.periodStart, periodEnd: b.periodEnd ?? old.periodEnd, dueDate: b.dueDate ?? old.dueDate });
             const changed = d.periodStart !== old.periodStart || d.periodEnd !== old.periodEnd || d.dueDate !== old.dueDate;
             if (changed) { Object.assign(data, occData(d, client.timeZone), { datesConfirmed: true }); what.push(`${datesText(old)} → ${datesText(d)}`); }
             if (b.applyFuture === true) {
-                futureBase = R.periodDates(d, 2 - occ.seq, ob.frequency); // the period-1 pattern that gives these dates in this period
+                futureBase = d;
                 data.overridden = false;
                 what.push('the periods after follow these dates');
             } else if (changed) data.overridden = true;
@@ -179,10 +179,10 @@ function createObligations({ prisma, audit, common, now }) {
         await prisma.$transaction(async tx => {
             await tx.cmpOccurrence.update({ where: { id: occ.id }, data });
             if (futureBase) {
-                await tx.cmpObligation.update({ where: { id: ob.id }, data: { basePeriodStart: dateOf(futureBase.periodStart), basePeriodEnd: dateOf(futureBase.periodEnd), baseDueDate: dateOf(futureBase.dueDate) } });
+                await tx.cmpObligation.update({ where: { id: ob.id }, data: { basePeriodStart: dateOf(futureBase.periodStart), basePeriodEnd: dateOf(futureBase.periodEnd), baseDueDate: dateOf(futureBase.dueDate), baseSeq: occ.seq } });
                 // later periods nobody has confirmed or changed yet take the new pattern
                 const later = await tx.cmpOccurrence.findMany({ where: { obligationId: ob.id, seq: { gt: occ.seq }, datesConfirmed: false, overridden: false, stage: { not: 'COMPLETED' } } });
-                for (const l of later) await tx.cmpOccurrence.update({ where: { id: l.id }, data: occData(R.periodDates(futureBase, l.seq, ob.frequency), client.timeZone) });
+                for (const l of later) await tx.cmpOccurrence.update({ where: { id: l.id }, data: occData(R.periodDates(futureBase, l.seq - occ.seq + 1, ob.frequency), client.timeZone) });
             }
         });
         if (what.length) await log(ctx, 'cmp.occurrence.update', 'CmpOccurrence', occ.id, `${ob.name} for ${common.clientLabel(client)}, ${which(ob, occ)}: ${what.join('; ')}`, { clientId: client.id, obligationId: ob.id });
@@ -202,18 +202,24 @@ function createObligations({ prisma, audit, common, now }) {
     }
     // Completed and closed (SRS 9): mode INVOICE = an invoice is made for it (the route makes the draft), FREE = closed without one
     // (free work for family, friends, goodwill). The next period is prepared if it is not there yet.
-    async function complete(ctx, id, mode = 'FREE') {
+    // makeInvoice(tx): run in the same transaction as the step (so a period is never "completed with an invoice" without one); returns its id
+    async function complete(ctx, id, mode = 'FREE', { makeInvoice } = {}) {
         if (!['INVOICE', 'FREE'].includes(mode)) throw bad('Choose: generate an invoice, or close without one.');
         const occ = await common.findOccurrence(ctx.tenantId, id, { live: true });
         if (occ.stage === 'COMPLETED') throw new CmpError(409, 'This period is already completed.');
-        const done = await prisma.cmpOccurrence.updateMany({ where: { id: occ.id, stage: { not: 'COMPLETED' } }, data: { stage: 'COMPLETED', closedAt: now(), closedBy: ctx.email, closeKind: mode } });
-        if (!done.count) throw new CmpError(409, 'This period is already completed.');
+        const invoiceId = await prisma.$transaction(async tx => {
+            const done = await tx.cmpOccurrence.updateMany({ where: { id: occ.id, stage: { not: 'COMPLETED' } }, data: { stage: 'COMPLETED', closedAt: now(), closedBy: ctx.email, closeKind: mode } });
+            if (!done.count) throw new CmpError(409, 'This period is already completed.');
+            return mode === 'INVOICE' && makeInvoice ? makeInvoice(tx) : null;
+        });
         await log(ctx, 'cmp.occurrence.complete', 'CmpOccurrence', occ.id, `${occ.obligation.name} ${period(occ)} for ${common.clientLabel(occ.obligation.client)}: ${STEP_NAMES[occ.stage]} → Completed (${mode === 'INVOICE' ? 'with an invoice' : 'closed without an invoice'})`, { clientId: occ.clientId, obligationId: occ.obligationId, from: occ.stage, to: 'COMPLETED', closeKind: mode });
         if ((await common.settings(ctx.tenantId)).autoNextYear) {
             const last = await prisma.cmpOccurrence.findFirst({ where: { obligationId: occ.obligationId }, orderBy: { seq: 'desc' } });
             if (last.id === occ.id) await ensureNext(occ.obligationId, { req: ctx.req });
         }
-        return get(ctx, occ.obligationId);
+        const out = await get(ctx, occ.obligationId);
+        if (invoiceId) out.invoiceId = invoiceId;
+        return out;
     }
     async function reopen(ctx, id) {
         const occ = await common.findOccurrence(ctx.tenantId, id, { live: true });

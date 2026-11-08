@@ -99,6 +99,7 @@ CREATE TABLE "CmpObligation" (
     "basePeriodStart" DATE NOT NULL,
     "basePeriodEnd" DATE NOT NULL,
     "baseDueDate" DATE NOT NULL,
+    "baseSeq" INTEGER NOT NULL DEFAULT 1,
     "notes" TEXT NOT NULL DEFAULT '',
     "assignedToId" TEXT,
     "archivedAt" TIMESTAMP(3),

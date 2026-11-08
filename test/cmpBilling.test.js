@@ -225,6 +225,33 @@ run('downloads: need the export permission and the permission for that data; fol
     for (const k of ['receipts', 'overdue', 'upcoming', 'aging']) assert.strictEqual((await A.call(`/api/cmp/export/${k}`, { token: A.owner.token })).status, 200, k);
 });
 
+run('review fixes: two payments at once cannot overpay; a refused new invoice leaves no draft; completing twice reuses the invoice; /me tells a user without access nothing', async () => {
+    // an invoice of 1000; two payments of 1000 sent at the same moment: one is taken, the other refused
+    const inv = (await A.call('/api/cmp/invoices', { token: A.cashier.token, method: 'POST', body: { clientId: W.pk.id, lines: [{ description: 'Fee', amount: 1000 }] } })).json;
+    await A.call(`/api/cmp/invoices/${inv.id}/issue`, { token: A.cashier.token, method: 'POST' });
+    const both = await Promise.all([1, 2].map(() => A.call(`/api/cmp/invoices/${inv.id}/receipts`, { token: A.cashier.token, method: 'POST', body: { amount: 1000 } })));
+    assert.deepStrictEqual(both.map(x => x.status).sort(), [200, 409]);
+    const after = (await A.call(`/api/cmp/invoices/${inv.id}`, { token: A.cashier.token })).json;
+    assert.deepStrictEqual([after.received, after.status, after.receipts.length], [1000, 'RECEIVED', 1]);
+    // a new invoice with a wrong amount: refused, and no empty draft is left
+    const drafts = async () => A.prisma.cmpInvoice.count({ where: { tenantId: A.tenantId, status: 'DRAFT' } });
+    const before = await drafts();
+    assert.strictEqual((await A.call('/api/cmp/invoices', { token: A.cashier.token, method: 'POST', body: { clientId: W.pk.id, lines: [{ description: 'Fee', amount: 'abc' }] } })).status, 400);
+    assert.strictEqual(await drafts(), before);
+    // complete with an invoice, reopen, complete with an invoice again: the same invoice, not a second one
+    const occ = W.ob2.occurrences[0];
+    const first = (await A.call(`/api/cmp/occurrences/${occ.id}/complete`, { token: A.owner.token, method: 'POST', body: { mode: 'INVOICE' } })).json.invoiceId;
+    await A.call(`/api/cmp/occurrences/${occ.id}/reopen`, { token: A.owner.token, method: 'POST' });
+    const second = (await A.call(`/api/cmp/occurrences/${occ.id}/complete`, { token: A.owner.token, method: 'POST', body: { mode: 'INVOICE' } })).json.invoiceId;
+    assert.ok(first && first === second);
+    assert.strictEqual(await A.prisma.cmpInvoice.count({ where: { occurrenceId: occ.id } }), 1);
+    // a user with no permission learns nothing about the firm from /me
+    await A.prisma.user.update({ where: { email: A.manager.email }, data: { cmpPerms: [] } });
+    const me = (await A.call('/api/cmp/me', { token: A.manager.token })).json;
+    assert.deepStrictEqual([me.perms, me.team, Object.keys(me.settings)], [[], [], ['timeZone']]);
+    await A.prisma.user.update({ where: { email: A.manager.email }, data: { cmpPerms: ['VIEW', 'EXPORT'] } });
+});
+
 run('WhatsApp numbers the firm sends from: with a country code; one default; the log keeps which one was used', async () => {
     let r = await A.call('/api/cmp/settings', { token: A.owner.token, method: 'PUT', body: { waSenders: [{ label: 'Business', phone: '0333 1234567', open: 'WEB' }] } });
     assert.strictEqual(r.status, 400); // no country code: it could be anyone's
@@ -252,6 +279,6 @@ run('settings: the firm\'s invoice details and number formats', async () => {
     assert.strictEqual((await A.call('/api/cmp/settings', { token: A.owner.token, method: 'PUT', body: { invoiceFormat: 'NO-NUMBER' } })).status, 400);
     const d = (await A.call('/api/cmp/invoices', { token: A.cashier.token, method: 'POST', body: { clientId: W.ae1.id, lines: [{ description: 'Advisory', amount: 100 }] } })).json;
     r = await A.call(`/api/cmp/invoices/${d.id}/issue`, { token: A.cashier.token, method: 'POST' });
-    assert.strictEqual(r.json.number, `BC/${year.slice(2)}/014`); // the counter carries on
+    assert.strictEqual(r.json.number, `BC/${year.slice(2)}/015`); // the counter carries on (14 issued before in this file)
 });
 test.after(() => A.teardown());

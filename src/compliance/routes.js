@@ -51,10 +51,15 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     const { clients, obligations, comms, invoices, bulk, reports } = svc;
 
     // who I am here: my permissions, the firm's settings and its team (for the screens)
-    route('get', '/api/cmp/me', base, async (req, ctx) => ({
-        perms: [...ctx.perms], settings: await clients.getSettings(ctx), workspace: Boolean(req.user.impersonatedBy),
-        team: (await prisma.user.findMany({ where: { tenantId: ctx.tenantId, role: 'CLIENT_USER', active: true }, select: { id: true, name: true, email: true }, orderBy: { name: 'asc' } })),
-    }));
+    // (a user without any permission here learns only that: not the firm's settings, bank details or team)
+    route('get', '/api/cmp/me', base, async (req, ctx) => {
+        const may = ctx.perms.has('VIEW');
+        return {
+            perms: [...ctx.perms], workspace: Boolean(req.user.impersonatedBy),
+            settings: may ? await clients.getSettings(ctx) : { timeZone: (await clients.getSettings(ctx)).timeZone },
+            team: may ? await prisma.user.findMany({ where: { tenantId: ctx.tenantId, role: 'CLIENT_USER', active: true }, select: { id: true, name: true, email: true }, orderBy: { name: 'asc' } }) : [],
+        };
+    });
     route('get', '/api/cmp/settings', can('VIEW'), (req, ctx) => clients.getSettings(ctx));
     route('put', '/api/cmp/settings', can('FULL'), (req, ctx) => clients.putSettings(ctx, req.body || {}));
 
@@ -101,9 +106,11 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('post', '/api/cmp/occurrences/:id/complete', can('COMPLETE'), async (req, ctx) => {
         const mode = String((req.body || {}).mode || 'FREE').toUpperCase();
         if (mode === 'INVOICE' && !ctx.perms.has('INVOICE')) throw new HttpError(403, `You do not have permission to ${NO_PERM.INVOICE}. Close it without an invoice, or ask the ETAX administrator.`);
-        const ob = await obligations.complete(ctx, req.params.id, mode);
-        if (mode === 'INVOICE') ob.invoiceId = (await invoices.draftFor(ctx, { occurrenceId: req.params.id })).id;
-        return ob;
+        // the same transaction makes the draft (or finds the invoice already made for this period, e.g. after a reopen)
+        return obligations.complete(ctx, req.params.id, mode, { makeInvoice: async tx => {
+            const existing = await tx.cmpInvoice.findFirst({ where: { tenantId: ctx.tenantId, occurrenceId: req.params.id, status: { not: 'CANCELLED' } }, select: { id: true } });
+            return existing ? existing.id : (await invoices.draftFor(ctx, { occurrenceId: req.params.id }, tx)).id;
+        } });
     });
     route('post', '/api/cmp/occurrences/:id/reopen', can('COMPLETE'), (req, ctx) => obligations.reopen(ctx, req.params.id));
 

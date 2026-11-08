@@ -80,9 +80,11 @@ function createClients({ prisma, audit, encrypt, decrypt, common, now }) {
             prisma.cmpOccurrence.findMany({ where: { clientId: { in: ids }, stage: { not: 'COMPLETED' }, obligation: { archivedAt: null } }, select: { clientId: true, dueAt: true } }),
         ]) : [[], []];
         const have = new Set(values.map(v => `${v.clientId}:${v.fieldId}`));
+        const counts = new Map(); // client id → open and overdue periods, counted in one pass
+        for (const o of open) { const n = counts.get(o.clientId) || { open: 0, overdue: 0 }; n.open++; if (o.dueAt <= at) n.overdue++; counts.set(o.clientId, n); }
         let out = rows.map(c => {
-            const mine = open.filter(o => o.clientId === c.id);
-            return { ...listView(c), openCount: mine.length, overdueCount: mine.filter(o => o.dueAt <= at).length,
+            const n = counts.get(c.id) || { open: 0, overdue: 0 };
+            return { ...listView(c), openCount: n.open, overdueCount: n.overdue,
                 missing: defs.filter(d => applies(d, c.country) && !have.has(`${c.id}:${d.id}`)).map(d => d.name) };
         });
         if (q.missing === '1') out = out.filter(c => c.missing.length);
@@ -138,7 +140,7 @@ function createClients({ prisma, audit, encrypt, decrypt, common, now }) {
         const vals = await cleanValues(ctx.tenantId, data.country, b.fields);
         const c = await inTurn(ctx.tenantId, 'cmp-client-code', async tx => {
             const row = await tx.cmpClient.create({ data: { tenantId: ctx.tenantId, code: await nextCode(tx, ctx.tenantId), ...data,
-                portalPasswordEnc: encrypt(password), pinCodeEnc: pin ? encrypt(pin) : null, createdBy: ctx.email } });
+                portalPasswordEnc: password ? encrypt(password) : '', pinCodeEnc: pin ? encrypt(pin) : null, createdBy: ctx.email } });
             await writeValues(tx, ctx.tenantId, row.id, vals, ctx.email);
             return row;
         });

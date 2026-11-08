@@ -1043,6 +1043,7 @@ model CmpObligation {
   basePeriodStart DateTime        @db.Date
   basePeriodEnd   DateTime        @db.Date
   baseDueDate     DateTime        @db.Date
+  baseSeq         Int             @default(1) // the period the base dates belong to: later periods are counted on from it (a change "for the periods after" moves it)
   notes           String          @default("")
   assignedToId    String? // who does this obligation; if nobody, the client's person (SRS 10)
   archivedAt      DateTime?

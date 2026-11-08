@@ -231,7 +231,7 @@ run('steps, completion and recurrence: next year is a copy to confirm; the numbe
     const moved = { periodStart: y2.periodStart, periodEnd: y2.periodEnd, dueDate: R.addDays(y2.dueDate, 5) };
     r = await A.call(`/api/cmp/occurrences/${y2.id}`, { token: A.manager.token, method: 'PUT', body: { ...moved, applyFuture: true } });
     assert.strictEqual(r.status, 200, r.text);
-    assert.deepStrictEqual([r.json.occurrences[1].dueDate, r.json.occurrences[1].datesConfirmed, r.json.occurrences[1].overridden, r.json.baseDueDate], [moved.dueDate, true, false, R.yearDates(moved, 0).dueDate]);
+    assert.deepStrictEqual([r.json.occurrences[1].dueDate, r.json.occurrences[1].datesConfirmed, r.json.occurrences[1].overridden, r.json.baseDueDate], [moved.dueDate, true, false, moved.dueDate]); // the pattern from period 2 on is now these dates
     r = await A.call(`/api/cmp/obligations/${W.ob.id}/next`, { token: A.manager.token, method: 'POST' });
     assert.strictEqual(r.status, 200, r.text);
     assert.deepStrictEqual(r.json.occurrences.map(o => o.seq), [1, 2, 3]);
@@ -288,6 +288,50 @@ run('one firm never sees another\'s clients, obligations or templates', async ()
     assert.deepStrictEqual((await A.call('/api/cmp/suggest/obligations?country=AE', { token: W.other.token })).json, []);
 });
 
+run('monthly obligations (the CA: some countries file every month): one obligation, a period per month, each confirmed', async () => {
+    assert.strictEqual((await A.call(`/api/cmp/clients/${W.pkClient.id}/obligations`, { token: A.manager.token, method: 'POST', body: { name: 'x', frequency: 'WEEKLY', periodStart: '2027-01-01', periodEnd: '2027-01-31', dueDate: '2027-02-18' } })).status, 400);
+    let r = await A.call(`/api/cmp/clients/${W.pkClient.id}/obligations`, { token: A.manager.token, method: 'POST', body: { name: 'Sales Tax Return (monthly)', frequency: 'MONTHLY', yearsTotal: 1,
+        periodStart: '2027-01-01', periodEnd: '2027-01-31', dueDate: '2027-02-18', reminders: [{ offsetDays: -3, templateId: W.tLast.id }] } });
+    assert.strictEqual(r.status, 200, r.text);
+    const ob = r.json;
+    assert.deepStrictEqual([ob.frequency, ob.occurrences.length], ['MONTHLY', 1]);
+    r = await A.call(`/api/cmp/obligations/${ob.id}/next`, { token: A.manager.token, method: 'POST' });
+    assert.strictEqual(r.status, 200, r.text);
+    const feb = r.json.occurrences[1];
+    assert.deepStrictEqual([feb.seq, feb.periodStart, feb.periodEnd, feb.dueDate, feb.datesConfirmed], [2, '2027-02-01', '2027-02-28', '2027-03-18', false]);
+    r = await A.call(`/api/cmp/obligations/${ob.id}/next`, { token: A.manager.token, method: 'POST' });
+    assert.strictEqual(r.status, 409);
+    assert.match(r.json.error, /Confirm the dates of Feb 2027/);
+    assert.strictEqual((await A.call(`/api/cmp/occurrences/${feb.id}`, { token: A.manager.token, method: 'PUT', body: { confirm: true } })).status, 200);
+    r = await A.call(`/api/cmp/obligations/${ob.id}/next`, { token: A.manager.token, method: 'POST' });
+    assert.deepStrictEqual(r.json.occurrences.map(o => [o.periodStart, o.periodEnd, o.dueDate]).slice(2), [['2027-03-01', '2027-03-31', '2027-04-18']]);
+    assert.ok(await A.prisma.auditLog.findFirst({ where: { tenantId: A.tenantId, action: 'cmp.occurrence.generate', summary: { contains: 'Mar 2027 prepared' } } }));
+    // review fix: a due date on the 30th, carried on to the periods after, stays the 30th (it is not shifted back to February and lost)
+    const mar = r.json.occurrences[2];
+    r = await A.call(`/api/cmp/occurrences/${mar.id}`, { token: A.manager.token, method: 'PUT', body: { periodStart: '2027-03-01', periodEnd: '2027-03-31', dueDate: '2027-04-30', applyFuture: true } });
+    assert.strictEqual(r.status, 200, r.text);
+    assert.deepStrictEqual([r.json.occurrences[2].dueDate, r.json.baseSeq, r.json.baseDueDate], ['2027-04-30', 3, '2027-04-30']);
+    r = await A.call(`/api/cmp/obligations/${ob.id}/next`, { token: A.manager.token, method: 'POST' });
+    assert.deepStrictEqual(r.json.occurrences.slice(3).map(o => [o.periodStart, o.periodEnd, o.dueDate]), [['2027-04-01', '2027-04-30', '2027-05-30']]);
+    // one year = twelve months at most; more years allowed after a change
+    assert.strictEqual((await A.call(`/api/cmp/obligations/${ob.id}`, { token: A.manager.token, method: 'PUT', body: { yearsTotal: 2 } })).status, 200);
+});
+
+run('a client with no online portal: no username or password asked for, none kept', async () => {
+    let r = await A.call('/api/cmp/clients', { token: A.manager.token, method: 'POST', body: { country: 'AE', name: 'Family member', contactNumber: '+971 50 000 1111', noPortal: true, portalUsername: 'ignored', portalPassword: 'ignored' } });
+    assert.strictEqual(r.status, 200, r.text);
+    assert.deepStrictEqual([r.json.client.noPortal, r.json.client.portalUsername, r.json.client.hasPassword], [true, '', false]);
+    const id = r.json.client.id;
+    assert.strictEqual((await A.prisma.cmpClient.findUnique({ where: { id } })).portalPasswordEnc, ''); // review fix: nothing encrypted for "no password"
+    assert.deepStrictEqual((await A.call(`/api/cmp/clients/${id}/secrets`, { token: A.owner.token })).json, { portalUsername: '', portalPassword: '', pinCode: '' });
+    // back to having a portal: the password is needed then
+    r = await A.call(`/api/cmp/clients/${id}`, { token: A.manager.token, method: 'PUT', body: { noPortal: false, portalUsername: 'fam' } });
+    assert.strictEqual(r.status, 400);
+    assert.match(r.json.error, /Password is required/);
+    r = await A.call(`/api/cmp/clients/${id}`, { token: A.manager.token, method: 'PUT', body: { noPortal: false, portalUsername: 'fam', portalPassword: 'pw1' } });
+    assert.deepStrictEqual([r.json.client.noPortal, r.json.client.hasPassword], [false, true]);
+});
+
 run('activity log: only this module\'s actions of this firm, whatever the filter asks; the download is defused and logged', async () => {
     // an administrator-side entry for this firm that the firm must not see in its compliance log
     await A.prisma.auditLog.create({ data: { tenantId: A.tenantId, userEmail: 'admin@example.com', action: 'user.cmp_perms', summary: 'ADMIN-ONLY ENTRY' } });
@@ -336,6 +380,11 @@ run('the administrator sets permissions; an owner cannot (not even through the u
         assert.strictEqual(r.status, 200, r.text);
         assert.deepStrictEqual((await A.prisma.user.findUnique({ where: { id: owner.id } })).cmpPerms, ['FULL']);
         assert.strictEqual((await A.call('/api/cmp/me', { token: W.nomod.token })).status, 200);
+        // review fix: the administrator sets that owner to No access; switching the module off and on again does not give it back
+        await A.call(`/api/admin/clients/${W.nomod.tenantId}/users/${owner.id}/cmp-perms`, { token: admin, method: 'PUT', body: { perms: [] } });
+        await A.call(`/api/admin/clients/${W.nomod.tenantId}/settings`, { token: admin, method: 'PUT', body: { modules: ['INVOICING'] } });
+        await A.call(`/api/admin/clients/${W.nomod.tenantId}/settings`, { token: admin, method: 'PUT', body: { modules: ['INVOICING', 'COMPLIANCE'] } });
+        assert.deepStrictEqual((await A.prisma.user.findUnique({ where: { id: owner.id } })).cmpPerms, []);
     } finally {
         const admin = await A.prisma.user.findUnique({ where: { email } });
         if (admin) await A.prisma.user.delete({ where: { id: admin.id } });
