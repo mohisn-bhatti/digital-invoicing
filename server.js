@@ -51,6 +51,7 @@ app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 app.use('/api/import', express.json({ limit: '10mb' })); // spreadsheet rows
 app.use(['/api/products/import', '/api/buyers/import'], express.json({ limit: '10mb' })); // items / buyers from Excel
 app.use('/api/pos/import', express.json({ limit: '10mb' })); // a spreadsheet of items, customers or vendors
+app.use('/api/cmp/settings', express.json({ limit: '3mb' })); // the firm's logo and letterhead pictures (Compliance & Deadlines)
 app.use(express.json({ limit: '1mb' }));
 
 // Basic security headers (CSP is left out: the pages use the Tailwind CDN, which injects styles at runtime)
@@ -2540,6 +2541,7 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 app.use((err, req, res, next) => {
     if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
     if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON.' });
+    if (err.type === 'entity.too.large') return res.status(413).json({ error: 'That is too large to send. Choose a smaller picture or file.' });
     console.error(err);
     res.status(500).json({ error: 'Something went wrong on the server.' });
 });

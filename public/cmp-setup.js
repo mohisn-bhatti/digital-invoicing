@@ -1,8 +1,8 @@
 'use strict';
 /* Compliance & Deadlines setup: message templates (SRS 7), custom fields (SRS 3.3) and the module's settings. */
 
-const CMP_SET = { templates: [], fields: [], editTpl: null, clients: null, tc: null, tcClient: '', tcOcc: '', logo: '' };
-CMP_RESETS.push(() => Object.assign(CMP_SET, { templates: [], fields: [], editTpl: null, clients: null, tc: null, tcClient: '', tcOcc: '', logo: '' }));
+const CMP_SET = { templates: [], fields: [], editTpl: null, clients: null, tc: null, tcClient: '', tcOcc: '', logo: '', letterhead: '' };
+CMP_RESETS.push(() => Object.assign(CMP_SET, { templates: [], fields: [], editTpl: null, clients: null, tc: null, tcClient: '', tcOcc: '', logo: '', letterhead: '' }));
 
 /* ---------- message templates ---------- */
 CMP_PAGES.push({
@@ -203,6 +203,13 @@ CMP_PAGES.push({
               ${can ? `<label class="px-3 min-h-[2.5rem] inline-flex items-center rounded-lg text-sm border bg-white hover:border-emerald-600 cursor-pointer">Choose a picture…<input type="file" accept="image/png,image/jpeg,image/webp" class="hidden" onchange="cmpLogoPick(this)"></label>
                 <button type="button" class="text-sm text-red-600 underline" onclick="CMP_SET.logo = ''; $('#cmLogoBox').innerHTML = '<span class=&quot;text-xs text-slate-400 px-2&quot;>No logo</span>'">Remove</button>` : ''}</div></div>
           <label class="sm:col-span-2"><span>Header <span class="text-slate-400">(a line or two across the top, e.g. "Chartered Accountants · Tax Advisors")</span></span><textarea name="invoiceHeader" rows="2" maxlength="300" ${can ? '' : 'disabled'}>${esc(s.invoiceHeader || '')}</textarea></label>
+          <div class="sm:col-span-2 border rounded-lg p-3 space-y-2"><span class="block text-sm font-medium text-slate-700">Top of invoices and receipts</span>
+            <label class="flex items-center gap-2 text-sm"><input type="radio" name="headerStyle" value="LOGO" ${s.headerStyle !== 'LETTERHEAD' ? 'checked' : ''} ${can ? '' : 'disabled'}> The logo, the header line and the firm's details (above)</label>
+            <label class="flex items-center gap-2 text-sm"><input type="radio" name="headerStyle" value="LETTERHEAD" ${s.headerStyle === 'LETTERHEAD' ? 'checked' : ''} ${can ? '' : 'disabled'}> A full letterhead picture across the top (your letterhead already shows the firm's name and address)</label>
+            <div class="flex flex-wrap items-center gap-3"><div id="cmLhBox" class="min-h-[3rem] w-full max-w-md border rounded-lg bg-slate-50 flex items-center justify-center p-1">${s.letterhead ? `<img src="${esc(s.letterhead)}" alt="Letterhead" class="max-h-24 w-full object-contain">` : '<span class="text-xs text-slate-400 px-2">No letterhead picture</span>'}</div>
+              ${can ? `<label class="px-3 min-h-[2.5rem] inline-flex items-center rounded-lg text-sm border bg-white hover:border-emerald-600 cursor-pointer">Choose the letterhead…<input type="file" accept="image/png,image/jpeg,image/webp" class="hidden" onchange="cmpLetterheadPick(this)"></label>
+                <button type="button" class="text-sm text-red-600 underline" onclick="CMP_SET.letterhead = ''; $('#cmLhBox').innerHTML = '<span class=&quot;text-xs text-slate-400 px-2&quot;>No letterhead picture</span>'">Remove</button>` : ''}</div>
+            <p class="text-xs text-slate-500">A wide picture (e.g. a scan or an export of your letterhead's top part) works best. It is made smaller before it is saved.</p></div>
           <label class="sm:col-span-2"><span>Firm name</span><input name="firmName" maxlength="200" value="${esc(s.firmName)}" ${can ? '' : 'disabled'}></label>
           <label class="sm:col-span-2"><span>Address</span><textarea name="firmAddress" rows="2" maxlength="500" ${can ? '' : 'disabled'}>${esc(s.firmAddress)}</textarea></label>
           <label><span>Phone</span><input name="firmPhone" maxlength="40" value="${esc(s.firmPhone)}" ${can ? '' : 'disabled'}></label>
@@ -217,9 +224,31 @@ CMP_PAGES.push({
         ${can ? '<div class="flex justify-end"><button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save settings</button></div>' : '<p class="text-xs text-slate-500">Only a user with full access changes these.</p>'}
       </form>`;
     (s.waSenders || []).forEach(x => cmpSenderRow(x, can));
-    CMP_SET.logo = s.logo || '';
+    CMP_SET.logo = s.logo || ''; CMP_SET.letterhead = s.letterhead || '';
   },
 });
+// The letterhead: a wide picture, made at most 1800 pixels wide before it is saved (the CA: a full letterhead option)
+function cmpLetterheadPick(input) {
+  const file = input.files && input.files[0]; input.value = '';
+  if (!file) return;
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return toast('Choose a PNG, JPEG or WebP picture.');
+  const img = new Image(), url = URL.createObjectURL(file);
+  img.onload = () => {
+    const k = Math.min(1, 1800 / img.width, 900 / img.height), c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    let data = c.toDataURL('image/png');
+    for (const q of [0.9, 0.8, 0.65]) if (data.length > 1100000) data = c.toDataURL('image/jpeg', q);
+    if (data.length > 1100000) return toast('That picture is too large even when made smaller. Choose a simpler one.');
+    CMP_SET.letterhead = data;
+    $('#cmLhBox').innerHTML = `<img src="${data}" alt="Letterhead" class="max-h-24 w-full object-contain">`;
+    const lh = document.querySelector('input[name="headerStyle"][value="LETTERHEAD"]'); if (lh) lh.checked = true;
+    toast('Letterhead ready: press Save settings to keep it.', true);
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); toast('That picture could not be read.'); };
+  img.src = url;
+}
 // The logo is made small here (at most 600 × 240 pixels) before it is saved, so it stays light on every invoice
 function cmpLogoPick(input) {
   const file = input.files && input.files[0]; input.value = '';
@@ -253,7 +282,9 @@ function cmpSenderRow(x = { label: 'Business WhatsApp', phone: '', open: 'WEB', 
 async function cmpSettingsSave() {
   const f = $('#cmSetForm');
   try {
-    CMP.settings = await api('/api/cmp/settings', { method: 'PUT', body: { timeZone: f.timeZone.value, reminderHour: Number(f.reminderHour.value), logo: CMP_SET.logo,
+    const style = (f.querySelector('input[name="headerStyle"]:checked') || {}).value || 'LOGO';
+    if (style === 'LETTERHEAD' && !CMP_SET.letterhead) return toast('Choose the letterhead picture first, or keep the logo and header line.');
+    CMP.settings = await api('/api/cmp/settings', { method: 'PUT', body: { timeZone: f.timeZone.value, reminderHour: Number(f.reminderHour.value), logo: CMP_SET.logo, letterhead: CMP_SET.letterhead, headerStyle: style,
       ...Object.fromEntries(['firmName', 'firmAddress', 'firmPhone', 'firmEmail', 'firmTaxNo', 'bankDetails', 'invoiceFooter', 'invoiceHeader', 'invoiceFormat', 'receiptFormat'].map(k => [k, f[k].value])),
       waSenders: [...document.querySelectorAll('#cmSenders .cmSender')].map(r => ({ id: r.dataset.id || undefined, label: r.querySelector('.snLabel').value, phone: r.querySelector('.snPhone').value, open: r.querySelector('.snOpen').value, isDefault: r.querySelector('.snDefault').checked })) } });
     if (CMP.me) CMP.me.settings = CMP.settings;

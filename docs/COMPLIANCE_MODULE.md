@@ -36,10 +36,11 @@ answers of 8 November 2026. Requirement-by-requirement check: [COMPLIANCE_SRS_CH
 
 ## 3. Obligations, periods and dates
 
-- An obligation (VAT return, corporate tax, licence…) has a name, a portal link, **how often it comes back** and **how many years**
-  (a number, or unlimited). The CA (9 Nov 2026): no "comes back" list; the three dates say it (`R.detectFrequency`): a period of
-  exactly one month comes back every month, three months every quarter, six months every six months, anything else every year. The
-  screen can still ask for "once a year" for a shorter period (one of four separate quarterly returns). Fixed once added.
+- An obligation (VAT return, corporate tax, licence…) has a name, a portal link, its three dates typed by hand and **how many
+  years** (a number, or unlimited). It comes back **every year** on the same dates (the CA's answer, 9 Nov 2026: no quarterly or
+  monthly cycle; quarterly returns are four obligations of their own). Several are added at once (`items` in
+  `POST /api/cmp/clients/:id/obligations`, all checked before any is made). Obligations made earlier as QUARTERLY or MONTHLY keep
+  their frequency (the API still accepts one; the screens no longer offer it).
 - **Amber days** and **"prepare the next period by itself"** are set on each obligation (`CmpObligation.amberDays`, `autoNext`), not
   firm-wide; migration `0051` copied each firm's old settings onto its obligations.
 - **Planned periods**: the periods still to come are not stored; `R.projectPeriods` proposes them, and `GET /api/cmp/occurrences`
@@ -151,8 +152,15 @@ cancelling with receipts, logo and header, the reports by dates).
 
 ## 9. The CA's feedback of 9 November 2026
 
-Twenty items from the CA's "Deadline Tracker" sheet; what was done for each, and the open questions, are in
-[COMPLIANCE_CA_FEEDBACK.md](COMPLIANCE_CA_FEEDBACK.md). Tests: `test/cmpFeedback.test.js`.
+Twenty items from the CA's "Deadline Tracker" sheet, then the CA's six answers; what was done for each is in
+[COMPLIANCE_CA_FEEDBACK.md](COMPLIANCE_CA_FEEDBACK.md). Tests: `test/cmpFeedback.test.js`. The answers added (migration `0052`):
+- reminders given another way (`CmpMessage.channel`: PHONE, EMAIL, OTHER; `POST /api/cmp/messages/manual`), so a client with no
+  WhatsApp is reminded by phone or email and the reminder counts as done;
+- what becomes of money received when an invoice is cancelled (`CmpInvoice.cancelSettlement`: VOID, REFUND or CREDIT; receipts keep
+  their record with `settlement`), and the client's credit (`CmpCredit`), used by receipts paid "from credit" (`creditUsed`, given
+  back when such a receipt is voided);
+- a full letterhead picture for invoices and receipts (`CmpSettings.headerStyle` LETTERHEAD, `letterhead`; `/api/cmp/settings` takes
+  bodies up to 3 MB for the pictures).
 
 ## 10. Not built / later
 

@@ -73,7 +73,8 @@ function createReports({ prisma, audit, common, clients, obligations, comms, inv
             const rows = kind === 'invoices' ? (await invoices.list(ctx, { ...q, from, to, limit: 20000 })).invoices : await invoices.listReceipts(ctx, { ...q, from, to, limit: 20000 });
             const totals = new Map();
             for (const r of rows) {
-                if (kind === 'invoices' ? ['DRAFT', 'CANCELLED'].includes(r.status) : r.voidedAt) continue;
+                // (money refunded or kept as credit when its invoice was cancelled is not counted: credit is counted when it pays an invoice)
+                if (kind === 'invoices' ? ['DRAFT', 'CANCELLED'].includes(r.status) : r.voidedAt || r.settlement) continue;
                 const t = totals.get(r.currency) || { currency: r.currency, count: 0, total: 0, received: 0, outstanding: 0 };
                 t.count++;
                 if (kind === 'invoices') { t.total += r.total; t.received += r.received; t.outstanding += r.outstanding; } else t.total += r.amount;
@@ -147,7 +148,7 @@ function createReports({ prisma, audit, common, clients, obligations, comms, inv
                 i.currency, i.issueDate, i.dueDate, cur(i.subtotal, i.currency), cur(i.taxTotal, i.currency), cur(i.total, i.currency), cur(i.received, i.currency), cur(i.outstanding, i.currency), i.createdBy]);
         } else if (kind === 'receipts') {
             head = ['Number', 'Date received', 'Client code', 'Client', 'Invoice', 'Currency', 'Amount', 'Paid by', 'Reference', 'Void'];
-            rows = (await invoices.listReceipts(ctx, { ...q, limit: 20000 })).map(r => [r.number, r.receivedOn, r.client.code, r.client.name, r.invoice.number, r.currency, cur(r.amount, r.currency), invoices.METHODS[r.method] || r.method, r.reference, r.voidedAt ? `void: ${r.voidReason}` : '']);
+            rows = (await invoices.listReceipts(ctx, { ...q, limit: 20000 })).map(r => [r.number, r.receivedOn, r.client.code, r.client.name, r.invoice.number, r.currency, cur(r.amount, r.currency), invoices.METHODS[r.method] || r.method, r.reference, r.voidedAt ? `void: ${r.voidReason}` : r.settlementNote || '']);
         } else if (kind === 'clientsummary') {
             const d = await report(ctx, 'clients', q);
             head = ['Client code', 'Client', 'Country', 'Periods due', 'Completed', 'Open', 'Overdue', ...(d.money ? ['Invoiced', 'Received', 'Outstanding'] : [])];

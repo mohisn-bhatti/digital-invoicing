@@ -122,6 +122,21 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         if (money && money.inv && kind === 'INVOICE' && !money.inv.sentAt) await invoices.markSent(ctx, money.inv.id, 'on WhatsApp');
         return { url: R.waUrl(phone, body), to: phone, text: body, open: from ? from.open : 'ANY', from: from ? { label: from.label, phone: from.phone } : null, message: { id: m.id, createdAt: m.createdAt } };
     }
+    // A reminder given another way (the CA: a client with no WhatsApp is reminded by phone or email): marked by hand, so it counts as
+    // sent; it shows in the log with how it was given, and can be marked "not done" like any message.
+    async function markReminded(ctx, b = {}) {
+        const channel = String(b.channel || '').toUpperCase();
+        if (!['PHONE', 'EMAIL', 'OTHER'].includes(channel)) throw bad('Say how the client was reminded: by phone, by email or another way.');
+        const occ = await common.findOccurrence(ctx.tenantId, b.occurrenceId, { live: true });
+        if (occ.stage === 'COMPLETED') throw new CmpError(409, 'This period is completed: its reminders are closed.');
+        const reminder = occ.obligation.reminders.find(r => r.id === b.reminderId);
+        if (!reminder) throw bad('That reminder is not one of this obligation\'s.');
+        const note = V.multiline(b.note, 1000, 'Note'), client = occ.obligation.client, how = R.CHANNELS[channel].toLowerCase();
+        const m = await prisma.cmpMessage.create({ data: { tenantId: ctx.tenantId, clientId: client.id, occurrenceId: occ.id, reminderId: reminder.id, templateId: reminder.templateId,
+            templateName: reminder.template ? reminder.template.name : '', kind: 'REMINDER', channel, phone: '', body: note || `Reminded by ${how}`, userId: ctx.userId || null, userEmail: ctx.email } });
+        await log(ctx, 'cmp.message.manual', 'CmpMessage', m.id, `${occ.obligation.name} ${R.fmtDay(occ.periodStart)} – ${R.fmtDay(occ.periodEnd)} for ${common.clientLabel(client)}: reminder (${R.offsetLabel(reminder.offsetDays).toLowerCase()}) given by ${how}${note ? `: ${note}` : ''}`, { clientId: client.id, obligationId: occ.obligationId });
+        return { ok: true, message: { id: m.id, createdAt: m.createdAt } };
+    }
     async function voidMessage(ctx, id) {
         const m = await prisma.cmpMessage.findFirst({ where: { id: String(id || ''), tenantId: ctx.tenantId }, include: { client: true } });
         if (!m) throw new CmpError(404, 'Message not found.');
@@ -145,15 +160,15 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         const s = String(q.q || '').trim().slice(0, 100);
         if (s) where.OR = [{ client: { name: ciContains(s) } }, { client: { code: ciContains(s) } }, { body: ciContains(s) }, { templateName: ciContains(s) }];
         const include = { invoice: { select: { number: true } }, receipt: { select: { number: true } }, client: { select: { id: true, code: true, name: true, country: true } }, occurrence: { select: { id: true, seq: true, periodStart: true, periodEnd: true, dueDate: true, obligation: { select: { id: true, name: true } } } }, reminder: { select: { offsetDays: true } } };
-        const view = m => ({ id: m.id, createdAt: m.createdAt, kind: m.kind, client: m.client, templateName: m.templateName, phone: m.phone, fromPhone: m.fromPhone, fromLabel: m.fromLabel, body: m.body, userEmail: m.userEmail, voidedAt: m.voidedAt, voidedBy: m.voidedBy,
+        const view = m => ({ id: m.id, createdAt: m.createdAt, kind: m.kind, channel: m.channel, client: m.client, templateName: m.templateName, phone: m.phone, fromPhone: m.fromPhone, fromLabel: m.fromLabel, body: m.body, userEmail: m.userEmail, voidedAt: m.voidedAt, voidedBy: m.voidedBy,
             obligation: m.occurrence ? { id: m.occurrence.obligation.id, name: m.occurrence.obligation.name, seq: m.occurrence.seq, periodStart: R.ymdOf(m.occurrence.periodStart), periodEnd: R.ymdOf(m.occurrence.periodEnd), dueDate: R.ymdOf(m.occurrence.dueDate) } : null,
             reminder: m.reminder ? R.offsetLabel(m.reminder.offsetDays) : '', invoiceNumber: m.invoice ? m.invoice.number : '', receiptNumber: m.receipt ? m.receipt.number : '' });
         if (q.format === 'csv') {
             const rows = await prisma.cmpMessage.findMany({ where, include, orderBy: { createdAt: 'desc' }, take: 20000 });
-            const head = [`Time (${C.zoneCity(settings.timeZone)})`, 'Client code', 'Client', 'Country', 'About', 'Obligation', 'Period', 'Due date', 'Reminder / document', 'Template', 'To', 'From', 'Message', 'Sent by', 'Marked not sent'];
-            const lines = [head.join(',')].concat(rows.map(view).map(m => [R.fmtAt(m.createdAt, settings.timeZone), m.client.code, m.client.name, m.client.country, R.MESSAGE_KINDS[m.kind],
+            const head = [`Time (${C.zoneCity(settings.timeZone)})`, 'How', 'Client code', 'Client', 'Country', 'About', 'Obligation', 'Period', 'Due date', 'Reminder / document', 'Template', 'To', 'From', 'Message', 'Sent by', 'Marked not sent'];
+            const lines = [head.join(',')].concat(rows.map(view).map(m => [R.fmtAt(m.createdAt, settings.timeZone), R.CHANNELS[m.channel] || m.channel, m.client.code, m.client.name, m.client.country, R.MESSAGE_KINDS[m.kind],
                 m.obligation ? m.obligation.name : '', m.obligation ? `${R.fmtDay(m.obligation.periodStart)} – ${R.fmtDay(m.obligation.periodEnd)}` : '', m.obligation ? R.fmtDay(m.obligation.dueDate) : '',
-                [m.reminder, m.invoiceNumber && `invoice ${m.invoiceNumber}`, m.receiptNumber && `receipt ${m.receiptNumber}`].filter(Boolean).join(', '), m.templateName, '+' + m.phone, m.fromPhone ? `${m.fromLabel} ${m.fromPhone}` : '', m.body, m.userEmail, m.voidedAt ? `${R.fmtAt(m.voidedAt, settings.timeZone)} by ${m.voidedBy}` : ''].map(csvText).join(',')));
+                [m.reminder, m.invoiceNumber && `invoice ${m.invoiceNumber}`, m.receiptNumber && `receipt ${m.receiptNumber}`].filter(Boolean).join(', '), m.templateName, m.phone ? '+' + m.phone : '', m.fromPhone ? `${m.fromLabel} ${m.fromPhone}` : '', m.body, m.userEmail, m.voidedAt ? `${R.fmtAt(m.voidedAt, settings.timeZone)} by ${m.voidedBy}` : ''].map(csvText).join(',')));
             await log(ctx, 'cmp.log.export', null, null, `WhatsApp log downloaded (${rows.length} messages)`);
             res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="whatsapp-log.csv"' });
             return res.send('﻿' + lines.join('\r\n') + '\r\n');
@@ -201,7 +216,7 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         const [overdue, confirm, rows] = await Promise.all([
             prisma.cmpOccurrence.count({ where: { tenantId: ctx.tenantId, stage: { not: 'COMPLETED' }, dueAt: { lte: at }, obligation: live } }),
             prisma.cmpOccurrence.count({ where: { tenantId: ctx.tenantId, datesConfirmed: false, stage: { not: 'COMPLETED' }, obligation: live } }),
-            prisma.cmpOccurrence.findMany({ where: { tenantId: ctx.tenantId, stage: { not: 'COMPLETED' }, obligation: { ...live, client: { archivedAt: null, noWhatsApp: false }, reminders: { some: {} } }, dueAt: { gte: new Date(+at - 367 * R.DAY), lte: new Date(+at + 367 * R.DAY) } },
+            prisma.cmpOccurrence.findMany({ where: { tenantId: ctx.tenantId, stage: { not: 'COMPLETED' }, obligation: { ...live, reminders: { some: {} } }, dueAt: { gte: new Date(+at - 367 * R.DAY), lte: new Date(+at + 367 * R.DAY) } },
                 select: { id: true, periodEnd: true, dueDate: true, stage: true, obligation: { select: { client: { select: { timeZone: true } }, reminders: { select: { id: true, offsetDays: true } } } } } }),
         ]);
         const sent = await obligations.sentMap(rows.map(r => r.id));
@@ -235,7 +250,7 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
             periods: obligationsList.map(o => ({ id: o.id, name: o.obligation.name, period: R.periodName(o), dueDate: R.ymdOf(o.dueDate) })) };
     }
 
-    return { listTemplates, createTemplate, updateTemplate, deleteTemplate, prepare, send, voidMessage, listMessages, notifications, alerts, templateContext };
+    return { listTemplates, createTemplate, updateTemplate, deleteTemplate, prepare, send, markReminded, voidMessage, listMessages, notifications, alerts, templateContext };
 }
 
 module.exports = { createComms };

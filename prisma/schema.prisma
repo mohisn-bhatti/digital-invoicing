@@ -128,6 +128,7 @@ model Tenant {
   cmpTaxRates         CmpTaxRate[]
   cmpInvoices         CmpInvoice[]
   cmpItems            CmpItem[]
+  cmpCredits          CmpCredit[]
 }
 
 model Invoice {
@@ -960,6 +961,9 @@ model CmpSettings {
   // The top of the firm's invoices and receipts (the CA): a logo (a small image, kept as a data: URL) and a header line or two
   logo          String   @default("")
   invoiceHeader String   @default("")
+  // or a full letterhead picture across the top instead (the CA): headerStyle LOGO (the logo and the header line) or LETTERHEAD
+  headerStyle   String   @default("LOGO")
+  letterhead    String   @default("")
   invoiceSeq    Int      @default(0) // last invoice number handed out
   receiptSeq    Int      @default(0) // last receipt number handed out
   updatedAt     DateTime @updatedAt
@@ -980,7 +984,7 @@ model CmpClient {
   registrationNo    String          @default("")
   reference         String          @default("")
   noPortal          Boolean         @default(false) // the client has no online filing portal: no username or password to keep
-  noWhatsApp        Boolean         @default(false) // the client has no WhatsApp (the CA): reminders are not sent to it on WhatsApp
+  noWhatsApp        Boolean         @default(false) // the client has no WhatsApp (the CA): reminders are given by phone or email and marked so
   portalUsername    String          @default("")
   portalPasswordEnc String          @default("")
   pinCodeEnc        String?
@@ -994,6 +998,7 @@ model CmpClient {
   obligations       CmpObligation[]
   messages          CmpMessage[]
   invoices          CmpInvoice[]
+  credits           CmpCredit[]
 
   @@unique([tenantId, code])
   @@index([tenantId, country])
@@ -1151,6 +1156,8 @@ model CmpMessage {
   receiptId    String?
   receipt      CmpReceipt?    @relation(fields: [receiptId], references: [id], onDelete: SetNull)
   kind         String // REMINDER, DATA_COLLECTION, COMPLETION, INVOICE, RECEIPT or OTHER
+  // WHATSAPP (opened in WhatsApp), or a reminder given another way and marked by hand (the CA): PHONE, EMAIL or OTHER
+  channel      String         @default("WHATSAPP")
   templateName String         @default("") // as it was called when the message was sent
   phone        String
   fromPhone    String         @default("") // the firm's WhatsApp number it was sent from, as chosen in the send window
@@ -1205,41 +1212,63 @@ model CmpItem {
   @@unique([tenantId, key, currency])
 }
 
+// A client's credit (the CA): money received against an invoice that was then cancelled, kept to pay the client's next invoices in the
+// same currency. What is used is counted in "used"; a receipt paid from credit says which credits it used.
+model CmpCredit {
+  id            String    @id @default(uuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  clientId      String
+  client        CmpClient @relation(fields: [clientId], references: [id])
+  currency      String
+  amount        Decimal   @db.Decimal(14, 3)
+  used          Decimal   @default(0) @db.Decimal(14, 3)
+  fromInvoiceId String?
+  note          String    @default("")
+  createdBy     String    @default("")
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId, clientId, currency])
+}
+
 // The firm's fee invoice to a client (SRS 9). A draft has no number and can still change; issuing gives it the next number and fixes
 // it. The status follows the money: Issued, Sent (handed to WhatsApp or marked), Partially received, Received; or Cancelled (keeps its
 // number). Amounts have up to 3 decimals (KWD, BHD, OMR).
 model CmpInvoice {
-  id           String           @id @default(uuid())
-  tenantId     String
-  tenant       Tenant           @relation(fields: [tenantId], references: [id])
-  clientId     String
-  client       CmpClient        @relation(fields: [clientId], references: [id])
-  occurrenceId String? // the obligation period it bills, if any
-  occurrence   CmpOccurrence?   @relation(fields: [occurrenceId], references: [id])
-  seqNo        Int?
-  number       String?
-  status       String           @default("DRAFT") // DRAFT, ISSUED, SENT, PARTIAL, RECEIVED or CANCELLED
-  currency     String
-  issueDate    DateTime?        @db.Date
-  dueDate      DateTime?        @db.Date
-  subtotal     Decimal          @default(0) @db.Decimal(14, 3)
-  taxTotal     Decimal          @default(0) @db.Decimal(14, 3)
-  total        Decimal          @default(0) @db.Decimal(14, 3)
-  received     Decimal          @default(0) @db.Decimal(14, 3) // the receipts that are not voided
-  notes        String           @default("")
-  issuedAt     DateTime?
-  issuedBy     String?
-  sentAt       DateTime?
-  cancelledAt  DateTime?
-  cancelledBy  String?
-  cancelReason String           @default("")
-  createdBy    String           @default("")
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  lines        CmpInvoiceLine[]
-  taxes        CmpInvoiceTax[]
-  receipts     CmpReceipt[]
-  messages     CmpMessage[]
+  id               String           @id @default(uuid())
+  tenantId         String
+  tenant           Tenant           @relation(fields: [tenantId], references: [id])
+  clientId         String
+  client           CmpClient        @relation(fields: [clientId], references: [id])
+  occurrenceId     String? // the obligation period it bills, if any
+  occurrence       CmpOccurrence?   @relation(fields: [occurrenceId], references: [id])
+  seqNo            Int?
+  number           String?
+  status           String           @default("DRAFT") // DRAFT, ISSUED, SENT, PARTIAL, RECEIVED or CANCELLED
+  currency         String
+  issueDate        DateTime?        @db.Date
+  dueDate          DateTime?        @db.Date
+  subtotal         Decimal          @default(0) @db.Decimal(14, 3)
+  taxTotal         Decimal          @default(0) @db.Decimal(14, 3)
+  total            Decimal          @default(0) @db.Decimal(14, 3)
+  received         Decimal          @default(0) @db.Decimal(14, 3) // the receipts that are not voided
+  notes            String           @default("")
+  issuedAt         DateTime?
+  issuedBy         String?
+  sentAt           DateTime?
+  cancelledAt      DateTime?
+  cancelledBy      String?
+  cancelReason     String           @default("")
+  // what became of money already received when it was cancelled (the CA): VOID (the receipts voided), REFUND (paid back) or CREDIT
+  // (kept as the client's credit, to pay its next invoices)
+  cancelSettlement String           @default("")
+  createdBy        String           @default("")
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  lines            CmpInvoiceLine[]
+  taxes            CmpInvoiceTax[]
+  receipts         CmpReceipt[]
+  messages         CmpMessage[]
 
   @@unique([tenantId, number])
   @@index([tenantId, status])
@@ -1269,24 +1298,31 @@ model CmpInvoiceTax {
 
 // A formal receipt for money received against an issued invoice (SRS 9). Voided with a reason, never removed.
 model CmpReceipt {
-  id         String       @id @default(uuid())
-  tenantId   String
-  invoiceId  String
-  invoice    CmpInvoice   @relation(fields: [invoiceId], references: [id])
-  clientId   String
-  seqNo      Int
-  number     String
-  amount     Decimal      @db.Decimal(14, 3)
-  receivedOn DateTime     @db.Date
-  method     String       @default("BANK") // BANK, CASH, CHEQUE, CARD, ONLINE or OTHER
-  reference  String       @default("")
-  notes      String       @default("")
-  createdBy  String       @default("")
-  createdAt  DateTime     @default(now())
-  voidedAt   DateTime?
-  voidedBy   String?
-  voidReason String       @default("")
-  messages   CmpMessage[]
+  id             String       @id @default(uuid())
+  tenantId       String
+  invoiceId      String
+  invoice        CmpInvoice   @relation(fields: [invoiceId], references: [id])
+  clientId       String
+  seqNo          Int
+  number         String
+  amount         Decimal      @db.Decimal(14, 3)
+  receivedOn     DateTime     @db.Date
+  method         String       @default("BANK") // BANK, CASH, CHEQUE, CARD, ONLINE or OTHER
+  reference      String       @default("")
+  notes          String       @default("")
+  createdBy      String       @default("")
+  createdAt      DateTime     @default(now())
+  voidedAt       DateTime?
+  voidedBy       String?
+  voidReason     String       @default("")
+  // its invoice was cancelled and this money was REFUNDED to the client or CREDITED to it (the receipt itself stays: money came in)
+  settlement     String       @default("")
+  settledAt      DateTime?
+  settledBy      String?
+  settlementNote String       @default("")
+  // paid from the client's credit: [{ creditId, amount }] (given back if the receipt is voided)
+  creditUsed     Json         @default("[]")
+  messages       CmpMessage[]
 
   @@unique([tenantId, number])
   @@index([invoiceId])

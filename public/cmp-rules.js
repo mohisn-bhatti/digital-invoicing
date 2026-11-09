@@ -160,19 +160,6 @@
     return { periodStart, periodEnd, dueDate };
   }
   const yearDates = (base, n) => periodDates(base, n, 'YEARLY');
-  // How often an obligation comes back, from its first period (the CA: no "comes back" list, the three dates say it). A period of
-  // exactly one month comes back every month, three months every quarter, six months every six months; anything else every year
-  // (a year, like 1 Jul 2026 – 30 Jun 2027, or any other stretch). A person can still choose "every year" for a shorter period.
-  function detectFrequency(periodStart, periodEnd) {
-    const a = ymdOf(periodStart), b = ymdOf(periodEnd);
-    if (!ymdOk(a) || !ymdOk(b)) return 'YEARLY';
-    for (const [k, f] of [[1, 'MONTHLY'], [3, 'QUARTERLY'], [6, 'HALF_YEARLY']]) {
-      if (addDays(shiftMonths(a, k, false), -1) === b) return f;
-      const [ya, ma, da] = a.split('-').map(Number);
-      if (da === 1 && shiftMonths(`${ya}-${pad(ma)}-01`, k - 1, false).slice(0, 7) === b.slice(0, 7) && Number(b.slice(8)) === lastDay(...b.split('-').slice(0, 2).map(Number))) return f;
-    }
-    return 'YEARLY';
-  }
   // The periods still to come of a series, as they would be proposed (the CA: the calendar shows the future, with no end for an obligation
   // that has none). From period fromSeq while the due date is not after untilDue, never past the number of years, at most max of them.
   function projectPeriods(series, fromSeq, untilDue, max = 400) {
@@ -288,13 +275,15 @@
     return waUrl(digits, text); // (WhatsApp Business on a computer or an iPhone: the device opens the WhatsApp it has)
   }
 
+  // How a message or reminder went: on WhatsApp, or another way and marked by hand (the CA: clients with no WhatsApp)
+  const CHANNELS = { WHATSAPP: 'WhatsApp', PHONE: 'Phone call', EMAIL: 'Email', OTHER: 'Another way' };
   const TEMPLATE_PURPOSES = { REMINDER: 'Reminder', DATA_COLLECTION: 'Data collection', COMPLETION: 'Obligation completed', INVOICE: 'Invoice', RECEIPT: 'Receipt', OTHER: 'Other' };
   const MESSAGE_KINDS = TEMPLATE_PURPOSES;
 
   return {
     DAY, MONTHS, ymdOk, ymdOf, addDays, daysBetween, fmtDay, zoned, dayIn, fmtAt, offsetMs,
     STAGES, MANUAL, STATUS, instants, fireAt, reminderStates, occurrenceView,
-    FREQUENCIES, freqOf, shiftMonths, shiftYears, periodDates, yearDates, detectFrequency, projectPeriods, periodsAllowed, periodName, datesProblem, offsetLabel, yearsLabel, repeatsLabel, yearsShort,
-    keyOf, PLACEHOLDER_GROUPS, PLACEHOLDERS, RESERVED, render, waPhone, toE164, waUrl, SENDER_OPEN, waLink, TEMPLATE_PURPOSES, MESSAGE_KINDS,
+    FREQUENCIES, freqOf, shiftMonths, shiftYears, periodDates, yearDates, projectPeriods, periodsAllowed, periodName, datesProblem, offsetLabel, yearsLabel, repeatsLabel, yearsShort,
+    keyOf, PLACEHOLDER_GROUPS, PLACEHOLDERS, RESERVED, render, waPhone, toE164, waUrl, SENDER_OPEN, waLink, CHANNELS, TEMPLATE_PURPOSES, MESSAGE_KINDS,
   };
 });

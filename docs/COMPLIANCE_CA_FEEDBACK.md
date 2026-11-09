@@ -37,3 +37,14 @@ column can be pasted into the sheet's "Comments by Waqas" column. The open quest
 4. **Cancelling a paid invoice (17).** Its receipts are voided with it. Is that right, or should the money stay as a credit or refund?
 5. **Header (13).** It is a text line plus the logo. Is a full-width letterhead picture wanted instead?
 6. **No WhatsApp (4).** Should such reminders be markable as "reminded by phone / email" so they leave the list?
+
+## The CA's answers (9 November 2026) and what was done
+
+| # | The CA's answer | What was done |
+|---|---|---|
+| 1 | Leave the quarterly settings; several obligations under a client, periods and due dates entered by hand; repeat for a number of years or unlimited | Done. No cycle is worked out from the dates: every obligation comes back **every year** on its own dates. The add window takes **several obligations at once** (e.g. VAT Return Q1 to Q4): "+ Add another obligation" proposes the next one (Q1 → Q2, the next quarter's dates) to check and change. All are checked before any is added. How many years: a number or Unlimited. (An obligation made before as "every quarter" keeps working as it was.) |
+| 2 | Keep both | Done. A switch above My Obligations: **Ticking a row shows only that client** (on: the tick filters at once; off: the tick selects rows for the actions on several rows). Remembered on each computer. |
+| 3 | The due date is the main thing | No change: a period belongs to the year of its due date. |
+| 4 | Options to refund, credit and void | Done. Cancelling a paid invoice asks what becomes of the money: **Refund** (date, how it was paid back, reference; the receipts are marked Refunded), **Keep as the client's credit** (it pays the client's next invoices: Paid by → Client credit; the client's page shows its credit) or **Void** the receipts. |
+| 5 | An image: an option for a full letterhead | Done. Setup → Settings → Top of invoices and receipts: the logo and header line, or **a full letterhead picture** across the top. |
+| 6 | Yes, it is right (mark reminders given by phone or email) | Done. A due reminder of a client with no WhatsApp shows **✓ Reminded by phone / email**: choose Phone call, Email or Another way, add a note; the reminder counts as done and the log keeps how. Any client can be marked this way too ("or mark done another way"). |

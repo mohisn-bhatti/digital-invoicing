@@ -1,6 +1,6 @@
 # Compliance & Deadlines — User Manual
 
-_ETAX · November 2026 (updated 9 November 2026 with the CA's feedback)_
+_ETAX · November 2026 (updated 9 November 2026 with the CA's feedback and answers)_
 
 Compliance & Deadlines keeps your firm's clients anywhere in the world in one place, along with their statutory deadlines every year, the reminders you send them on WhatsApp, and the fee invoices for the work. It is part of ETAX (etaxcloud.net), next to FBR Digital Invoicing and the Point of Sale.
 
@@ -15,7 +15,7 @@ Compliance & Deadlines keeps your firm's clients anywhere in the world in one pl
 **The work in one minute:**
 
 1. Add a **client**: choose the country first, then fill in the details.
-2. Add the client's **obligations**, such as a VAT return or an income tax return, with their three dates: period start, period end and due date. How often it comes back follows from those dates.
+2. Add the client's **obligations**, such as a VAT return or an income tax return, with their three dates: period start, period end and due date. Each comes back every year on the same dates.
 3. When a reminder comes due, it is **highlighted**. On **My Obligations**, click **Reminder** on its row, check the message, and press Send in WhatsApp.
 4. Move the period through its **steps** (Data collected, Filed, Paid) on the same row.
 5. **Close** it: either **generate an invoice** for your fee, or **close it without an invoice**.
@@ -60,6 +60,7 @@ Open **Setup → Settings**. Only a user with full access can change these.
   - your **logo** (a PNG or JPEG picture: it is made small automatically) and a **header** line or two across the top, e.g. "Chartered Accountants · Tax Advisors";
   - your firm's name, address, phone, email, tax registration number (if registered), bank details and a footer line;
   - the number formats. For example, `INV-{YYYY}-{NNNN}` gives INV-2027-0001. Numbers are taken when an invoice is issued and never reused.
+- **Top of invoices and receipts:** either **the logo, the header line and the firm's details**, or **a full letterhead picture** across the top (choose the picture: it is made smaller automatically; your letterhead already shows the firm's name and address).
 
 When an obligation turns amber, and whether its next period is prepared by itself, are set **on each obligation** (section 4), not here.
 
@@ -99,7 +100,7 @@ You can also add taxes and items while writing an invoice (section 7).
 
 1. **Choose the country first.** Its flag appears, and everything after follows that country: the time zone, the dialling code, the currency, and which extra fields show.
 2. Fill in the **client name** and **contact number**. Add the email, address, registration no. and reference if you have them.
-3. If the client has **no WhatsApp**, tick **This client has no WhatsApp**. No WhatsApp buttons show for it, and its reminders are not counted as "ready to send"; remind it by phone or email.
+3. If the client has **no WhatsApp**, tick **This client has no WhatsApp**. No WhatsApp buttons show for it. When its reminder comes due, remind it by phone or email and click **✓ Reminded by phone / email** (section 6).
 4. **Online portal login:** the username and password are required. If the client has no online portal, tick **This client has no online portal** instead of typing "NA". The PIN is optional.
 5. **Time zone.** It is set from the country. Where a country has several (e.g. the USA), pick the right one. Due dates and reminders follow the client's own clock.
 6. **Assigned to** (optional): the team member who looks after this client.
@@ -125,11 +126,8 @@ You can also add taxes and items while writing an invoice (section 7).
 **Add an obligation:** on the client's page, click **+ Obligation**.
 
 1. **Obligation:** e.g. Income Tax Return, VAT Return, Trade License renewal. If other clients of the same country already have an obligation of that name, a blue box offers their dates and reminders: click **Use these dates and reminders**, then check the dates.
-2. **Period start, period end and due date:** you type them, nothing is calculated. For example, a Pakistan income tax return: period 1 Jul 2026 – 30 Jun 2027, due 30 Sep 2027.
-3. Once the three dates are in, the obligation is set. A green line says how often it comes back, on the same pattern:
-   - a period of one year (or any other length) comes back **every year**;
-   - a period of three months comes back **every quarter**, six months **every six months**, one month **every month**. A monthly sales tax return is one obligation that produces a period each month.
-   - For a quarter that should come back only once a year (e.g. one of four separate quarterly returns), click **Once a year instead**.
+2. **Period start, period end and due date:** you type them, nothing is calculated. For example, a Pakistan income tax return: period 1 Jul 2026 – 30 Jun 2027, due 30 Sep 2027. Once the three dates are in, the obligation is set: it comes back **every year on the same dates**.
+3. **Several at once:** click **+ Add another obligation** for each one more. For quarterly VAT, add four obligations, VAT Return Q1 to Q4. After Q1, "+ Add another" proposes **Q2** with the next quarter's dates; check them and change them if needed. Each one comes back every year on its own dates, and all of them share what follows (years, reminders and the rest). If one of them has a mistake, none is added until it is put right.
 4. **How many years:** type a number, or tick **Unlimited**. An unlimited obligation keeps coming back, and the calendar shows it for as far ahead as you look.
 5. **Turn amber this many days before the due date** (7 by default) and **Prepare the next period by itself when this one ends** (ticked by default). Both are set for this obligation only.
 6. **Portal link** (optional): opens the e-filing portal in one click. **Assigned to** (optional): otherwise the client's person.
@@ -175,6 +173,8 @@ Click a row to change the period's dates. The client's page is needed only to ch
 
 **One client, or a few:** click a client's name, or tick rows and click **Only this client** (or **Only these clients**). **Show all clients** brings everyone back. The **Client** filter does the same.
 
+**Ticking a row: two ways.** Tick **Ticking a row shows only that client** (above the list) and a tick shows that client's periods at once. Leave it unticked and ticks select rows for the actions on several rows (section 8). The choice is remembered on this computer.
+
 Filters: **Show** (dates), **Status**, **Client**, **Country**, **Search**, **Assigned to**, and **Archived**.
 
 ---
@@ -203,12 +203,16 @@ A pop-up when you open the module also tells you when reminders are ready.
 - WhatsApp always sends from the account that is open on your computer or phone. Choose your business number under **Send from**, and make sure WhatsApp Web (or the app) is logged in with that number. The window reminds you which one.
 - The message goes to the client's **WhatsApp Number** custom field if there is one, otherwise to the contact number. A client ticked **no WhatsApp** gets no WhatsApp buttons.
 
+**Reminded by phone or email.** For a client with **no WhatsApp**, a due reminder shows **✓ Reminded by phone / email** (on its row of My Obligations and in the period window). Remind the client, click it, choose **Phone call**, **Email** or **Another way**, add a note if you like, and save. The reminder counts as done, and the log keeps how it was given. Any other client can also be marked this way: **or mark done another way** under its reminder.
+
 **WhatsApp Log** (Logs → WhatsApp Log) records every message:
 - the time, client, obligation period or invoice, and template;
 - the to and from numbers;
 - the final text and who sent it.
 
-If you did not actually send a message after WhatsApp opened, click **Mark not sent**. It stays in the log crossed out, and its reminder becomes due again.
+Reminders given by phone or email are in the same log, marked **Phone call**, **Email** or **Another way**.
+
+If you did not actually send a message after WhatsApp opened (or marked a reminder by mistake), click **Mark not sent**. It stays in the log crossed out, and its reminder becomes due again.
 
 ---
 
@@ -231,12 +235,15 @@ Then you can let the client know on WhatsApp with a "completed" template. A new 
 - **Print / PDF:** an A4 invoice with your logo, header, firm details and bank details. Choose "Save as PDF" in the print window. The print's footer shows the invoice's **own web address** (e.g. etaxcloud.net/app#/cm-invoices/INV-2026-0001); opening that address shows that invoice.
 - **WhatsApp:** sends it using an "Invoice" template, and marks it **Sent**.
 - **Mark as sent**, and **↶ Undo "sent"** if it was marked by mistake.
-- **+ Receipt:** the receipt form opens in place: amount, date, how it was paid and a reference. This creates a numbered **receipt**. The status becomes **Partially received** or **Received**. You cannot record more than is still owed.
-- **Cancel invoice:** at any stage, with a reason. If money was received, you are told how much and which receipts, and those receipts are voided with it. It keeps its number and stays in the list as cancelled.
+- **+ Receipt:** the receipt form opens in place: amount, date, how it was paid and a reference. This creates a numbered **receipt**. The status becomes **Partially received** or **Received**. You cannot record more than is still owed. If the client has **credit**, **Paid by: Client credit** pays from it.
+- **Cancel invoice:** at any stage, with a reason. It keeps its number and stays in the list as cancelled. If money was received, you are told how much and which receipts, and you choose what becomes of it:
+  - **Refund it to the client:** the date, how it was paid back and a reference. The receipts stay, marked **Refunded**.
+  - **Keep it as the client's credit:** it pays the client's next invoices in that currency (**Paid by: Client credit**). The receipts stay, marked **Kept as credit**, and the client's page shows its credit.
+  - **Void the receipts:** the money was never really received (entered by mistake, a bounced cheque). The receipts stay, crossed out.
 
 The list itself also has **+ Receipt**, **Mark sent** and **↶ Not sent** on each row.
 
-**The Receipts page** (under Invoices) lists every receipt for the dates chosen. **+ New receipt** asks which invoice was paid (a receipt is always made against an invoice). Each receipt can be printed, sent on WhatsApp, or **↶ Undone** (voided) with a reason, e.g. "Entered by mistake" or a bounced cheque. An undone receipt stays in the list crossed out, and the money is owed again.
+**The Receipts page** (under Invoices) lists every receipt for the dates chosen. **+ New receipt** asks which invoice was paid (a receipt is always made against an invoice). Each receipt can be printed, sent on WhatsApp, or **↶ Undone** (voided) with a reason, e.g. "Entered by mistake" or a bounced cheque. An undone receipt stays in the list crossed out, and the money is owed again. A receipt marked **Refunded** or **Kept as credit** stays as it is, and is not counted in the totals (credit is counted when it pays an invoice). A receipt paid from credit gives the credit back if it is undone.
 
 **Invoice statuses:** Draft → Issued → Sent → Partially received → Received, or Cancelled.
 
@@ -297,7 +304,8 @@ Only the **ETAX administrator** sets each user's permissions, under Manage → U
 - clients added and changed;
 - obligation steps and dates;
 - reminders changed;
-- invoices issued, sent and cancelled, and receipts recorded and undone;
+- invoices issued, sent and cancelled (with what became of the money), and receipts recorded and undone;
+- reminders given by phone or email;
 - custom fields changed;
 - archiving, restoring and deleting (with the note);
 - downloads and passwords shown.
@@ -314,7 +322,7 @@ You can search it and download it.
 
 **Why is something overdue when the client is in another country?** The due date is the client's own calendar day, in its time zone.
 
-**What about quarterly or monthly returns?** Type the first period's dates: a three-month period comes back every quarter, a one-month period every month. Each period gets its own dates and reminders.
+**What about quarterly or monthly returns?** Add one obligation per quarter (VAT Return Q1 to Q4) or per month, in one go with **+ Add another obligation**. Each comes back every year on its own dates, with its own reminders.
 
 **Which year does a period belong to?** To the year of its **due date**. The income tax return for 1 Jul 2026 – 30 Jun 2027, due 30 Sep 2027, shows under 2027.
 

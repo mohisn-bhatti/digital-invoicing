@@ -17,7 +17,7 @@ const PERMS = {
     'GET /api/cmp/occurrences': ['VIEW'], 'PUT /api/cmp/occurrences/:id': ['OBLIGATION_EDIT'],
     'POST /api/cmp/occurrences/:id/stage': ['COMPLETE'], 'POST /api/cmp/occurrences/:id/complete': ['COMPLETE'], 'POST /api/cmp/occurrences/:id/reopen': ['COMPLETE'],
     'GET /api/cmp/templates': ['VIEW'], 'GET /api/cmp/templates/context': ['VIEW'], 'POST /api/cmp/templates': ['SETUP'], 'PUT /api/cmp/templates/:id': ['SETUP'], 'DELETE /api/cmp/templates/:id': ['SETUP'],
-    'POST /api/cmp/messages/prepare': ['WHATSAPP'], 'POST /api/cmp/messages': ['WHATSAPP'], 'POST /api/cmp/messages/:id/void': ['WHATSAPP'], 'GET /api/cmp/messages': ['LOGS'],
+    'POST /api/cmp/messages/prepare': ['WHATSAPP'], 'POST /api/cmp/messages': ['WHATSAPP'], 'POST /api/cmp/messages/:id/void': ['WHATSAPP'], 'POST /api/cmp/messages/manual': ['WHATSAPP', 'COMPLETE'], 'GET /api/cmp/messages': ['LOGS'],
     'GET /api/cmp/notifications': ['REPORTS', 'WHATSAPP'], 'GET /api/cmp/alerts': ['VIEW'],
     'GET /api/cmp/activity': ['LOGS'],
     'GET /api/cmp/my-tasks': ['VIEW'],

@@ -3,7 +3,8 @@
    "My Obligations" is the main sheet (the CA, 9 Nov 2026): one row per period of the dates chosen (the calendar year by default,
    with the periods still to come shown as Planned), sorted by due date and then by client, with every action on the row itself
    (send the reminder, the step, close, the invoice, the receipt). A period opens in a window only to change its dates.
-   An obligation is added with its three dates; how often it comes back follows from them, for as many years as said (or unlimited). */
+   An obligation is added with its three dates typed by hand and comes back every year on the same dates, for as many years as said
+   (or unlimited). Several can be added at once (the CA: e.g. the four quarterly VAT returns, each an obligation of its own). */
 
 const CMP_OB = { status: 'ALL', country: '', clientId: '', q: '', assignee: '', archived: false, timer: null, form: null, period: null, clients: null };
 CMP_RESETS.push(() => Object.assign(CMP_OB, { status: 'ALL', country: '', clientId: '', q: '', assignee: '', archived: false, form: null, period: null, clients: null }));
@@ -34,7 +35,8 @@ CMP_PAGES.push({
       <div class="flex items-end gap-2"><span id="cmObExport"></span>${cmpBtn('Print / PDF', 'cmpPrintTable("My Obligations — " + cmpRangeText("ob"), "cmObTable")')}</div>
     </div>
     <div id="cmObBulk" class="hidden flex flex-wrap items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-2"></div>
-    <div id="cmObNote" class="text-xs text-slate-500 mb-2"></div>
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-2"><div id="cmObNote" class="text-xs text-slate-500"></div>
+      <label class="flex items-center gap-2 text-xs text-slate-600" title="Off: ticking selects rows for the actions on several rows"><input type="checkbox" id="cmObTickMode" onchange="cmpTickMode(this.checked)"> Ticking a row shows only that client</label></div>
     <div id="cmObCards" class="md:hidden space-y-2"></div>
     <div class="hidden md:block overflow-x-auto"><table id="cmObTable" class="w-full text-sm">
       <thead class="text-left text-slate-500 border-b"><tr><th class="py-2 w-8"><input type="checkbox" aria-label="Select all" onchange="cmpOccSelectAll(this)"></th><th></th><th>Due date</th><th>Client</th><th>Obligation</th><th>Period</th><th>Status</th><th>Reminders</th><th>Actions</th><th>Assigned to</th></tr></thead>
@@ -42,6 +44,7 @@ CMP_PAGES.push({
   enter: async () => {
     const s = document.getElementById('cmObStatus'); if (s) s.value = CMP_OB.status;
     $('#cmObRange').innerHTML = cmpRangeBar('ob', cmpLoadObligations);
+    $('#cmObTickMode').checked = cmpTickFilters();
     $('#cmObWho').innerHTML = cmpTeamFilter(); $('#cmObWho').value = CMP_OB.assignee;
     $('#cmObExport').innerHTML = cmpCan('EXPORT') ? cmpBtn('Download (Excel)', "cmpDownload('/api/cmp/export/obligations?' + cmpObQuery(), 'obligations.csv')") : '';
     await cmpObClients();
@@ -56,6 +59,9 @@ async function cmpObClients() {
   if (CMP_OB.clientId && !CMP_OB.clients.some(c => c.id === CMP_OB.clientId)) sel.insertAdjacentHTML('beforeend', `<option value="${esc(CMP_OB.clientId)}">(${CMP_OB.clientId.split(',').length} clients ticked)</option>`);
   sel.value = CMP_OB.clientId;
 }
+// The two ways a tick works (the CA: keep both): show only that client at once, or select the row for the actions on several rows
+const cmpTickFilters = () => { try { return localStorage.getItem('cmpTickFilter') === '1'; } catch { return false; } };
+function cmpTickMode(on) { try { localStorage.setItem('cmpTickFilter', on ? '1' : '0'); } catch { /* for this visit only */ } CMP_SEL.occ.clear(); CMP_SEL.occClient.clear(); cmpLoadObligations(); }
 // The sheet for one client (the CA: tick a client to see only that client, for the dates chosen)
 function cmpObOnly(clientId) { CMP_OB.clientId = clientId; CMP_SEL.occ.clear(); cmpObClients(); cmpLoadObligations(); }
 
@@ -77,6 +83,9 @@ function cmpRowActions(r, refresh) {
   const h = r.view.reminders.find(x => x.state === 'HIGHLIGHTED') || r.view.reminders.find(x => x.state === 'MISSED');
   if (live && h && cmpCan('WHATSAPP') && !r.client.noWhatsApp) out.push(`<button type="button" class="needs-write ${small} bg-[#25D366] text-white" title="${esc(CmpRules.offsetLabel(h.offsetDays))} · ${esc(h.templateName || '')}"
     onclick="event.stopPropagation(); cmpWhatsApp({ kind: 'REMINDER', occurrenceId: '${r.id}', reminderId: '${h.id}' }, ${refresh})">${CMP_WA_ICON} Reminder</button>`);
+  // no WhatsApp (the CA): the reminder is given by phone or email, then marked here
+  if (live && h && cmpCan('WHATSAPP', 'COMPLETE') && r.client.noWhatsApp) out.push(`<button type="button" class="needs-write ${small} border border-amber-500 text-amber-900 bg-amber-50" title="${esc(CmpRules.offsetLabel(h.offsetDays))} · no WhatsApp"
+    onclick="event.stopPropagation(); cmpRemindedForm('${r.id}', '${h.id}', '${refresh}')">✓ Reminded by phone / email</button>`);
   if (live && r.stage !== 'COMPLETED' && cmpCan('COMPLETE')) {
     out.push(`<select class="needs-write !w-auto !text-xs !py-1 !min-h-0" aria-label="Step" onclick="event.stopPropagation()" onchange="cmpRowStage('${r.id}', this.value, ${refresh})">${CMP_STEPS.map(([k, l]) => `<option value="${k}" ${r.stage === k ? 'selected' : ''}>${l}</option>`).join('')}</select>`);
     out.push(`<button type="button" class="needs-write ${small} bg-emerald-700 text-white" onclick="event.stopPropagation(); cmpRowComplete('${r.obligation.id}', '${r.id}', ${refresh})">✓ Close</button>`);
@@ -124,7 +133,6 @@ async function cmpLoadObligations() {
 }
 
 /* ---------- add or edit an obligation ---------- */
-const CMP_CYCLE_WORDS = { MONTHLY: 'every month (the period is one month long)', QUARTERLY: 'every quarter (the period is three months long)', HALF_YEARLY: 'every six months (the period is six months long)', YEARLY: 'every year' };
 async function cmpObligationForm(clientId, obligationId) {
   let client, ob = null, templates = [], suggestions = [];
   try {
@@ -133,21 +141,19 @@ async function cmpObligationForm(clientId, obligationId) {
     if (obligationId) ob = await api(`/api/cmp/obligations/${obligationId}`);
     suggestions = await api('/api/cmp/suggest/obligations?country=' + client.country);
   } catch (err) { return toast(err.message); }
-  CMP_OB.form = { clientId, obligationId: obligationId || null, suggestions, templates, client, ob, yearly: false };
+  CMP_OB.form = { clientId, obligationId: obligationId || null, suggestions, templates, client, ob };
   const country = cmpCountry(client.country), years = ob ? ob.yearsTotal : null;
-  cmpShowModal(`${cmpModalHead(ob ? `Edit ${esc(ob.name)}` : 'Add an obligation', `${country.flag} ${esc(client.name)} · ${esc(client.code)}`)}
+  cmpShowModal(`${cmpModalHead(ob ? `Edit ${esc(ob.name)}` : 'Add obligations', `${country.flag} ${esc(client.name)} · ${esc(client.code)}`)}
     <form id="cmObForm" onsubmit="event.preventDefault(); cmpObligationSave()" class="space-y-4">
-      <label><span>Obligation *</span><input name="name" required maxlength="120" list="cmObNames" autocomplete="off" placeholder="e.g. Income Tax Return, VAT Return, Trade License renewal" value="${ob ? esc(ob.name) : ''}" oninput="cmpObligationNameHint()">
-        <datalist id="cmObNames">${suggestions.map(x => `<option value="${esc(x.name)}"></option>`).join('')}</datalist></label>
+      <datalist id="cmObNames">${suggestions.map(x => `<option value="${esc(x.name)}"></option>`).join('')}</datalist>
+      ${ob ? `<label><span>Obligation *</span><input name="name" class="obName" required maxlength="120" list="cmObNames" autocomplete="off" value="${esc(ob.name)}" oninput="cmpObligationNameHint()"></label>
       <div id="cmObHint"></div>
-      ${ob ? `<p class="text-xs text-slate-500">Comes back <b>${esc(CmpRules.freqOf(ob.frequency).label.toLowerCase())}</b>. The dates are changed period by period: open a period to change its dates (and, if you like, the periods after it).</p>` : `
-      <div class="grid sm:grid-cols-3 gap-3">
-        <label><span>Period start *</span><input name="periodStart" type="date" required oninput="cmpObligationCycle()"></label>
-        <label><span>Period end *</span><input name="periodEnd" type="date" required oninput="cmpObligationCycle()"></label>
-        <label><span>Due date * <span class="text-slate-400">(${esc(CmpCountries.zoneCity(client.timeZone))})</span></span><input name="dueDate" type="date" required></label>
-      </div>
-      <p class="text-xs text-slate-500">For example a Pakistan income tax return: period 1 Jul 2026 – 30 Jun 2027, due 30 Sep 2027. Once these three dates are in, the obligation is set: it comes back on the same pattern.</p>
-      <div id="cmObCycle" class="text-sm"></div>`}
+      <p class="text-xs text-slate-500">Comes back <b>${esc(CmpRules.freqOf(ob.frequency).label.toLowerCase())}</b>. The dates are changed period by period: open a period to change its dates (and, if you like, the periods after it).</p>` : `
+      <div><div class="hidden sm:grid grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_2rem] gap-2 text-sm font-medium text-slate-700 mb-1"><span>Obligation *</span><span>Period start *</span><span>Period end *</span><span>Due date * <span class="text-slate-400 font-normal">(${esc(CmpCountries.zoneCity(client.timeZone))})</span></span><span></span></div>
+        <div id="cmObNew" class="space-y-2"></div>
+        <div id="cmObHint" class="mt-2"></div>
+        <button type="button" class="text-sm text-emerald-700 underline mt-2" onclick="cmpObRow()">+ Add another obligation</button>
+        <p class="text-xs text-slate-500 mt-1">Each one comes back <b>every year on the same dates</b>. Type the dates by hand, e.g. a Pakistan income tax return: 1 Jul 2026 – 30 Jun 2027, due 30 Sep 2027. For quarterly VAT, add four obligations (Q1 to Q4): "+ Add another" proposes the next quarter's dates, to check.</p></div>`}
       <div class="grid sm:grid-cols-3 gap-3 items-end">
         <div><span class="block text-sm font-medium text-slate-700 mb-1">How many years</span>
           <div class="flex items-center gap-3"><input name="years" type="number" min="1" max="100" class="!w-24" value="${years || ''}" ${years ? '' : 'disabled'} placeholder="e.g. 5">
@@ -170,22 +176,35 @@ async function cmpObligationForm(clientId, obligationId) {
         <div class="flex gap-2">${cmpBtn('Cancel', 'cmpCloseModal()')}<button class="px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">${ob ? 'Save changes' : 'Add obligation'}</button></div></div>
     </form>`);
   (ob ? ob.reminders : []).sort((a, b) => a.offsetDays - b.offsetDays).forEach(r => cmpReminderRow(r));
-  if (ob) cmpObligationNameHint();
+  if (ob) cmpObligationNameHint(); else cmpObRow();
 }
-// How often it will come back, from the dates (the CA: no list to choose from); a shorter period can still come back once a year
-function cmpObligationCycle() {
-  const f = $('#cmObForm'), box = document.getElementById('cmObCycle'); if (!f || !box) return;
-  const a = f.periodStart.value, b = f.periodEnd.value;
-  if (!a || !b) { box.innerHTML = ''; return; }
-  const detected = CmpRules.detectFrequency(a, b), freq = CMP_OB.form.yearly ? 'YEARLY' : detected;
-  CMP_OB.form.freq = freq;
-  box.innerHTML = `<div class="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">↻ Comes back <b>${CMP_CYCLE_WORDS[freq]}</b>, on the same pattern.
-    ${detected !== 'YEARLY' ? `<button type="button" class="underline text-emerald-800 ml-1" onclick="CMP_OB.form.yearly = ${!CMP_OB.form.yearly}; cmpObligationCycle()">${CMP_OB.form.yearly ? `Every ${CmpRules.freqOf(detected).unit} instead` : 'Once a year instead (e.g. one of four quarterly returns)'}</button>` : ''}</div>`;
+// One obligation of the window: its name and its three dates. A new row proposes the next one: the name with the next quarter (Q1 → Q2)
+// and the dates one period on (a quarter → the next quarter; anything else a year on), for the person to check.
+function cmpObRow() {
+  const rows = document.querySelectorAll('#cmObNew .cmObRow'), prev = rows[rows.length - 1], v = { name: '', start: '', end: '', due: '' };
+  if (prev) {
+    const g = c => prev.querySelector(c).value, start = g('.obStart'), end = g('.obEnd'), due = g('.obDue'), name = g('.obName');
+    const m = name.match(/^(.*\bQ)([1-4])\b(.*)$/i);
+    v.name = m ? `${m[1]}${Number(m[2]) % 4 + 1}${m[3]}` : '';
+    if (start && end && due) {
+      let k = 12;
+      for (const n of [1, 3, 6]) if (CmpRules.addDays(CmpRules.shiftMonths(start, n, false), -1) === end) k = n;
+      v.start = CmpRules.shiftMonths(start, k, false); v.end = CmpRules.shiftMonths(end, k, true); v.due = CmpRules.shiftMonths(due, k, false);
+    }
+  }
+  const first = !rows.length;
+  $('#cmObNew').insertAdjacentHTML('beforeend', `<div class="cmObRow grid grid-cols-2 sm:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_2rem] gap-2 items-end bg-slate-50 border rounded-lg p-2 sm:p-1 sm:bg-transparent sm:border-0">
+    <label class="col-span-2 sm:col-span-1"><span class="sm:sr-only">Obligation *</span><input class="obName" required maxlength="120" list="cmObNames" autocomplete="off" placeholder="e.g. Income Tax Return, VAT Return Q1" value="${esc(v.name)}" ${first ? 'oninput="cmpObligationNameHint()"' : ''}></label>
+    <label><span class="sm:sr-only">Period start *</span><input class="obStart" type="date" required value="${v.start}"></label>
+    <label><span class="sm:sr-only">Period end *</span><input class="obEnd" type="date" required value="${v.end}"></label>
+    <label><span class="sm:sr-only">Due date *</span><input class="obDue" type="date" required value="${v.due}"></label>
+    <button type="button" class="min-h-[2.5rem] text-red-600 ${first ? 'invisible' : ''}" onclick="this.closest('.cmObRow').remove()" aria-label="Remove this obligation">✕</button></div>`);
+  const last = $('#cmObNew').lastElementChild.querySelector('.obName'); if (!first) last.focus();
 }
 // The same obligation for other clients of this country (the CA: country-sensitive, suggested by country and name): its dates and reminders
 function cmpObligationNameHint() {
   const f = $('#cmObForm'), box = document.getElementById('cmObHint'), form = CMP_OB.form; if (!f || !box) return;
-  const k = CmpRules.keyOf(f.name.value), i = form.suggestions.findIndex(x => CmpRules.keyOf(x.name) === k);
+  const k = CmpRules.keyOf(f.querySelector('.obName').value), i = form.suggestions.findIndex(x => CmpRules.keyOf(x.name) === k);
   if (!k || i < 0) { box.innerHTML = ''; return; }
   const s = form.suggestions[i], country = cmpCountry(form.client.country), rem = s.reminders.length;
   if (form.ob && (!rem || document.querySelector('#cmRemRows .cmRem'))) { box.innerHTML = ''; return; }
@@ -211,11 +230,10 @@ function cmpObligationSuggest(i) {
   const s = CMP_OB.form.suggestions[Number(i)]; if (!s) return;
   const f = $('#cmObForm');
   if (!CMP_OB.form.ob) {
-    f.name.value = s.name; f.portalUrl.value = f.portalUrl.value || s.portalUrl || '';
-    f.periodStart.value = s.periodStart; f.periodEnd.value = s.periodEnd; f.dueDate.value = s.dueDate;
-    CMP_OB.form.yearly = s.frequency === 'YEARLY' && CmpRules.detectFrequency(s.periodStart, s.periodEnd) !== 'YEARLY';
+    const row = f.querySelector('.cmObRow');
+    row.querySelector('.obName').value = s.name; f.portalUrl.value = f.portalUrl.value || s.portalUrl || '';
+    row.querySelector('.obStart').value = s.periodStart; row.querySelector('.obEnd').value = s.periodEnd; row.querySelector('.obDue').value = s.dueDate;
     f.unlimited.checked = !s.yearsTotal; f.years.disabled = !s.yearsTotal; f.years.value = s.yearsTotal || '';
-    cmpObligationCycle();
   }
   $('#cmRemRows').innerHTML = ''; s.reminders.forEach(r => cmpReminderRow(r));
   $('#cmObHint').innerHTML = '';
@@ -229,17 +247,20 @@ async function cmpObligationSave() {
     const n = Number(row.querySelector('.remDays').value) || 0, when = row.querySelector('.remWhen').value;
     return { offsetDays: when === 'on' ? 0 : when === 'before' ? -n : n, templateId: row.querySelector('.remTpl').value };
   });
-  const body = { name: f.name.value, portalUrl: f.portalUrl.value, notes: f.notes.value, yearsTotal, assignedToId: f.assignedToId.value || null, amberDays: Number(f.amberDays.value), autoNext: f.autoNext.checked };
+  const body = { portalUrl: f.portalUrl.value, notes: f.notes.value, yearsTotal, assignedToId: f.assignedToId.value || null, amberDays: Number(f.amberDays.value), autoNext: f.autoNext.checked };
   try {
-    let ob;
+    let msg;
     if (form.obligationId) {
-      await api(`/api/cmp/obligations/${form.obligationId}`, { method: 'PUT', body });
-      ob = await api(`/api/cmp/obligations/${form.obligationId}/reminders`, { method: 'PUT', body: { reminders } });
+      await api(`/api/cmp/obligations/${form.obligationId}`, { method: 'PUT', body: { ...body, name: f.querySelector('.obName').value } });
+      await api(`/api/cmp/obligations/${form.obligationId}/reminders`, { method: 'PUT', body: { reminders } });
+      msg = 'Obligation saved';
     } else {
-      const freq = form.yearly ? 'YEARLY' : undefined; // (else the server reads it from the dates, like the screen)
-      ob = await api(`/api/cmp/clients/${form.clientId}/obligations`, { method: 'POST', body: { ...body, frequency: freq, periodStart: f.periodStart.value, periodEnd: f.periodEnd.value, dueDate: f.dueDate.value, reminders } });
+      // every row is one obligation, each coming back every year; all are checked before any is added
+      const items = [...document.querySelectorAll('#cmObNew .cmObRow')].map(r => ({ name: r.querySelector('.obName').value, periodStart: r.querySelector('.obStart').value, periodEnd: r.querySelector('.obEnd').value, dueDate: r.querySelector('.obDue').value }));
+      const r = await api(`/api/cmp/clients/${form.clientId}/obligations`, { method: 'POST', body: { ...body, frequency: 'YEARLY', items, reminders } });
+      msg = r.obligations.length === 1 ? `${r.obligations[0].name} added, ${CmpRules.repeatsLabel('YEARLY', yearsTotal).toLowerCase()}` : `${r.obligations.length} obligations added, ${CmpRules.repeatsLabel('YEARLY', yearsTotal).toLowerCase()}`;
     }
-    cmpCloseModal(); toast(form.obligationId ? 'Obligation saved' : `${ob.name} added, ${CmpRules.repeatsLabel(ob.frequency, ob.yearsTotal).toLowerCase()}${ob.occurrences.length > 1 ? ' (next period prepared too: its period is already over)' : ''}`, true);
+    cmpCloseModal(); toast(msg, true);
     if (S.page === 'cm-client') cmpLoadClient(); else if (S.page === 'cm-obligations') cmpLoadObligations(); else cmpOpenClient(form.clientId);
   } catch (err) { toast(err.message); }
 }

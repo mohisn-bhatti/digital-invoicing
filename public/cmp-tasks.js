@@ -34,7 +34,9 @@ async function cmpLoadTasks() {
 }
 
 /* ---------- bulk: the obligations list ---------- */
-function cmpOccSelect(box, occId, obId, clientId) { if (box.checked) { CMP_SEL.occ.set(occId, obId); CMP_SEL.occClient.set(occId, clientId); } else { CMP_SEL.occ.delete(occId); CMP_SEL.occClient.delete(occId); } cmpOccBar(); }
+function cmpOccSelect(box, occId, obId, clientId) {
+  if (box.checked && typeof cmpTickFilters === 'function' && cmpTickFilters()) return cmpObOnly(clientId); // (the tick shows only that client)
+  if (box.checked) { CMP_SEL.occ.set(occId, obId); CMP_SEL.occClient.set(occId, clientId); } else { CMP_SEL.occ.delete(occId); CMP_SEL.occClient.delete(occId); } cmpOccBar(); }
 function cmpOccSelectAll(box) { document.querySelectorAll('#cmObRows input.cmSel').forEach(b => { b.checked = box.checked; cmpOccSelect(b, b.dataset.id, b.dataset.ob, b.dataset.client); }); }
 // The sheet narrowed to the clients of the ticked rows (the CA: tick a client to see only that client, for the dates chosen)
 function cmpOccOnlyClients() { const ids = [...new Set([...CMP_SEL.occ.keys()].map(k => CMP_SEL.occClient.get(k)).filter(Boolean))]; CMP_SEL.occ.clear(); CMP_SEL.occClient.clear(); cmpObOnly(ids.join(',')); }

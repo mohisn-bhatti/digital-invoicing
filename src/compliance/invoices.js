@@ -11,7 +11,9 @@ const { CmpError, bad, ciContains } = require('./common');
 const dateOf = ymd => (ymd ? new Date(ymd + 'T00:00:00Z') : null);
 const ymd = v => (v ? R.ymdOf(v) : '');
 const pad = (n, w) => String(n).padStart(w, '0');
-const METHODS = { BANK: 'Bank transfer', CASH: 'Cash', CHEQUE: 'Cheque', CARD: 'Card', ONLINE: 'Online payment', OTHER: 'Other' };
+const METHODS = { BANK: 'Bank transfer', CASH: 'Cash', CHEQUE: 'Cheque', CARD: 'Card', ONLINE: 'Online payment', OTHER: 'Other', CREDIT: 'Client credit' };
+// what becomes of money received against an invoice that is cancelled (the CA)
+const SETTLE = { VOID: 'voided', REFUND: 'refunded', CREDIT: 'kept as credit' };
 const STATUSES = ['DRAFT', 'ISSUED', 'SENT', 'PARTIAL', 'RECEIVED', 'CANCELLED'];
 const MAX_AMOUNT = 999999999;
 
@@ -150,14 +152,23 @@ function createInvoices({ prisma, audit, common, now }) {
         obligation: inv.occurrence ? { id: inv.occurrence.obligation.id, name: inv.occurrence.obligation.name, occurrenceId: inv.occurrence.id, periodStart: ymd(inv.occurrence.periodStart), periodEnd: ymd(inv.occurrence.periodEnd) } : null,
         lines: inv.lines ? inv.lines.map(l => ({ description: l.description, amount: Number(l.amount) })) : undefined,
         taxes: inv.taxes ? inv.taxes.map(t => ({ name: t.name, rate: Number(t.rate), amount: Number(t.amount) })) : undefined,
-        receipts: inv.receipts ? inv.receipts.map(r => ({ id: r.id, number: r.number, amount: Number(r.amount), receivedOn: ymd(r.receivedOn), method: r.method, reference: r.reference, notes: r.notes, createdBy: r.createdBy, createdAt: r.createdAt, voidedAt: r.voidedAt, voidedBy: r.voidedBy, voidReason: r.voidReason })) : undefined,
+        receipts: inv.receipts ? inv.receipts.map(r => ({ id: r.id, number: r.number, amount: Number(r.amount), receivedOn: ymd(r.receivedOn), method: r.method, reference: r.reference, notes: r.notes, createdBy: r.createdBy, createdAt: r.createdAt, voidedAt: r.voidedAt, voidedBy: r.voidedBy, voidReason: r.voidReason,
+            settlement: r.settlement, settledAt: r.settledAt, settlementNote: r.settlementNote })) : undefined,
+        cancelSettlement: inv.cancelSettlement,
     });
     async function find(ctx, id, db = prisma) {
         const inv = await db.cmpInvoice.findFirst({ where: { id: String(id || ''), tenantId: ctx.tenantId }, include: INCLUDE });
         if (!inv) throw new CmpError(404, 'Invoice not found.');
         return inv;
     }
-    const get = async (ctx, id) => view(await find(ctx, id));
+    // The client's credit still to use, per currency (money kept when an invoice was cancelled: the CA)
+    async function creditOf(tenantId, clientId, db = prisma) {
+        const rows = await db.cmpCredit.findMany({ where: { tenantId, clientId }, orderBy: { createdAt: 'asc' } });
+        const m = new Map();
+        for (const c of rows) { const d = decimalsOf(c.currency), left = toMinor(c.amount, d) - toMinor(c.used, d); if (left > 0) m.set(c.currency, (m.get(c.currency) || 0) + left); }
+        return [...m.entries()].map(([currency, minor]) => ({ currency, remaining: fromMinor(minor, decimalsOf(currency)) }));
+    }
+    const get = async (ctx, id) => { const inv = await find(ctx, id); return { ...view(inv), clientCredit: await creditOf(ctx.tenantId, inv.clientId) }; };
     // The status after any change of money or of "sent": issued → sent → partially received → received (cancelled and drafts stay)
     const statusOf = inv => {
         if (inv.status === 'DRAFT' || inv.status === 'CANCELLED') return inv.status;
@@ -281,25 +292,53 @@ function createInvoices({ prisma, audit, common, now }) {
         await log(ctx, 'cmp.invoice.sent', 'CmpInvoice', inv.id, `Invoice ${inv.number} sent to ${common.clientLabel(inv.client)} (${how})`, { clientId: inv.clientId });
         return get(ctx, inv.id);
     }
-    // Cancelled at any stage (the CA). Money received against it: its receipts are voided with it, but only when the person said so
-    // (voidReceipts), having been told how much and which receipts.
-    async function cancel(ctx, id, reason, { voidReceipts = false } = {}) {
+    // Cancelled at any stage (the CA). Money already received against it is settled as the person chooses, having been told how much
+    // and which receipts: VOID (the receipts were a mistake: voided), REFUND (paid back to the client: when, how, reference) or CREDIT
+    // (kept as the client's credit, to pay its next invoices in this currency). voidReceipts: true is the same as settle VOID.
+    async function cancel(ctx, id, reason, { voidReceipts = false, settle, refund } = {}) {
         const inv = await find(ctx, id);
         if (inv.status === 'DRAFT') throw new CmpError(409, 'A draft is deleted, not cancelled.');
         if (inv.status === 'CANCELLED') throw new CmpError(409, 'This invoice is already cancelled.');
         const why = V.line(reason, 300, 'Reason', { required: true });
-        const paid = live => `${amountText(live.reduce((m, r) => m + Number(r.amount), 0), inv.currency)} was received against this invoice (${live.map(r => r.number).join(', ')}). Cancelling it voids ${live.length === 1 ? 'that receipt' : 'those receipts'} too.`;
-        if (inv.receipts.some(r => !r.voidedAt) && !voidReceipts) throw new CmpError(409, paid(inv.receipts.filter(r => !r.voidedAt)));
+        const mode = settle ? String(settle).toUpperCase() : voidReceipts ? 'VOID' : '';
+        if (mode && !SETTLE[mode]) throw bad('Choose what becomes of the money received: refund, credit or void.');
+        let refundText = '';
+        if (mode === 'REFUND') {
+            const r = refund || {}, on = r.date ? V.day(r.date, 'Refund date') : await today(ctx.tenantId), how = String(r.method || 'BANK').toUpperCase();
+            if (!METHODS[how] || how === 'CREDIT') throw bad('Choose how the money was paid back.');
+            const ref = V.line(r.reference, 120, 'Refund reference');
+            refundText = `Refunded on ${R.fmtDay(on)} by ${METHODS[how].toLowerCase()}${ref ? ` (ref. ${ref})` : ''}`;
+        }
+        const paid = live => `${amountText(live.reduce((m, r) => m + Number(r.amount), 0), inv.currency)} was received against this invoice (${live.map(r => r.number).join(', ')}). Choose what becomes of it: refund it, keep it as the client's credit, or void the receipts.`;
+        const liveOf = list => list.filter(r => !r.voidedAt && !r.settlement);
+        if (liveOf(inv.receipts).length && !mode) throw new CmpError(409, paid(liveOf(inv.receipts)));
         // in turn with receipts (the same lock): no payment can arrive between the check and the cancelling
-        const voided = await inTurn(ctx.tenantId, 'cmp-receipt-no', async tx => {
-            const live = await tx.cmpReceipt.findMany({ where: { invoiceId: inv.id, voidedAt: null } });
-            if (live.length && !voidReceipts) throw new CmpError(409, paid(live));
-            if (live.length) await tx.cmpReceipt.updateMany({ where: { id: { in: live.map(r => r.id) } }, data: { voidedAt: now(), voidedBy: ctx.email, voidReason: `Invoice cancelled: ${why}`.slice(0, 300) } });
-            await tx.cmpInvoice.update({ where: { id: inv.id }, data: { status: 'CANCELLED', received: 0, cancelledAt: now(), cancelledBy: ctx.email, cancelReason: why } });
-            return live;
+        const done = await inTurn(ctx.tenantId, 'cmp-receipt-no', async tx => {
+            const live = liveOf(await tx.cmpReceipt.findMany({ where: { invoiceId: inv.id } }));
+            if (live.length && !mode) throw new CmpError(409, paid(live));
+            const d = decimalsOf(inv.currency), sum = fromMinor(live.reduce((m, r) => m + toMinor(r.amount, d), 0), d);
+            let credit = null;
+            if (live.length && mode === 'VOID') {
+                await tx.cmpReceipt.updateMany({ where: { id: { in: live.map(r => r.id) } }, data: { voidedAt: now(), voidedBy: ctx.email, voidReason: `Invoice cancelled: ${why}`.slice(0, 300) } });
+                for (const r of live) await giveBackCredit(tx, r, d);
+            } else if (live.length) {
+                if (mode === 'CREDIT') credit = await tx.cmpCredit.create({ data: { tenantId: ctx.tenantId, clientId: inv.clientId, currency: inv.currency, amount: sum, fromInvoiceId: inv.id, note: `Invoice ${inv.number} cancelled: ${why}`.slice(0, 300), createdBy: ctx.email } });
+                await tx.cmpReceipt.updateMany({ where: { id: { in: live.map(r => r.id) } }, data: { settlement: mode === 'REFUND' ? 'REFUNDED' : 'CREDITED', settledAt: now(), settledBy: ctx.email,
+                    settlementNote: (mode === 'REFUND' ? refundText : `Kept as ${inv.client.name}'s credit (${amountText(sum, inv.currency)})`).slice(0, 300) } });
+            }
+            await tx.cmpInvoice.update({ where: { id: inv.id }, data: { status: 'CANCELLED', received: 0, cancelledAt: now(), cancelledBy: ctx.email, cancelReason: why, cancelSettlement: live.length ? mode : '' } });
+            return { live, sum, credit };
         });
-        await log(ctx, 'cmp.invoice.cancel', 'CmpInvoice', inv.id, `Invoice ${inv.number} to ${common.clientLabel(inv.client)} cancelled: ${why}${voided.length ? ` (receipt${voided.length === 1 ? '' : 's'} ${voided.map(r => r.number).join(', ')} voided with it)` : ''}`, { clientId: inv.clientId, receipts: voided.map(r => r.number) });
+        const money = done.live.length ? ` (${amountText(done.sum, inv.currency)} received, receipt${done.live.length === 1 ? '' : 's'} ${done.live.map(r => r.number).join(', ')}: ${mode === 'REFUND' ? refundText.charAt(0).toLowerCase() + refundText.slice(1) : SETTLE[mode]})` : '';
+        await log(ctx, 'cmp.invoice.cancel', 'CmpInvoice', inv.id, `Invoice ${inv.number} to ${common.clientLabel(inv.client)} cancelled: ${why}${money}`, { clientId: inv.clientId, receipts: done.live.map(r => r.number), settlement: mode || null });
         return get(ctx, inv.id);
+    }
+    // A receipt paid from the client's credit gives that credit back when it is voided
+    async function giveBackCredit(tx, r, d) {
+        for (const u of Array.isArray(r.creditUsed) ? r.creditUsed : []) {
+            const c = await tx.cmpCredit.findUnique({ where: { id: u.creditId } });
+            if (c) await tx.cmpCredit.update({ where: { id: c.id }, data: { used: fromMinor(Math.max(0, toMinor(c.used, d) - toMinor(u.amount, d)), d) } });
+        }
     }
     // "Sent" undone (the CA: an undo for every mark)
     async function unmarkSent(ctx, id) {
@@ -315,7 +354,7 @@ function createInvoices({ prisma, audit, common, now }) {
     async function recompute(tx, invoiceId) {
         const inv = await tx.cmpInvoice.findUnique({ where: { id: invoiceId }, include: { receipts: true } });
         const d = decimalsOf(inv.currency);
-        const received = fromMinor(inv.receipts.filter(r => !r.voidedAt).reduce((m, r) => m + toMinor(r.amount, d), 0), d);
+        const received = fromMinor(inv.receipts.filter(r => !r.voidedAt && !r.settlement).reduce((m, r) => m + toMinor(r.amount, d), 0), d);
         await tx.cmpInvoice.update({ where: { id: inv.id }, data: { received, status: statusOf({ ...inv, received }) } });
     }
     async function addReceipt(ctx, invoiceId, b) {
@@ -334,8 +373,24 @@ function createInvoices({ prisma, audit, common, now }) {
             if (!['ISSUED', 'SENT', 'PARTIAL'].includes(now2.status)) throw new CmpError(409, now2.status === 'RECEIVED' ? 'This invoice is already paid in full.' : 'This invoice is cancelled.');
             const owed = toMinor(now2.total, d) - now2.receipts.filter(x => !x.voidedAt).reduce((m, x) => m + toMinor(x.amount, d), 0);
             if (toMinor(amount, d) > owed) throw bad(`That is more than is still owed (${amountText(fromMinor(owed, d), inv.currency)}).`);
+            // paid from the client's credit (the CA): the oldest credit in this currency first; never more than there is
+            const creditUsed = [];
+            if (method === 'CREDIT') {
+                let need = toMinor(amount, d);
+                const credits = await tx.cmpCredit.findMany({ where: { tenantId: ctx.tenantId, clientId: inv.clientId, currency: inv.currency }, orderBy: { createdAt: 'asc' } });
+                const have = credits.reduce((m, c) => m + Math.max(0, toMinor(c.amount, d) - toMinor(c.used, d)), 0);
+                if (have < need) throw bad(have ? `The client's credit is only ${amountText(fromMinor(have, d), inv.currency)}.` : `The client has no credit in ${inv.currency}.`);
+                for (const c of credits) {
+                    const left = toMinor(c.amount, d) - toMinor(c.used, d);
+                    if (left <= 0 || !need) continue;
+                    const take = Math.min(left, need);
+                    await tx.cmpCredit.update({ where: { id: c.id }, data: { used: fromMinor(toMinor(c.used, d) + take, d) } });
+                    creditUsed.push({ creditId: c.id, amount: fromMinor(take, d) });
+                    need -= take;
+                }
+            }
             const s = await tx.cmpSettings.upsert({ where: { tenantId: ctx.tenantId }, create: { tenantId: ctx.tenantId, receiptSeq: 1 }, update: { receiptSeq: { increment: 1 } } });
-            const row = await tx.cmpReceipt.create({ data: { tenantId: ctx.tenantId, invoiceId: inv.id, clientId: inv.clientId, seqNo: s.receiptSeq, number: formatNo(s.receiptFormat, s.receiptSeq, receivedOn), amount, receivedOn: dateOf(receivedOn), method, reference, notes, createdBy: ctx.email } });
+            const row = await tx.cmpReceipt.create({ data: { tenantId: ctx.tenantId, invoiceId: inv.id, clientId: inv.clientId, seqNo: s.receiptSeq, number: formatNo(s.receiptFormat, s.receiptSeq, receivedOn), amount, receivedOn: dateOf(receivedOn), method, reference, notes, creditUsed, createdBy: ctx.email } });
             await recompute(tx, inv.id);
             return row;
         });
@@ -346,9 +401,13 @@ function createInvoices({ prisma, audit, common, now }) {
         const r = await prisma.cmpReceipt.findFirst({ where: { id: String(id || ''), tenantId: ctx.tenantId }, include: { invoice: { include: { client: true } } } });
         if (!r) throw new CmpError(404, 'Receipt not found.');
         if (r.voidedAt) throw new CmpError(409, 'This receipt is already void.');
+        if (r.settlement) throw new CmpError(409, `This money was ${r.settlement === 'REFUNDED' ? 'refunded' : 'kept as the client\'s credit'} when invoice ${r.invoice.number} was cancelled: the receipt stays.`);
         const why = V.line(reason, 300, 'Reason', { required: true });
-        await prisma.$transaction(async tx => {
+        await inTurn(ctx.tenantId, 'cmp-receipt-no', async tx => {
+            const fresh = await tx.cmpReceipt.findUnique({ where: { id: r.id } });
+            if (fresh.voidedAt) throw new CmpError(409, 'This receipt is already void.');
             await tx.cmpReceipt.update({ where: { id: r.id }, data: { voidedAt: now(), voidedBy: ctx.email, voidReason: why } });
+            await giveBackCredit(tx, fresh, decimalsOf(r.invoice.currency));
             await recompute(tx, r.invoiceId);
         });
         await log(ctx, 'cmp.receipt.void', 'CmpReceipt', r.id, `Receipt ${r.number} (${amountText(r.amount, r.invoice.currency)}) for invoice ${r.invoice.number} voided: ${why}`, { clientId: r.clientId, invoiceId: r.invoiceId });
@@ -364,6 +423,7 @@ function createInvoices({ prisma, audit, common, now }) {
         if (q.to) where.receivedOn = { ...(where.receivedOn || {}), lte: dateOf(V.day(q.to, 'To')) };
         const rows = await prisma.cmpReceipt.findMany({ where, orderBy: { createdAt: 'desc' }, take: Math.min(Number(q.limit) || 500, 20000), include: { invoice: { include: { client: true } } } });
         return rows.map(r => ({ id: r.id, number: r.number, amount: Number(r.amount), currency: r.invoice.currency, receivedOn: ymd(r.receivedOn), method: r.method, reference: r.reference, voidedAt: r.voidedAt, voidReason: r.voidReason,
+            settlement: r.settlement, settlementNote: r.settlementNote,
             invoice: { id: r.invoiceId, number: r.invoice.number, status: r.invoice.status }, client: { id: r.invoice.client.id, code: r.invoice.client.code, name: r.invoice.client.name, country: r.invoice.client.country }, createdBy: r.createdBy }));
     }
     // What a message about an invoice or receipt can say ([Invoice Number], [Invoice Amount], [Receipt Number])
@@ -381,7 +441,7 @@ function createInvoices({ prisma, audit, common, now }) {
             receipt: receipt ? { number: receipt.number, date: ymd(receipt.receivedOn), amountText: amountText(receipt.amount, inv.currency) } : null } : {} };
     }
 
-    return { METHODS, STATUSES, amountText, listTaxRates, createTaxRate, updateTaxRate, listItems, createItem, updateItem, list, get, draftFor, create, update, remove, issue, markSent, unmarkSent, cancel, addReceipt, voidReceipt, listReceipts, messageContext, statusOf };
+    return { METHODS, STATUSES, amountText, creditOf, listTaxRates, createTaxRate, updateTaxRate, listItems, createItem, updateItem, list, get, draftFor, create, update, remove, issue, markSent, unmarkSent, cancel, addReceipt, voidReceipt, listReceipts, messageContext, statusOf };
 }
 
 module.exports = { createInvoices, formatNo, amountText, METHODS };
