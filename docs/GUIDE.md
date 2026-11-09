@@ -1,6 +1,6 @@
 # ETAX — complete guide
 
-_Last updated: 2026-10-19_
+_Last updated: 2026-11-09_
 
 ETAX is a multi-tenant FBR Digital Invoicing app. A CA firm (the **admin**) onboards its clients. Each client
 (a **tenant**, one NTN) issues invoices, and ETAX sends them to FBR through the PRAL DI API v1.12. The receipt or
@@ -16,12 +16,12 @@ This page covers where things stand, how to use the app, and what is left. The f
 | Part | Status |
 |---|---|
 | Code (all of phase 1, most of phases 2–3) | ✅ Done, tested, pushed to GitHub |
-| Live test site | ✅ https://digital-invoicing.onrender.com (Render free) |
+| Live site | ✅ https://etaxcloud.net (Render Starter since 2026-11-09; also at https://digital-invoicing.onrender.com) |
 | Database | ✅ Supabase (13 migrations, 7,484 HS codes, 1 admin + 1 client, no invoices) |
 | FBR connection | ⏳ **Mock mode.** Nothing goes to FBR yet: invoice numbers are fake |
 | PRAL sandbox token | ⏳ Requested in IRIS on 2026-10-06, waiting |
 | Static IP for FBR whitelisting | ⏳ Oracle proxy not created yet |
-| Domain / Vercel front | ⏳ Later (Render serves everything for now) |
+| Domain | ✅ etaxcloud.net points straight at Render. It expires **2027-10-21**: see [HOSTING.md](HOSTING.md) |
 | Backups | ⏸ Script is ready; **not running** until we decide to turn it on |
 
 **The live site right now is for testing only.** Any invoice made there gets a fake FBR number, so test freely.
@@ -31,8 +31,8 @@ Don't give it to real clients yet.
 
 ## 2. Using the app
 
-Open https://digital-invoicing.onrender.com/app. On the free plan the site sleeps after 15 minutes without visitors,
-so the first page can take about a minute to load.
+Open https://etaxcloud.net/app. The same app is also at https://digital-invoicing.onrender.com/app, which is the
+emergency address if the domain ever has a problem. Accounts, renewals and troubleshooting are in [HOSTING.md](HOSTING.md).
 
 ### Admin (the CA firm)
 | Menu | What it does |
@@ -185,8 +185,8 @@ Details, decisions and what is still open: [POS_MODULE.md](POS_MODULE.md). The b
 4. Admin switches the client to PRODUCTION and saves the production token.
 5. File one real invoice, then check it in IRIS / Tax Asaan.
 6. **Turn on backups.** FBR requires records to be kept for 6 years ([backups.md](backups.md)).
-7. Optional: buy a domain (e.g. etax.pk), connect it through Vercel, set `TRUST_PROXY_HOPS=2` on Render, and fill in the
-   `CONTACT_*` details for the website.
+7. ✅ Domain: etaxcloud.net, served straight from Render since 2026-11-09 ([HOSTING.md](HOSTING.md)). Keep
+   `TRUST_PROXY_HOPS=1` on Render. Fill in the `CONTACT_*` details for the website.
 
 ### D. Housekeeping
 - Remove the brother's GitHub login from this Mac once it's no longer needed: `gh auth logout -u mohisn-bhatti`.

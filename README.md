@@ -63,7 +63,8 @@ Valid invoices are queued and filed one by one in the background; *Recent import
 - Up to 1,000 invoices / 5,000 rows per file. Dates: YYYY-MM-DD, DD-MM-YYYY, 31-Aug-2025 or Excel dates.
 - Buyer Type: Registered / Unregistered / End consumer. Rate: 18, 18% or 0.18.
 - The same file (same Invoice Ref + date) imported twice is never filed twice.
-- On Render free the background sender pauses while the service sleeps and continues on the next visit.
+- On a sleeping server (Render's free plan) the background sender pauses and continues on the next visit. On the Starter
+  plan, which is used since 2026-11-09, the server does not sleep.
 
 ## Users, roles & login security
 - Each client has users with a role:
@@ -136,11 +137,14 @@ The item form searches HS/PCT codes by code or words (e.g. `laptop`, `0101`).
 Receipts are 80mm with a 1×1 inch QR (v2, 25×25) of the FBR invoice number, per spec §6.
 The official **FBR Digital Invoicing System logo** is included as `public/fbr-di-logo.jpg`, taken from the DI API v1.12 spec §6 (page 35). It prints next to the QR.
 
-## Deployment (Supabase + Render + Vercel, free plans)
+## Deployment (Supabase + Render)
+**The live setup, the accounts, the domain renewal and what to do when something breaks are in
+[docs/HOSTING.md](docs/HOSTING.md).** Since 2026-11-09 etaxcloud.net points straight at Render (Starter plan), and
+Vercel only keeps the domain's DNS records. The steps below are how it was first set up.
 ```
-Browser ──► Vercel (public/ static)  ──/api/* rewrite──►  Render (Express API) ──► Supabase Postgres
-                                                              │
-                                                              └─► static-IP proxy ──► gw.fbr.gov.pk
+Browser ──► etaxcloud.net (DNS at Vercel) ──► Render (website, app and API) ──► Supabase Postgres
+                                                  │
+                                                  └─► static-IP proxy ──► gw.fbr.gov.pk
 ```
 1. **Supabase** → Project → Connect: copy the **Transaction pooler** URL (port 6543, add `?pgbouncer=true`) into `DATABASE_URL`
    and the **Session pooler** URL (port 5432) into `DIRECT_URL`. (The "direct" host is IPv6-only; Render needs the pooler.)
@@ -149,18 +153,20 @@ Browser ──► Vercel (public/ static)  ──/api/* rewrite──►  Render
 3. **GitHub**: push this folder to a private repo.
 4. **Render** → New → Blueprint → the repo. It reads [render.yaml](render.yaml) (`plan: free`); fill the `sync: false` env vars.
    Use the **same `ENCRYPTION_KEY`** as your local `.env`. Migrations run in the build step.
-5. **Vercel** → New Project → the repo, root directory as-is. [vercel.json](vercel.json) serves `public/` and forwards `/api/*`
-   to Render — edit the `destination` if your Render URL differs from `digital-invoicing.onrender.com`.
+5. **Domain**: add it under Render → Settings → Custom Domains, and point it at Render with an **ALIAS** (root) and a
+   **CNAME** (www) to the Render hostname, as in [docs/HOSTING.md](docs/HOSTING.md) section 5. (Until 2026-11-09 a Vercel
+   project served `public/` and forwarded `/api/*` to Render through [vercel.json](vercel.json). That was slow from
+   Pakistan, so it is no longer used.)
 6. **Static IP for FBR** — Render's outbound IPs are shared and change. Free option: an Oracle Cloud Always Free VM proxy,
    see [docs/static-ip-proxy.md](docs/static-ip-proxy.md). Then super admin → **Check** "IP for FBR whitelisting" → put it in IRIS.
 
-### Free-plan limits to know
-- **Render free** sleeps after 15 idle minutes; the first request takes up to ~1 minute (the page shows a "server is starting"
-  bar and waits). 750 free hours/month is enough for one service running all month. To avoid morning cold starts, an external
-  pinger (e.g. cron-job.org, free) can hit `https://<render-url>/healthz` every 10 minutes during shop hours.
-- **Vercel Hobby** is for non-commercial use only. Fine while testing; once clients pay you, move to Vercel Pro or serve the
-  frontend from Render itself (the Express app already serves `public/`, so just use the Render URL).
-- **Supabase free** pauses a project after a week with no activity, has 500 MB storage and no automatic backups.
+### Plan limits to know
+- **Render Starter** ($7/month, since 2026-11-09) never sleeps. On the **free** plan a service sleeps after 15 idle minutes, and
+  the first request then takes up to about a minute (the page shows a "server is starting" screen and waits).
+- **Vercel** now only keeps the DNS records of the domain, so its Hobby plan's non-commercial rule no longer matters for
+  serving the site.
+- **Supabase free** has a 500 MB database (it becomes read-only above that) and no automatic backups. It pauses a project
+  after a week with no activity. The sizes and when to upgrade are in [docs/HOSTING.md](docs/HOSTING.md).
   FBR requires keeping invoice records for 6 years, so take your own regular backups (`pg_dump` with `DIRECT_URL`).
 
 Every change to `prisma/schema.prisma` needs a migration: `npm run db:migrate -- --name what_changed`, commit the new folder.

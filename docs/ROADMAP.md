@@ -136,7 +136,8 @@ My Tasks, bulk actions, dashboard, calendar, reports, downloads. See [COMPLIANCE
   Supabase first, without the seed, after a read-only fingerprint of every table and a rehearsal with the old and the new code on a copy;
   afterwards every existing table was identical except two activity-log entries and a client's modules, changed by the administrator
   while it ran. The category backfill was not needed (no Point of Sale lines existed). Pushed with the repository owner's GitHub account.
-- Vercel and a domain: later. Render serves everything for now.
+- ✅ 2026-11-09: Render upgraded to Starter, and etaxcloud.net now points straight at Render (Vercel only keeps the DNS
+  records). The domain expires 2027-10-21. See [HOSTING.md](HOSTING.md).
 - Backups: the scripts are ready but **not scheduled**. Turn them on before the first real client (docs/backups.md).
 - Remove the brother's GitHub account from this Mac when it's no longer needed (`gh auth logout -u mohisn-bhatti`).
 
