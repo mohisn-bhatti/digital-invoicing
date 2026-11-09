@@ -1,5 +1,7 @@
 # Render Blueprint (Dashboard → New → Blueprint → pick this repo). One service serves the website (/), the app (/app)
-# and the API. Free plan: sleeps after 15 min without traffic (~1 min wake-up), no Shell, 750 instance hours/month.
+# and the API. The live service ("digital-invoicing") was made by hand, not from this file, and is on Starter since
+# 2026-11-09 (it never sleeps). On the free plan a service sleeps after 15 min without traffic (~1 min wake-up).
+# The live setup is described in docs/HOSTING.md.
 services:
   - type: web
     name: raseed
@@ -34,7 +36,8 @@ services:
         value: "true"
       - key: PRA_PROXY_URL
         sync: false
-      # 1 = only Render in front. Use 2 if a Vercel domain later forwards to this service.
+      # 1 = only Render in front (the live setup since 2026-11-09: etaxcloud.net points straight at Render).
+      # Use 2 only if another proxy (e.g. a Vercel rewrite) ever forwards to this service again.
       - key: TRUST_PROXY_HOPS
         value: "1"
       - key: CONTACT_WHATSAPP # optional, shown on the website (e.g. 923001234567)
