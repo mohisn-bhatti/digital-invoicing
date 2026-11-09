@@ -46,11 +46,14 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
     }
 
     /* ---------- one message ---------- */
-    // Everything a message can say about the client and the obligation year (never the portal password or PIN)
+    // Everything a message can say about the client, the obligation year and the firm (never the portal password or PIN)
     async function contextFor(ctx, client, occ) {
         const fields = {};
         for (const f of await clients.fieldsOf(ctx.tenantId, client)) if (!f.missing) fields[f.name] = f.type === 'DATE' ? R.fmtDay(f.value) : f.value;
-        return { client, countryName: common.countryName(client.country), obligationName: occ ? occ.obligation.name : '', occurrence: occ || {}, fields };
+        const settings = await common.settings(ctx.tenantId), wa = phoneFor(client, fields);
+        return { client, countryName: common.countryName(client.country), whatsapp: wa ? '+' + wa : '', obligationName: occ ? occ.obligation.name : '', portalUrl: occ ? occ.obligation.portalUrl : '',
+            daysLeft: occ ? R.daysBetween(R.dayIn(client.timeZone, now()), R.ymdOf(occ.dueDate)) : null, occurrence: occ || {}, fields,
+            firm: { name: settings.firmName, phone: settings.firmPhone, email: settings.firmEmail } };
     }
     // The number WhatsApp gets: the client's "WhatsApp Number" field if it has one, else its contact number (SRS 8)
     function phoneFor(client, fields) {
@@ -75,6 +78,7 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
             if (b.clientId && b.clientId !== occ.clientId) throw bad('That obligation is not this client\'s.');
         }
         const client = occ ? occ.obligation.client : await common.findClient(ctx.tenantId, b.clientId, { live: true });
+        if (client.noWhatsApp) throw new CmpError(409, `${client.name} has no WhatsApp (ticked on the client's details). Untick it there to send WhatsApp messages.`);
         if (b.reminderId) {
             if (!occ) throw bad('A reminder message needs the obligation year it is for.');
             reminder = occ.obligation.reminders.find(r => r.id === b.reminderId);
@@ -172,9 +176,9 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
             include: { obligation: { include: { client: true, reminders: { include: { template: { select: { id: true, name: true, active: true } } } } } } } });
         const sent = await obligations.sentMap(rows.map(r => r.id));
         const items = rows.map(o => ({
-            ...obligations.present(o, { reminders: obligations.reminderList(o.obligation.reminders), tz: o.obligation.client.timeZone, settings, sent, at }),
+            ...obligations.present(o, { reminders: obligations.reminderList(o.obligation.reminders), tz: o.obligation.client.timeZone, settings, sent, at, amberDays: o.obligation.amberDays, noWhatsApp: o.obligation.client.noWhatsApp }),
             obligation: { id: o.obligation.id, name: o.obligation.name, portalUrl: o.obligation.portalUrl, yearsTotal: o.obligation.yearsTotal },
-            client: { id: o.obligation.client.id, code: o.obligation.client.code, name: o.obligation.client.name, country: o.obligation.client.country, timeZone: o.obligation.client.timeZone },
+            client: { id: o.obligation.client.id, code: o.obligation.client.code, name: o.obligation.client.name, country: o.obligation.client.country, timeZone: o.obligation.client.timeZone, noWhatsApp: o.obligation.client.noWhatsApp },
         })).filter(x => x.view.inWindow || x.view.overdue);
         const summary = {
             overdue: items.filter(x => x.view.overdue).length,
@@ -197,7 +201,7 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         const [overdue, confirm, rows] = await Promise.all([
             prisma.cmpOccurrence.count({ where: { tenantId: ctx.tenantId, stage: { not: 'COMPLETED' }, dueAt: { lte: at }, obligation: live } }),
             prisma.cmpOccurrence.count({ where: { tenantId: ctx.tenantId, datesConfirmed: false, stage: { not: 'COMPLETED' }, obligation: live } }),
-            prisma.cmpOccurrence.findMany({ where: { tenantId: ctx.tenantId, stage: { not: 'COMPLETED' }, obligation: { ...live, reminders: { some: {} } }, dueAt: { gte: new Date(+at - 367 * R.DAY), lte: new Date(+at + 367 * R.DAY) } },
+            prisma.cmpOccurrence.findMany({ where: { tenantId: ctx.tenantId, stage: { not: 'COMPLETED' }, obligation: { ...live, client: { archivedAt: null, noWhatsApp: false }, reminders: { some: {} } }, dueAt: { gte: new Date(+at - 367 * R.DAY), lte: new Date(+at + 367 * R.DAY) } },
                 select: { id: true, periodEnd: true, dueDate: true, stage: true, obligation: { select: { client: { select: { timeZone: true } }, reminders: { select: { id: true, offsetDays: true } } } } } }),
         ]);
         const sent = await obligations.sentMap(rows.map(r => r.id));
@@ -206,7 +210,32 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         return { overdue, ready, confirm };
     }
 
-    return { listTemplates, createTemplate, updateTemplate, deleteTemplate, prepare, send, voidMessage, listMessages, notifications, alerts };
+    // The templates page (the CA): pick a client and see every placeholder with that client's real value, in groups, to write a
+    // template with. The obligation is the one asked for, else the client's next open one; the invoice and receipt its latest ones.
+    async function templateContext(ctx, q = {}) {
+        const client = await common.findClient(ctx.tenantId, q.clientId);
+        let occ = null;
+        if (q.occurrenceId) { occ = await common.findOccurrence(ctx.tenantId, q.occurrenceId); if (occ.clientId !== client.id) throw bad('That obligation is not this client\'s.'); }
+        else occ = await prisma.cmpOccurrence.findFirst({ where: { clientId: client.id, stage: { not: 'COMPLETED' }, obligation: { archivedAt: null } }, orderBy: { dueDate: 'asc' }, include: { obligation: true } })
+            || await prisma.cmpOccurrence.findFirst({ where: { clientId: client.id }, orderBy: { dueDate: 'desc' }, include: { obligation: true } });
+        const c = await contextFor(ctx, client, occ);
+        const inv = ctx.perms.has('INVOICE') ? await prisma.cmpInvoice.findFirst({ where: { clientId: client.id, status: { notIn: ['DRAFT', 'CANCELLED'] } }, orderBy: { issuedAt: 'desc' }, select: { id: true } }) : null;
+        const rc = ctx.perms.has('INVOICE') ? await prisma.cmpReceipt.findFirst({ where: { clientId: client.id, voidedAt: null }, orderBy: { createdAt: 'desc' }, select: { id: true } }) : null;
+        if (inv) Object.assign(c, (await invoices.messageContext(ctx, { invoiceId: inv.id })).ctx);
+        if (rc) c.receipt = (await invoices.messageContext(ctx, { receiptId: rc.id })).ctx.receipt;
+        const fieldNames = (await clients.fieldsOf(ctx.tenantId, client)).map(f => f.name);
+        const value = name => { const r = R.render(`[${name}]`, c); return r.missing.length ? '' : r.text; };
+        const groups = R.PLACEHOLDER_GROUPS.map(([title, names]) => ({ title, items: names.map(name => ({ name, value: value(name) })) }));
+        groups.splice(1, 0, { title: 'Additional information', items: fieldNames.map(name => ({ name, value: value(name) })) });
+        const obligationsList = await prisma.cmpOccurrence.findMany({ where: { clientId: client.id, obligation: { archivedAt: null } }, orderBy: { dueDate: 'desc' }, take: 50, include: { obligation: { select: { name: true } } } });
+        // (the context goes to the browser: the client's plain details only, never its stored password or PIN, even encrypted)
+        const safe = { ...c, client: Object.fromEntries(['name', 'code', 'registrationNo', 'email', 'contactNumber', 'address', 'reference', 'country'].map(k => [k, client[k]])),
+            occurrence: occ ? { periodStart: R.ymdOf(occ.periodStart), periodEnd: R.ymdOf(occ.periodEnd), dueDate: R.ymdOf(occ.dueDate) } : {} };
+        return { client: { id: client.id, code: client.code, name: client.name, country: client.country }, occurrenceId: occ ? occ.id : null, ctx: safe, groups,
+            periods: obligationsList.map(o => ({ id: o.id, name: o.obligation.name, period: R.periodName(o), dueDate: R.ymdOf(o.dueDate) })) };
+    }
+
+    return { listTemplates, createTemplate, updateTemplate, deleteTemplate, prepare, send, voidMessage, listMessages, notifications, alerts, templateContext };
 }
 
 module.exports = { createComms };

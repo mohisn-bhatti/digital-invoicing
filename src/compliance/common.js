@@ -10,7 +10,8 @@ const bad = msg => new CmpError(400, msg);
 const notFound = what => new CmpError(404, `${what} not found.`);
 
 const DEFAULT_SETTINGS = { timeZone: 'Asia/Karachi', reminderHour: 9, amberDays: 7, autoNextYear: true,
-    firmName: '', firmAddress: '', firmPhone: '', firmEmail: '', firmTaxNo: '', bankDetails: '', invoiceFooter: '', invoiceFormat: 'INV-{YYYY}-{NNNN}', receiptFormat: 'RCT-{YYYY}-{NNNN}', waSenders: [] };
+    firmName: '', firmAddress: '', firmPhone: '', firmEmail: '', firmTaxNo: '', bankDetails: '', invoiceFooter: '', invoiceFormat: 'INV-{YYYY}-{NNNN}', receiptFormat: 'RCT-{YYYY}-{NNNN}', waSenders: [],
+    logo: '', invoiceHeader: '' };
 
 function createCommon({ prisma }) {
     async function settings(tenantId, db = prisma) {

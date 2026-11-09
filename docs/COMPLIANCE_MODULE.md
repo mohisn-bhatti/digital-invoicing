@@ -36,8 +36,18 @@ answers of 8 November 2026. Requirement-by-requirement check: [COMPLIANCE_SRS_CH
 
 ## 3. Obligations, periods and dates
 
-- An obligation (VAT return, corporate tax, licence…) has a name, a portal link, **how often it comes back** (every year, quarter
-  or month; the CA asked about monthly returns) and **for how many years** (1, 2, 3… or no end).
+- An obligation (VAT return, corporate tax, licence…) has a name, a portal link, **how often it comes back** and **how many years**
+  (a number, or unlimited). The CA (9 Nov 2026): no "comes back" list; the three dates say it (`R.detectFrequency`): a period of
+  exactly one month comes back every month, three months every quarter, six months every six months, anything else every year. The
+  screen can still ask for "once a year" for a shorter period (one of four separate quarterly returns). Fixed once added.
+- **Amber days** and **"prepare the next period by itself"** are set on each obligation (`CmpObligation.amberDays`, `autoNext`), not
+  firm-wide; migration `0051` copied each firm's old settings onto its obligations.
+- **Planned periods**: the periods still to come are not stored; `R.projectPeriods` proposes them, and `GET /api/cmp/occurrences`
+  adds them as `projected` rows (status `PLANNED`) when asked (`projected=1`) for a stretch of dates. The calendar, My Obligations,
+  the client's page and the obligations report show them, up to the number of years (unlimited: as far as anyone looks).
+- **Deleting** an obligation (`POST /api/cmp/obligations/:id/delete`, the archive permission) removes it with its periods and
+  reminders; its messages and invoices stay, unlinked. Once a message was sent or an invoice issued for it, a note is required and
+  kept in the activity log.
 - Each repetition is a **period** with its own dates: period start, end and due date. Dates are always typed or confirmed by a
   person: the next period is proposed as a copy one period on (`public/cmp-rules.js periodDates`) and marked "dates to confirm".
   Month ends stay month ends (31 Jan → 28 Feb → 31 Mar); a due date is never moved later.
@@ -50,7 +60,11 @@ answers of 8 November 2026. Requirement-by-requirement check: [COMPLIANCE_SRS_CH
 - Steps a person sets: Open, Data collected, Filed, Paid, then Completed. **Upcoming**, **Period closed** and **Overdue** follow from
   the dates. Overdue = not completed by the end of the due date **in the client's time zone**; it stays overdue until completed
   (CA's answer). Completing offers **Generate invoice** (opens a draft for the period) or **Close without invoice** (free work).
-- Suggestions: adding an obligation offers the names, dates and reminders already used for other clients **of the same country**.
+- Suggestions: typing an obligation's name offers the dates and reminders already used for other clients **of the same country**
+  under that name (the CA: suggested by country and obligation description).
+- **My Obligations** (the main sheet, the CA): one row per period of the dates chosen (the calendar year by default), sorted by due
+  date, then client, then obligation; the reminder, the step, close, the invoice and its receipt are done on the row. Filters include
+  one or several clients (`clientId=a,b`).
 
 ## 4. Reminders, notifications and WhatsApp
 
@@ -130,9 +144,17 @@ answers of 8 November 2026. Requirement-by-requirement check: [COMPLIANCE_SRS_CH
 templates, WhatsApp links), `test/cmpData.test.js` (countries, permissions), `test/cmpRouteGuards.test.js` (every route's permission),
 `test/cmpApi.test.js` and `test/cmpBilling.test.js` (the real server: permissions, isolation between firms, secrets, reminders,
 recurrence, monthly periods, archive, activity log, the administrator's screen, read-only, the background job, invoices, taxes,
-receipts, numbering under concurrency, assignment, bulk, dashboard, calendar, reports, downloads, WhatsApp numbers).
+receipts, numbering under concurrency, assignment, bulk, dashboard, calendar, reports, downloads, WhatsApp numbers),
+`test/cmpFeedback.test.js` (the CA's feedback: the cycle from the dates, years, amber and "by itself" per obligation, planned periods,
+sorting and client filters, no WhatsApp, the templates page's client values, deleting with a note, items with prices, undo "sent",
+cancelling with receipts, logo and header, the reports by dates).
 
-## 9. Not built / later
+## 9. The CA's feedback of 9 November 2026
+
+Twenty items from the CA's "Deadline Tracker" sheet; what was done for each, and the open questions, are in
+[COMPLIANCE_CA_FEEDBACK.md](COMPLIANCE_CA_FEEDBACK.md). Tests: `test/cmpFeedback.test.js`.
+
+## 10. Not built / later
 
 - Automatic WhatsApp sending (WhatsApp Business Platform): needs Meta set-up; links are used now.
 - Exchange rates between currencies in reports (aging is per currency).

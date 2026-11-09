@@ -6,7 +6,7 @@
 
 const CMP = {
   me: null, perms: new Set(), settings: null, templates: null, alerts: null, alertTimer: null, idleTimer: null, lastActive: Date.now(), watching: false,
-  clientId: null, notify: { show: 'all', country: '', q: '' }, searchTimer: null,
+  clientId: null, notify: { show: 'all', country: '', q: '' }, searchTimer: null, ranges: {},
 };
 // Pages the other compliance scripts add: each pushes { id, html(), enter() }
 const CMP_PAGES = [];
@@ -14,9 +14,10 @@ const CMP_PAGES = [];
 const CMP_RESETS = [];
 function cmpReset() {
   clearInterval(CMP.alertTimer); clearInterval(CMP.idleTimer);
-  Object.assign(CMP, { me: null, perms: new Set(), settings: null, templates: null, alerts: null, clientId: null, notify: { show: 'all', country: '', q: '' } });
+  Object.assign(CMP, { me: null, perms: new Set(), settings: null, templates: null, alerts: null, clientId: null, notify: { show: 'all', country: '', q: '' }, ranges: {} });
   cmpCloseModal();
   const pop = document.getElementById('cmpPopup'); if (pop) pop.remove();
+  document.getElementById('cmpBell')?.remove();
   CMP_RESETS.forEach(f => f());
 }
 
@@ -46,6 +47,51 @@ const cmpBtn = (label, onclick, kind = 'plain', extra = '') => {
 };
 const CMP_WA_ICON = '<svg viewBox="0 0 24 24" class="w-4 h-4 inline -mt-0.5" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 00-8.6 15.1L2 22l5-1.3A10 10 0 1012 2zm0 18.2a8.2 8.2 0 01-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1112 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 01-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 00-.7.3 3 3 0 00-.9 2.2 5.2 5.2 0 001.1 2.7 11.8 11.8 0 004.5 4c1.7.7 2.3.8 3.2.6a2.7 2.7 0 001.8-1.2 2.2 2.2 0 00.1-1.2c0-.1-.2-.2-.4-.3z"/></svg>';
 const cmpEmpty = text => `<div class="text-sm text-slate-500 py-6 text-center">${text}</div>`;
+
+/* ---------- which dates a list shows (the CA: the calendar year by default, 1 January to 31 December; other years, several years
+   side by side, any dates, or the whole history). Each list keeps its own choice under a name. ---------- */
+const cmpThisYear = () => Number(CmpRules.dayIn(cmpTz()).slice(0, 4));
+const cmpRangeNew = () => ({ mode: 'year', y1: cmpThisYear(), y2: cmpThisYear(), from: '', to: '' });
+const cmpRange = name => (CMP.ranges[name] || (CMP.ranges[name] = { r: cmpRangeNew(), go: null })).r;
+function cmpRangeDates(name) {
+  const r = cmpRange(name);
+  if (r.mode === 'all') return { from: '', to: '' };
+  if (r.mode === 'dates') return { from: r.from, to: r.to };
+  return { from: `${Math.min(r.y1, r.y2)}-01-01`, to: `${Math.max(r.y1, r.y2)}-12-31` };
+}
+function cmpRangeText(name) {
+  const r = cmpRange(name);
+  if (r.mode === 'all') return 'all history';
+  if (r.mode === 'dates') return `${CmpRules.fmtDay(r.from) || '…'} – ${CmpRules.fmtDay(r.to) || '…'}`;
+  return r.y1 === r.y2 ? `1 Jan – 31 Dec ${r.y1}` : `${Math.min(r.y1, r.y2)} – ${Math.max(r.y1, r.y2)}`;
+}
+function cmpRangeBar(name, onChange) {
+  cmpRange(name); CMP.ranges[name].go = onChange;
+  return `<div id="cmR_${name}" class="contents">${cmpRangeInner(name)}</div>`;
+}
+function cmpRangeInner(name) {
+  const r = cmpRange(name), y = cmpThisYear();
+  const pick = r.mode !== 'year' ? r.mode : r.y1 !== r.y2 ? 'years' : r.y1 === y ? 'this' : r.y1 === y - 1 ? 'last' : r.y1 === y + 1 ? 'next' : 'years';
+  const opt = (v, t) => `<option value="${v}" ${pick === v ? 'selected' : ''}>${t}</option>`;
+  return `<label><span>Show</span><select onchange="cmpRangePick('${name}', this.value)">${opt('this', `This year (${y})`)}${opt('last', `Last year (${y - 1})`)}${opt('next', `Next year (${y + 1})`)}${opt('years', 'Choose years…')}${opt('dates', 'Choose dates…')}${opt('all', 'All history')}</select></label>
+    ${pick === 'years' ? `<label class="w-24"><span>From year</span><input type="number" min="1990" max="2200" value="${r.y1}" onchange="cmpRangeSet('${name}', 'y1', this.value)"></label><label class="w-24"><span>To year</span><input type="number" min="1990" max="2200" value="${r.y2}" onchange="cmpRangeSet('${name}', 'y2', this.value)"></label>` : ''}
+    ${pick === 'dates' ? `<label><span>From</span><input type="date" value="${r.from}" onchange="cmpRangeSet('${name}', 'from', this.value)"></label><label><span>To</span><input type="date" value="${r.to}" onchange="cmpRangeSet('${name}', 'to', this.value)"></label>` : ''}`;
+}
+function cmpRangeRedraw(name) { const box = document.getElementById('cmR_' + name); if (box) box.innerHTML = cmpRangeInner(name); const st = CMP.ranges[name]; if (st.go) st.go(); }
+function cmpRangePick(name, v) {
+  const st = CMP.ranges[name], y = cmpThisYear(), k = { this: 0, last: -1, next: 1 }[v];
+  if (k !== undefined) st.r = { ...st.r, mode: 'year', y1: y + k, y2: y + k };
+  else if (v === 'years') st.r = { ...st.r, mode: 'year', y1: y - 1, y2: y }; // two years side by side, to compare
+  else if (v === 'dates') st.r = { ...st.r, mode: 'dates', from: st.r.from || `${y}-01-01`, to: st.r.to || `${y}-12-31` };
+  else st.r = { ...st.r, mode: 'all' };
+  cmpRangeRedraw(name);
+}
+function cmpRangeSet(name, key, v) {
+  const st = CMP.ranges[name];
+  if (key === 'y1' || key === 'y2') { const n = Number(v); if (!Number.isInteger(n) || n < 1990 || n > 2200) return toast('Type a year, e.g. 2026.'); st.r[key] = n; }
+  else st.r[key] = v;
+  cmpRangeRedraw(name);
+}
 // Files from the server need the login: fetched with it, then saved
 async function cmpDownload(url, filename) {
   try {
@@ -98,6 +144,7 @@ async function initCmp() {
   cmpEnsureModal();
   Object.assign(PAGE_ENTER, { 'cm-notify': cmpEnterNotify }, Object.fromEntries(CMP_PAGES.map(x => [x.id, x.enter])));
   clearInterval(CMP.alertTimer); CMP.alertTimer = setInterval(cmpPollAlerts, 5 * 60000);
+  cmpBell();
   cmpWatchIdle();
   if (!CMP.watching) { CMP.watching = true; document.addEventListener('visibilitychange', () => { if (!document.hidden) cmpPollAlerts(); }); }
   cmpPollAlerts();
@@ -119,12 +166,23 @@ async function cmpPollAlerts() {
   if (document.hidden || !cmpCan('VIEW')) return;
   try { CMP.alerts = await api('/api/cmp/alerts'); cmpBadge(); cmpPopup(); } catch { /* the pages report problems themselves */ }
 }
+// The bell at the top right of the window (the CA: notifications there, not in the menu), with the number that needs attention
+function cmpBell() {
+  if (!cmpCan('REPORTS', 'WHATSAPP')) { document.getElementById('cmpBell')?.remove(); return; }
+  if (document.getElementById('cmpBell')) return;
+  const bar = document.querySelector('#topbar > div'); if (!bar) return;
+  bar.insertAdjacentHTML('beforeend', `<button type="button" id="cmpBell" onclick="go('cm-notify')" class="relative p-2 rounded-full hover:bg-slate-100 shrink-0" aria-label="Notifications" title="Notifications">
+    <svg viewBox="0 0 24 24" class="w-6 h-6 text-slate-700" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON.bell}"/></svg>
+    <span id="cmpBellN" class="hidden absolute -top-0.5 -right-0.5 min-w-[1.25rem] h-5 px-1 rounded-full text-[11px] font-semibold text-white items-center justify-center"></span></button>`);
+}
 function cmpBadge() {
-  const a = CMP.alerts, link = document.querySelector('#nav [data-nav="cm-notify"]');
-  if (!a || !link) return;
-  link.querySelector('.cmp-badge')?.remove();
-  const n = a.overdue + a.ready;
-  if (n) link.insertAdjacentHTML('beforeend', `<span class="cmp-badge ml-auto text-[11px] font-semibold px-1.5 rounded-full ${a.overdue ? 'bg-red-600' : 'bg-amber-500'} text-white">${n}</span>`);
+  const a = CMP.alerts, n = document.getElementById('cmpBellN');
+  if (!a || !n) return;
+  const k = a.overdue + a.ready;
+  n.textContent = k > 99 ? '99+' : String(k);
+  n.classList.toggle('hidden', !k); n.classList.toggle('flex', Boolean(k));
+  n.classList.toggle('bg-red-600', Boolean(a.overdue)); n.classList.toggle('bg-amber-500', !a.overdue);
+  document.getElementById('cmpBell').title = k ? `${a.overdue} overdue · ${a.ready} reminder${a.ready === 1 ? '' : 's'} to send` : 'Notifications';
 }
 // Once per session for the same numbers: "N reminders are ready to send, M obligations are overdue"
 function cmpPopup() {
@@ -235,8 +293,8 @@ async function cmpClientMessage(clientId, occurrenceId, kind = 'DATA_COLLECTION'
 
 /* ---------- reminders, as pills (SRS 6: highlighted, bleak, missed, sent) ---------- */
 function cmpReminderPill(r, item, refresh) {
-  const tz = item.client.timeZone, when = cmpClientAt(r.fireAt, tz), label = esc(CmpRules.offsetLabel(r.offsetDays));
-  const send = (txt, kind = 'wa') => (cmpCan('WHATSAPP') ? `<button type="button" class="needs-write ml-2 px-2 py-1 rounded-md text-xs font-semibold ${kind === 'wa' ? 'bg-[#25D366] text-white' : 'border border-emerald-600 text-emerald-800'}"
+  const tz = item.client.timeZone, when = cmpClientAt(r.fireAt, tz), label = esc(CmpRules.offsetLabel(r.offsetDays)), noWa = item.client.noWhatsApp;
+  const send = (txt, kind = 'wa') => (noWa ? (kind === 'wa' ? '<span class="ml-2 text-slate-500">· no WhatsApp: remind by phone or email</span>' : '') : cmpCan('WHATSAPP') ? `<button type="button" class="needs-write ml-2 px-2 py-1 rounded-md text-xs font-semibold ${kind === 'wa' ? 'bg-[#25D366] text-white' : 'border border-emerald-600 text-emerald-800'}"
     onclick="cmpWhatsApp({ kind: 'REMINDER', occurrenceId: '${item.id}', reminderId: '${r.id}' }, ${refresh})">${txt}</button>` : '');
   const tpl = `<span class="text-slate-500"> · ${esc(r.templateName || 'no template')}</span>`;
   if (r.state === 'HIGHLIGHTED') return `<div class="flex flex-wrap items-center gap-1 rounded-lg bg-amber-100 border border-amber-300 text-amber-900 px-2.5 py-1.5 text-xs"><b>Send now</b> · ${label}${tpl}<span class="text-amber-800"> · since ${when}</span>${send(`${CMP_WA_ICON} WhatsApp`)}</div>`;
@@ -298,7 +356,7 @@ function cmpNotifyCard(x) {
     <div class="mt-2 flex flex-col gap-1.5">${v.reminders.length ? v.reminders.map(r => cmpReminderPill(r, x, refresh)).join('') : '<div class="text-xs text-slate-500">No reminders set for this obligation.</div>'}</div>
     <div class="mt-2 flex flex-wrap gap-2">
       ${cmpBtn('Open', `cmpOpenPeriod('${x.obligation.id}', '${x.id}', ${refresh})`)}
-      ${cmpCan('WHATSAPP') ? cmpBtn(`${CMP_WA_ICON} Other message`, `cmpClientMessage('${x.client.id}', '${x.id}')`, 'plain', 'needs-write') : ''}
+      ${cmpCan('WHATSAPP') && !x.client.noWhatsApp ? cmpBtn(`${CMP_WA_ICON} Other message`, `cmpClientMessage('${x.client.id}', '${x.id}')`, 'plain', 'needs-write') : ''}
       ${x.obligation.portalUrl ? `<a href="${esc(x.obligation.portalUrl)}" target="_blank" rel="noopener noreferrer" class="px-3 min-h-[2.5rem] inline-flex items-center rounded-lg text-sm border bg-white hover:border-emerald-600">Portal ↗</a>` : ''}
     </div></div>`;
 }

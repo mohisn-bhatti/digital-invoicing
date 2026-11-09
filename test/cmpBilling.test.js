@@ -7,7 +7,7 @@ const { createApi } = require('../test-helpers/apiServer');
 const R = require('../public/cmp-rules');
 
 const A = createApi('cmpbill');
-A.models = ['cmpMessage', 'cmpReceipt', 'cmpInvoice', 'cmpTaxRate', 'cmpReminder', 'cmpOccurrence', 'cmpObligation', 'cmpFieldValue', 'cmpFieldDef', 'cmpTemplate', 'cmpClient', 'cmpSettings'];
+A.models = ['cmpMessage', 'cmpReceipt', 'cmpInvoice', 'cmpTaxRate', 'cmpItem', 'cmpReminder', 'cmpOccurrence', 'cmpObligation', 'cmpFieldValue', 'cmpFieldDef', 'cmpTemplate', 'cmpClient', 'cmpSettings'];
 const run = A.run;
 const W = {};
 const today = R.dayIn('Asia/Karachi');
@@ -28,7 +28,7 @@ test('billing API: start a server, a firm with the module and its users', { time
     W.ae2 = await mk('AE', 'Dubai Two LLC', '+971501110002');
     W.pk = await mk('PK', 'Karachi Traders', '03001110003');
     W.kw = await mk('KW', 'Kuwait Co', '+96550001111');
-    const ob = async (client, name, dueDate) => (await A.call(`/api/cmp/clients/${client.id}/obligations`, { token: A.owner.token, method: 'POST', body: { name, periodStart: day(-100), periodEnd: day(-10), dueDate } })).json;
+    const ob = async (client, name, dueDate) => (await A.call(`/api/cmp/clients/${client.id}/obligations`, { token: A.owner.token, method: 'POST', body: { name, frequency: 'YEARLY', periodStart: day(-100), periodEnd: day(-10), dueDate } })).json;
     W.ob1 = await ob(W.ae1, 'VAT Return', day(20));
     W.ob2 = await ob(W.ae2, 'VAT Return', day(25));
     W.obPk = await ob(W.pk, 'Income Tax', day(-3));

@@ -1,19 +1,51 @@
 'use strict';
 /* Compliance & Deadlines setup: message templates (SRS 7), custom fields (SRS 3.3) and the module's settings. */
 
-const CMP_SET = { templates: [], fields: [], editTpl: null };
-CMP_RESETS.push(() => Object.assign(CMP_SET, { templates: [], fields: [], editTpl: null }));
+const CMP_SET = { templates: [], fields: [], editTpl: null, clients: null, tc: null, tcClient: '', tcOcc: '', logo: '' };
+CMP_RESETS.push(() => Object.assign(CMP_SET, { templates: [], fields: [], editTpl: null, clients: null, tc: null, tcClient: '', tcOcc: '', logo: '' }));
 
 /* ---------- message templates ---------- */
 CMP_PAGES.push({
   id: 'cm-templates',
   html: () => `<div class="grid lg:grid-cols-5 gap-4 items-start">
-    <section class="min-w-0 lg:col-span-2 bg-white rounded-xl shadow p-4"><div class="flex items-center justify-between mb-3"><h2 class="font-semibold">Templates</h2>
-      <label class="flex items-center gap-2 text-xs"><input type="checkbox" id="cmTplAll" onchange="cmpLoadTemplates()"> Show retired</label></div>
-      <div id="cmTplList" class="space-y-2"></div></section>
-    <section class="min-w-0 lg:col-span-3 bg-white rounded-xl shadow p-4" id="cmTplEdit"></section></div>`,
-  enter: () => cmpLoadTemplates(),
+    <div class="min-w-0 lg:col-span-2 space-y-4">
+      <section class="bg-white rounded-xl shadow p-4"><div class="flex items-center justify-between mb-3"><h2 class="font-semibold">Templates</h2>
+        <label class="flex items-center gap-2 text-xs"><input type="checkbox" id="cmTplAll" onchange="cmpLoadTemplates()"> Show retired</label></div>
+        <div id="cmTplList" class="space-y-2"></div></section>
+      <section class="bg-white rounded-xl shadow p-4"><h2 class="font-semibold mb-1">A client's details</h2>
+        <p class="text-xs text-slate-500 mb-2">Choose a client: every placeholder shows with that client's real value, and the preview uses them. Click a line to put its placeholder in the message.</p>
+        <div class="grid grid-cols-2 gap-2"><label><span>Client</span><select id="cmTcClient" onchange="CMP_SET.tcClient = this.value; CMP_SET.tcOcc = ''; cmpTplCtxLoad()"></select></label>
+          <label><span>Obligation period</span><select id="cmTcOcc" onchange="CMP_SET.tcOcc = this.value; cmpTplCtxLoad()"></select></label></div>
+        <div id="cmTcGroups" class="mt-3"></div></section>
+    </div>
+    <section class="min-w-0 lg:col-span-3 bg-white rounded-xl shadow p-4 lg:sticky lg:top-20" id="cmTplEdit"></section></div>`,
+  enter: () => { cmpLoadTemplates(); cmpTplCtxInit(); },
 });
+// The placeholders in groups (the CA: the client's details together, the obligation's together...), with the client's own fields
+const cmpPlaceholderGroups = () => { const g = CmpRules.PLACEHOLDER_GROUPS.map(([t, n]) => [t, n]); g.splice(1, 0, ['Additional information', CMP_SET.fields.filter(f => f.active).map(f => f.name)]); return g; };
+async function cmpTplCtxInit() {
+  if (!CMP_SET.clients) { try { CMP_SET.clients = (await api('/api/cmp/clients')).clients; } catch { CMP_SET.clients = []; } }
+  $('#cmTcClient').innerHTML = '<option value="">— a sample client —</option>' + CMP_SET.clients.map(c => `<option value="${c.id}">${cmpCountry(c.country).flag} ${esc(c.name)} (${esc(c.code)})</option>`).join('');
+  $('#cmTcClient').value = CMP_SET.tcClient;
+  cmpTplCtxLoad();
+}
+async function cmpTplCtxLoad() {
+  const can = cmpCan('SETUP');
+  if (!CMP_SET.tcClient) {
+    CMP_SET.tc = null; $('#cmTcOcc').innerHTML = '<option value="">—</option>'; $('#cmTcOcc').disabled = true;
+    $('#cmTcGroups').innerHTML = `<div class="text-sm text-slate-500">${cmpPlaceholderGroups().filter(([, n]) => n.length).map(([t, names]) => `<div class="mt-2"><div class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">${esc(t)}</div>
+      <div class="flex flex-wrap gap-1 mt-1">${names.map(n => `<span class="text-xs px-2 py-0.5 rounded border bg-slate-50">[${esc(n)}]</span>`).join('')}</div></div>`).join('')}</div>`;
+    return cmpTemplatePreview();
+  }
+  try { CMP_SET.tc = await api('/api/cmp/templates/context?' + cmpQs({ clientId: CMP_SET.tcClient, occurrenceId: CMP_SET.tcOcc })); } catch (err) { return toast(err.message); }
+  const t = CMP_SET.tc;
+  $('#cmTcOcc').disabled = !t.periods.length;
+  $('#cmTcOcc').innerHTML = t.periods.length ? t.periods.map(p => `<option value="${p.id}" ${p.id === t.occurrenceId ? 'selected' : ''}>${esc(p.name)} · ${esc(p.period)}</option>`).join('') : '<option value="">No obligations yet</option>';
+  $('#cmTcGroups').innerHTML = t.groups.filter(g => g.items.length).map(g => `<div class="mt-2"><div class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">${esc(g.title)}</div>
+    ${g.items.map(i => `<${can ? `button type="button" data-ph="${esc(i.name)}" onclick="cmpTemplateInsert('[' + this.dataset.ph + ']')"` : 'div'} class="w-full flex gap-3 justify-between text-left text-sm py-1 border-b last:border-0 ${can ? 'hover:bg-emerald-50' : ''}">
+      <span class="text-slate-500 shrink-0">[${esc(i.name)}]</span><span class="min-w-0 truncate text-right">${i.value ? esc(i.value) : '<span class="text-slate-300">—</span>'}</span></${can ? 'button' : 'div'}>`).join('')}</div>`).join('');
+  cmpTemplatePreview();
+}
 async function cmpLoadTemplates() {
   try {
     CMP_SET.templates = await api('/api/cmp/templates' + ($('#cmTplAll').checked ? '?all=1' : ''));
@@ -32,7 +64,7 @@ function cmpTemplateEdit(id, quiet) {
   CMP_SET.editTpl = t ? t.id : null;
   if (!quiet) document.querySelectorAll('#cmTplList button').forEach(b => b.classList.remove('ring-2', 'ring-emerald-300'));
   if (!t && !can) { $('#cmTplEdit').innerHTML = cmpEmpty('Choose a template to read it.'); return; }
-  const names = [...CmpRules.PLACEHOLDERS, ...CMP_SET.fields.filter(f => f.active).map(f => f.name)];
+  const chip = n => `<button type="button" class="text-xs px-2 py-1 rounded border bg-slate-50 hover:border-emerald-600" onclick="cmpTemplateInsert(this.textContent)">[${esc(n)}]</button>`;
   $('#cmTplEdit').innerHTML = `<h2 class="font-semibold mb-3">${t ? esc(t.name) : 'New template'}</h2>
     <form id="cmTplForm" onsubmit="event.preventDefault(); cmpTemplateSave()" class="space-y-3">
       <div class="grid sm:grid-cols-2 gap-3">
@@ -40,9 +72,9 @@ function cmpTemplateEdit(id, quiet) {
         <label><span>Used for</span><select name="purpose" ${can ? '' : 'disabled'}>${Object.entries(CmpRules.TEMPLATE_PURPOSES).map(([k, v]) => `<option value="${k}" ${(t ? t.purpose : 'REMINDER') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       </div>
       <label><span>Message</span><textarea id="cmTplBody" name="body" rows="8" maxlength="4000" required oninput="cmpTemplatePreview()" ${can ? '' : 'disabled'}>${t ? esc(t.body) : 'Dear [Client Name], your [Obligation] for the period [Period Start] to [Period End] is due on [Due Date]. Kindly share the required documents.'}</textarea></label>
-      ${can ? `<div><div class="text-xs text-slate-600 mb-1">Click to insert (each is replaced by the client's real details when the message is sent):</div>
-        <div class="flex flex-wrap gap-1">${names.map(n => `<button type="button" class="text-xs px-2 py-1 rounded border bg-slate-50 hover:border-emerald-600" onclick="cmpTemplateInsert(this.textContent)">[${esc(n)}]</button>`).join('')}</div></div>` : ''}
-      <div><div class="text-xs text-slate-600 mb-1">Preview with a sample client</div><div id="cmTplPreview" class="whitespace-pre-wrap text-sm bg-[#e7fbe9] border border-emerald-100 rounded-lg p-3"></div></div>
+      ${can ? `<div><div class="text-xs text-slate-600 mb-1">Click to insert (each is replaced by the real details when the message is sent):</div>
+        ${cmpPlaceholderGroups().filter(([, n]) => n.length).map(([title, names]) => `<div class="mb-1.5"><div class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">${esc(title)}</div><div class="flex flex-wrap gap-1 mt-0.5">${names.map(chip).join('')}</div></div>`).join('')}</div>` : ''}
+      <div><div id="cmTplPrevFor" class="text-xs text-slate-600 mb-1"></div><div id="cmTplPreview" class="whitespace-pre-wrap text-sm bg-[#e7fbe9] border border-emerald-100 rounded-lg p-3"></div></div>
       ${can ? `<div class="flex flex-wrap justify-between gap-2">
         <div class="flex gap-2">${t ? (t.active ? cmpBtn('Retire', `cmpTemplateActive('${t.id}', false)`, 'plain', 'needs-write') + cmpBtn('Delete', `cmpTemplateDelete('${t.id}')`, 'danger', 'needs-write') : cmpBtn('Use again', `cmpTemplateActive('${t.id}', true)`, 'plain', 'needs-write')) : ''}</div>
         <button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">${t ? 'Save template' : 'Add template'}</button></div>` : ''}
@@ -50,7 +82,8 @@ function cmpTemplateEdit(id, quiet) {
   cmpTemplatePreview();
 }
 function cmpTemplateInsert(text) {
-  const ta = $('#cmTplBody'), a = ta.selectionStart ?? ta.value.length, b = ta.selectionEnd ?? ta.value.length;
+  const ta = document.getElementById('cmTplBody'); if (!ta || ta.disabled) return;
+  const a = ta.selectionStart ?? ta.value.length, b = ta.selectionEnd ?? ta.value.length;
   ta.value = ta.value.slice(0, a) + text + ta.value.slice(b);
   ta.focus(); ta.selectionStart = ta.selectionEnd = a + text.length;
   cmpTemplatePreview();
@@ -58,11 +91,16 @@ function cmpTemplateInsert(text) {
 function cmpTemplatePreview() {
   const box = document.getElementById('cmTplPreview'); if (!box) return;
   const fields = Object.fromEntries(CMP_SET.fields.filter(f => f.active).map(f => [f.name, f.type === 'DATE' ? '31 Dec 2027' : f.type === 'NUMBER' ? '12345' : `(${f.name})`]));
-  const r = CmpRules.render($('#cmTplBody').value, {
-    client: { name: 'Al Noor Trading LLC', registrationNo: '100123456700003', email: 'accounts@alnoor.ae', contactNumber: '+971501234567', address: 'Office 12, Deira, Dubai', reference: 'Mr Khan' },
-    countryName: 'United Arab Emirates', obligationName: 'VAT Return', occurrence: { periodStart: '2027-01-01', periodEnd: '2027-03-31', dueDate: '2027-04-28' },
-    fields, invoice: { number: 'INV-2027-0001', amountText: 'AED 1,500.00' }, receipt: { number: 'RCT-2027-0001' },
-  });
+  const s = CMP.settings || {}, real = CMP_SET.tc;
+  const ctx = real ? real.ctx : {
+    client: { name: 'Al Noor Trading LLC', code: 'CL0001', registrationNo: '100123456700003', email: 'accounts@alnoor.ae', contactNumber: '+971501234567', address: 'Office 12, Deira, Dubai', reference: 'Mr Khan' },
+    countryName: 'United Arab Emirates', obligationName: 'VAT Return', portalUrl: 'https://eservices.tax.gov.ae', daysLeft: 12, occurrence: { periodStart: '2027-01-01', periodEnd: '2027-03-31', dueDate: '2027-04-28' },
+    fields, invoice: { number: 'INV-2027-0001', amountText: 'AED 1,500.00', date: '2027-04-30', dueDate: '2027-05-15', outstandingText: 'AED 1,500.00' }, receipt: { number: 'RCT-2027-0001', date: '2027-05-10', amountText: 'AED 1,500.00' },
+    firm: { name: s.firmName || 'Your firm', phone: s.firmPhone || '+92 300 0000000', email: s.firmEmail || 'office@yourfirm.com' },
+  };
+  const who = document.getElementById('cmTplPrevFor');
+  if (who) who.textContent = real ? `Preview for ${real.client.name} (${real.client.code})` : 'Preview with a sample client (choose a real one on the left)';
+  const r = CmpRules.render($('#cmTplBody').value, ctx);
   box.innerHTML = esc(r.text) + (r.missing.length ? `<div class="mt-2 text-xs text-amber-800">Not known (left as typed): ${r.missing.map(x => `[${esc(x)}]`).join(' ')}</div>` : '');
 }
 async function cmpTemplateSave() {
@@ -151,8 +189,7 @@ CMP_PAGES.push({
       <form id="cmSetForm" onsubmit="event.preventDefault(); cmpSettingsSave()" class="space-y-4">
         <label><span>Your firm's time zone <span class="text-slate-400">— the times in the logs and lists</span></span><select name="timeZone" ${can ? '' : 'disabled'}>${zones.map(z => `<option value="${esc(z)}" ${z === s.timeZone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>
         <label><span>Reminders come due at <span class="text-slate-400">— on each client's own clock</span></span><select name="reminderHour" ${can ? '' : 'disabled'}>${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === s.reminderHour ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select></label>
-        <label><span>Turn amber this many days before the due date</span><input name="amberDays" type="number" min="0" max="90" value="${s.amberDays}" ${can ? '' : 'disabled'}></label>
-        <label class="flex items-start gap-2 text-sm"><input type="checkbox" name="autoNextYear" ${s.autoNextYear ? 'checked' : ''} ${can ? '' : 'disabled'}><span>Prepare the next period of a recurring obligation by itself when the current period ends (its dates are a copy for you to confirm)</span></label>
+        <p class="text-xs text-slate-500">When an obligation turns amber, and whether its next period is prepared by itself, is set on each obligation (Edit obligation).</p>
         <h3 class="font-semibold pt-3 border-t">Your WhatsApp numbers <span class="text-slate-500 font-normal text-sm">— that messages go from</span></h3>
         <p class="text-xs text-slate-500">WhatsApp always sends from the account that is open where the message opens. Add your business number and say how it is opened here:
           with <b>WhatsApp Web</b>, log in to web.whatsapp.com with that number in this browser; with the <b>WhatsApp Business app</b> (on an Android phone it opens that app directly).
@@ -161,6 +198,11 @@ CMP_PAGES.push({
         ${can ? '<button type="button" class="text-sm text-emerald-700 underline" onclick="cmpSenderRow()">+ Add a WhatsApp number</button>' : ''}
         <h3 class="font-semibold pt-3 border-t">On your invoices and receipts</h3>
         <div class="grid sm:grid-cols-2 gap-3">
+          <div class="sm:col-span-2"><span class="block text-sm font-medium text-slate-700 mb-1">Logo <span class="text-slate-400 font-normal">(PNG or JPEG; shown at the top left)</span></span>
+            <div class="flex flex-wrap items-center gap-3"><div id="cmLogoBox" class="h-16 min-w-[4rem] border rounded-lg bg-slate-50 flex items-center justify-center p-1">${s.logo ? `<img src="${esc(s.logo)}" alt="Logo" class="max-h-14 max-w-[12rem]">` : '<span class="text-xs text-slate-400 px-2">No logo</span>'}</div>
+              ${can ? `<label class="px-3 min-h-[2.5rem] inline-flex items-center rounded-lg text-sm border bg-white hover:border-emerald-600 cursor-pointer">Choose a picture…<input type="file" accept="image/png,image/jpeg,image/webp" class="hidden" onchange="cmpLogoPick(this)"></label>
+                <button type="button" class="text-sm text-red-600 underline" onclick="CMP_SET.logo = ''; $('#cmLogoBox').innerHTML = '<span class=&quot;text-xs text-slate-400 px-2&quot;>No logo</span>'">Remove</button>` : ''}</div></div>
+          <label class="sm:col-span-2"><span>Header <span class="text-slate-400">(a line or two across the top, e.g. "Chartered Accountants · Tax Advisors")</span></span><textarea name="invoiceHeader" rows="2" maxlength="300" ${can ? '' : 'disabled'}>${esc(s.invoiceHeader || '')}</textarea></label>
           <label class="sm:col-span-2"><span>Firm name</span><input name="firmName" maxlength="200" value="${esc(s.firmName)}" ${can ? '' : 'disabled'}></label>
           <label class="sm:col-span-2"><span>Address</span><textarea name="firmAddress" rows="2" maxlength="500" ${can ? '' : 'disabled'}>${esc(s.firmAddress)}</textarea></label>
           <label><span>Phone</span><input name="firmPhone" maxlength="40" value="${esc(s.firmPhone)}" ${can ? '' : 'disabled'}></label>
@@ -175,8 +217,30 @@ CMP_PAGES.push({
         ${can ? '<div class="flex justify-end"><button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save settings</button></div>' : '<p class="text-xs text-slate-500">Only a user with full access changes these.</p>'}
       </form>`;
     (s.waSenders || []).forEach(x => cmpSenderRow(x, can));
+    CMP_SET.logo = s.logo || '';
   },
 });
+// The logo is made small here (at most 600 × 240 pixels) before it is saved, so it stays light on every invoice
+function cmpLogoPick(input) {
+  const file = input.files && input.files[0]; input.value = '';
+  if (!file) return;
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return toast('Choose a PNG, JPEG or WebP picture.');
+  const img = new Image(), url = URL.createObjectURL(file);
+  img.onload = () => {
+    const k = Math.min(1, 600 / img.width, 240 / img.height), c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    let data = c.toDataURL('image/png');
+    if (data.length > 380000) data = c.toDataURL('image/jpeg', 0.85);
+    if (data.length > 380000) return toast('That picture is too large even when made smaller. Choose a simpler one.');
+    CMP_SET.logo = data;
+    $('#cmLogoBox').innerHTML = `<img src="${data}" alt="Logo" class="max-h-14 max-w-[12rem]">`;
+    toast('Logo ready: press Save settings to keep it.', true);
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); toast('That picture could not be read.'); };
+  img.src = url;
+}
 function cmpSenderRow(x = { label: 'Business WhatsApp', phone: '', open: 'WEB', isDefault: !document.querySelector('#cmSenders .cmSender') }, can = true) {
   const dis = can ? '' : 'disabled';
   $('#cmSenders').insertAdjacentHTML('beforeend', `<div class="cmSender flex flex-wrap items-end gap-2 bg-slate-50 border rounded-lg p-2" data-id="${esc(x.id || '')}">
@@ -189,8 +253,8 @@ function cmpSenderRow(x = { label: 'Business WhatsApp', phone: '', open: 'WEB', 
 async function cmpSettingsSave() {
   const f = $('#cmSetForm');
   try {
-    CMP.settings = await api('/api/cmp/settings', { method: 'PUT', body: { timeZone: f.timeZone.value, reminderHour: Number(f.reminderHour.value), amberDays: Number(f.amberDays.value), autoNextYear: f.autoNextYear.checked,
-      ...Object.fromEntries(['firmName', 'firmAddress', 'firmPhone', 'firmEmail', 'firmTaxNo', 'bankDetails', 'invoiceFooter', 'invoiceFormat', 'receiptFormat'].map(k => [k, f[k].value])),
+    CMP.settings = await api('/api/cmp/settings', { method: 'PUT', body: { timeZone: f.timeZone.value, reminderHour: Number(f.reminderHour.value), logo: CMP_SET.logo,
+      ...Object.fromEntries(['firmName', 'firmAddress', 'firmPhone', 'firmEmail', 'firmTaxNo', 'bankDetails', 'invoiceFooter', 'invoiceHeader', 'invoiceFormat', 'receiptFormat'].map(k => [k, f[k].value])),
       waSenders: [...document.querySelectorAll('#cmSenders .cmSender')].map(r => ({ id: r.dataset.id || undefined, label: r.querySelector('.snLabel').value, phone: r.querySelector('.snPhone').value, open: r.querySelector('.snOpen').value, isDefault: r.querySelector('.snDefault').checked })) } });
     if (CMP.me) CMP.me.settings = CMP.settings;
     PAGE_ENTER['cm-settings']();

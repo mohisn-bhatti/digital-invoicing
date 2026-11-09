@@ -2,8 +2,8 @@
 /* Compliance & Deadlines: the dashboard (SRS 11: upcoming in 7/30/60-day windows and overdue, with flags), the calendar of deadlines,
    the reports (overdue list, upcoming deadlines, invoice aging) and printing any list as a PDF (SRS 13). */
 
-const CMP_REP = { days: 30, month: null, calCountry: '', calAssignee: '', report: 'overdue', repDays: 30 };
-CMP_RESETS.push(() => Object.assign(CMP_REP, { days: 30, month: null, calCountry: '', calAssignee: '', report: 'overdue', repDays: 30 }));
+const CMP_REP = { days: 30, month: null, day: null, calCountry: '', calAssignee: '', report: 'obligations', repDays: 30, repStatus: 'ALL' };
+CMP_RESETS.push(() => Object.assign(CMP_REP, { days: 30, month: null, day: null, calCountry: '', calAssignee: '', report: 'obligations', repDays: 30, repStatus: 'ALL' }));
 
 // Any table on the screen, printed on A4 (the browser's "Save as PDF" makes the PDF)
 function cmpPrintTable(title, tableId, note = '') {
@@ -18,9 +18,9 @@ function cmpPrintTable(title, tableId, note = '') {
 }
 const cmpOccTable = (rows, id, { showDays = true } = {}) => `<div class="overflow-x-auto"><table id="${id}" class="w-full text-sm">
   <thead class="text-left text-slate-500 border-b"><tr><th class="py-2"></th><th>Due date</th><th>Client</th><th>Obligation</th><th>Period</th><th>Status</th>${showDays ? '<th class="text-right">Days</th>' : ''}<th>Assigned to</th></tr></thead><tbody>
-  ${rows.map(r => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onclick="cmpOpenPeriod('${r.obligation.id}', '${r.id}', () => PAGE_ENTER[S.page] && PAGE_ENTER[S.page]())">
-    <td class="py-1.5 w-5">${cmpDot(r.view.colour)}</td><td class="whitespace-nowrap">${cmpDay(r.dueDate)}</td><td>${cmpCountry(r.client.country).flag} ${esc(r.client.name)}</td>
-    <td>${esc(r.obligation.name)}</td><td class="whitespace-nowrap">${esc(CmpRules.periodName(r))}</td><td>${cmpStatusChip(r.view.status)}</td>
+  ${rows.map(r => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer ${r.projected ? 'text-slate-500' : ''}" onclick="cmpOpenPeriod('${r.obligation.id}', '${r.id}', () => PAGE_ENTER[S.page] && PAGE_ENTER[S.page]())">
+    <td class="py-1.5 w-5">${cmpOccDot(r)}</td><td class="whitespace-nowrap">${cmpDay(r.dueDate)}</td><td>${cmpCountry(r.client.country).flag} ${esc(r.client.name)}</td>
+    <td>${esc(r.obligation.name)}</td><td class="whitespace-nowrap">${esc(CmpRules.periodName(r))}</td><td>${cmpOccChip(r)}</td>
     ${showDays ? `<td class="text-right ${r.view.overdue ? 'text-red-700 font-semibold' : ''}">${r.view.daysLeft}</td>` : ''}<td class="text-xs">${esc(cmpWho(r.assignedToId))}</td></tr>`).join('')
   || `<tr><td colspan="8">${cmpEmpty('Nothing here.')}</td></tr>`}</tbody></table></div>`;
 
@@ -69,61 +69,113 @@ CMP_PAGES.push({
   id: 'cm-calendar',
   html: () => `<div class="bg-white rounded-xl shadow p-4">
     <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
-      <div class="flex items-center gap-2">${cmpBtn('‹', 'cmpCalMove(-1)')}<h2 id="cmCalTitle" class="font-semibold text-lg w-44 text-center"></h2>${cmpBtn('›', 'cmpCalMove(1)')}${cmpBtn('Today', 'CMP_REP.month = null; cmpLoadCalendar()')}</div>
+      <div class="flex flex-wrap items-end gap-2">${cmpBtn('‹', 'cmpCalMove(-1)')}
+        <label><span>Month</span><input id="cmCalMonth" type="month" class="!w-44" onchange="if (this.value) { CMP_REP.month = this.value; CMP_REP.day = null; cmpLoadCalendar(); }"></label>
+        ${cmpBtn('›', 'cmpCalMove(1)')}${cmpBtn('Today', 'CMP_REP.month = null; CMP_REP.day = null; cmpLoadCalendar()')}
+        <label><span>Go to a date</span><input type="date" class="!w-44" onchange="if (this.value) { CMP_REP.month = this.value.slice(0, 7); CMP_REP.day = this.value; cmpLoadCalendar(); }"></label>
+        <h2 id="cmCalTitle" class="font-semibold text-lg px-2 pb-2"></h2></div>
       <div class="flex flex-wrap gap-2">
         <label><span>Country</span><select onchange="CMP_REP.calCountry = this.value; cmpLoadCalendar()">${cmpCountryOptions('', 'All countries')}</select></label>
         <label><span>Assigned to</span><select id="cmCalWho" onchange="CMP_REP.calAssignee = this.value; cmpLoadCalendar()"></select></label></div></div>
     <div class="grid grid-cols-7 text-xs text-slate-500 mb-1">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => `<div class="px-1">${d}</div>`).join('')}</div>
     <div id="cmCalGrid" class="grid grid-cols-7 gap-px bg-slate-200 border border-slate-200 rounded-lg overflow-hidden"></div>
-    <p class="text-xs text-slate-500 mt-2">Each due date in its client's own calendar. Green safe · amber approaching · red overdue · grey completed.</p></div>`,
+    <p class="text-xs text-slate-500 mt-2">Each due date in its client's own calendar. Green safe · amber approaching · red overdue · grey completed · dashed: planned (still to come, shown for as long as the obligation repeats).</p></div>`,
   enter: () => { $('#cmCalWho').innerHTML = cmpTeamFilter(); $('#cmCalWho').value = CMP_REP.calAssignee; cmpLoadCalendar(); },
 });
 function cmpCalMove(n) {
   const [y, m] = (CMP_REP.month || CmpRules.dayIn(cmpTz()).slice(0, 7)).split('-').map(Number), idx = y * 12 + (m - 1) + n;
-  CMP_REP.month = `${Math.floor(idx / 12)}-${String(idx % 12 + 1).padStart(2, '0')}`;
+  CMP_REP.month = `${Math.floor(idx / 12)}-${String(idx % 12 + 1).padStart(2, '0')}`; CMP_REP.day = null;
   cmpLoadCalendar();
 }
 async function cmpLoadCalendar() {
   const month = CMP_REP.month || CmpRules.dayIn(cmpTz()).slice(0, 7), first = month + '-01';
   const [y, m] = month.split('-').map(Number), days = new Date(Date.UTC(y, m, 0)).getUTCDate(), last = `${month}-${String(days).padStart(2, '0')}`;
-  $('#cmCalTitle').textContent = `${CmpRules.MONTHS[m - 1]} ${y}`;
+  $('#cmCalTitle').textContent = `${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][m - 1]} ${y}`;
+  $('#cmCalMonth').value = month;
   let d;
-  try { d = await api('/api/cmp/calendar?' + cmpQs({ from: first, to: last, country: CMP_REP.calCountry, assignee: CMP_REP.calAssignee })); } catch (err) { $('#cmCalGrid').innerHTML = cmpEmpty(esc(err.message)); return; }
+  try { d = await api('/api/cmp/calendar?' + cmpQs({ from: first, to: last, country: CMP_REP.calCountry, assignee: CMP_REP.calAssignee, projected: '1' })); } catch (err) { $('#cmCalGrid').innerHTML = cmpEmpty(esc(err.message)); return; }
   const byDay = new Map();
   for (const r of d.rows) { const k = r.dueDate; if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(r); }
   const lead = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7, today = CmpRules.dayIn(cmpTz()), cells = [];
   for (let i = 0; i < lead; i++) cells.push('<div class="bg-slate-50 min-h-[6rem]"></div>');
   for (let dd = 1; dd <= days; dd++) {
     const ymd = `${month}-${String(dd).padStart(2, '0')}`, items = byDay.get(ymd) || [];
-    cells.push(`<div class="bg-white min-h-[6rem] p-1 ${ymd === today ? 'ring-2 ring-inset ring-emerald-500' : ''}"><div class="text-xs ${ymd === today ? 'font-bold text-emerald-700' : 'text-slate-500'}">${dd}</div>
+    const picked = ymd === CMP_REP.day;
+    cells.push(`<div class="bg-white min-h-[6rem] p-1 ${ymd === today ? 'ring-2 ring-inset ring-emerald-500' : ''} ${picked ? 'ring-2 ring-inset ring-sky-500 bg-sky-50' : ''}"><div class="text-xs ${ymd === today ? 'font-bold text-emerald-700' : picked ? 'font-bold text-sky-700' : 'text-slate-500'}">${dd}</div>
       ${items.slice(0, 4).map(r => `<button type="button" onclick="cmpOpenPeriod('${r.obligation.id}', '${r.id}', cmpLoadCalendar)" title="${esc(`${r.client.name} — ${r.obligation.name} (${CmpRules.STATUS[r.view.status]})`)}"
-        class="w-full text-left text-[11px] leading-tight truncate rounded px-1 py-0.5 mt-0.5 ${{ red: 'bg-red-100 text-red-800', amber: 'bg-amber-100 text-amber-900', green: 'bg-emerald-50 text-emerald-900', done: 'bg-slate-100 text-slate-500 line-through' }[r.view.colour]}">${cmpCountry(r.client.country).flag} ${esc(r.client.name)} · ${esc(r.obligation.name)}</button>`).join('')}
-      ${items.length > 4 ? `<button type="button" class="text-[11px] text-emerald-700 underline" onclick="cmpObligationsFilter({ status: 'ALL' }); go('cm-obligations')">+${items.length - 4} more</button>` : ''}</div>`);
+        class="w-full text-left text-[11px] leading-tight truncate rounded px-1 py-0.5 mt-0.5 ${{ red: 'bg-red-100 text-red-800', amber: 'bg-amber-100 text-amber-900', green: 'bg-emerald-50 text-emerald-900', done: 'bg-slate-100 text-slate-500 line-through', planned: 'border border-dashed border-slate-400 text-slate-500' }[r.view.colour]}">${cmpCountry(r.client.country).flag} ${esc(r.client.name)} · ${esc(r.obligation.name)}</button>`).join('')}
+      ${items.length > 4 ? `<button type="button" class="text-[11px] text-emerald-700 underline" onclick="cmpCalDay('${ymd}')">+${items.length - 4} more</button>` : ''}</div>`);
   }
   while (cells.length % 7) cells.push('<div class="bg-slate-50 min-h-[6rem]"></div>');
   $('#cmCalGrid').innerHTML = cells.join('');
 }
+// "+ more" on a busy day: the sheet for that day
+function cmpCalDay(ymd) { cmpRange('ob'); CMP.ranges.ob.r = { ...CMP.ranges.ob.r, mode: 'dates', from: ymd, to: ymd }; CMP_OB.status = 'ALL'; go('cm-obligations'); }
 
 /* ---------- reports ---------- */
 CMP_PAGES.push({
   id: 'cm-reports',
   html: () => `<div class="bg-white rounded-xl shadow p-4">
     <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
-      <div class="flex flex-wrap items-end gap-3"><div role="tablist" id="cmRepTabs" class="inline-flex bg-slate-100 rounded-xl p-1"></div>
+      <div class="flex flex-wrap items-end gap-3"><div role="tablist" id="cmRepTabs" class="flex flex-wrap bg-slate-100 rounded-xl p-1"></div>
+        <div id="cmRepRange" class="contents"></div>
+        <label id="cmRepStatusWrap"><span>Status</span><select onchange="CMP_REP.repStatus = this.value; cmpLoadReport()">${CMP_OB_STATUSES.map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
         <label id="cmRepDaysWrap"><span>Window</span><select onchange="CMP_REP.repDays = Number(this.value); cmpLoadReport()">${[7, 30, 60, 90].map(n => `<option value="${n}" ${n === 30 ? 'selected' : ''}>Next ${n} days</option>`).join('')}</select></label></div>
       <div class="flex gap-2"><span id="cmRepExport"></span>${cmpBtn('Print / PDF', 'cmpPrintTable($("#cmRepTitle").textContent, "cmRepTable")')}</div></div>
     <h2 id="cmRepTitle" class="font-semibold mb-2"></h2><div id="cmRepBody"></div></div>`,
-  enter: () => cmpLoadReport(),
+  enter: () => { $('#cmRepRange').innerHTML = cmpRangeBar('rep', cmpLoadReport); cmpLoadReport(); },
 });
+// Every report in one place (the CA): obligations, receipts, invoices, clients..., each for the dates chosen (the calendar year by default)
+const CMP_REPORTS = [['obligations', 'Obligations', 'VIEW'], ['overdue', 'Overdue', 'REPORTS'], ['upcoming', 'Upcoming', 'REPORTS'], ['invoices', 'Invoices', 'INVOICE'],
+  ['receipts', 'Receipts', 'INVOICE'], ['clients', 'Clients summary', 'REPORTS'], ['aging', 'Invoice aging', 'INVOICE']];
 async function cmpLoadReport() {
-  const tabs = [['overdue', 'Overdue list'], ['upcoming', 'Upcoming deadlines'], ...(cmpCan('INVOICE') ? [['aging', 'Invoice aging']] : [])];
-  if (!tabs.some(([k]) => k === CMP_REP.report)) CMP_REP.report = 'overdue';
-  $('#cmRepTabs').innerHTML = tabs.map(([k, v]) => `<button type="button" class="seg-btn ${k === CMP_REP.report ? 'on' : ''}" onclick="CMP_REP.report = '${k}'; cmpLoadReport()">${v}</button>`).join('');
-  $('#cmRepDaysWrap').classList.toggle('hidden', CMP_REP.report !== 'upcoming');
-  const qs = CMP_REP.report === 'upcoming' ? `?days=${CMP_REP.repDays}` : '';
-  $('#cmRepExport').innerHTML = cmpCan('EXPORT') ? cmpBtn('Download (Excel)', `cmpDownload('/api/cmp/export/${CMP_REP.report}${qs}', 'compliance-${CMP_REP.report}.csv')`) : '';
+  const tabs = CMP_REPORTS.filter(([, , p]) => cmpCan(p));
+  if (!tabs.some(([k]) => k === CMP_REP.report)) CMP_REP.report = tabs[0] ? tabs[0][0] : 'overdue';
+  const k = CMP_REP.report, ranged = ['obligations', 'invoices', 'receipts', 'clients'].includes(k);
+  $('#cmRepTabs').innerHTML = tabs.map(([key, v]) => `<button type="button" class="seg-btn ${key === k ? 'on' : ''}" onclick="CMP_REP.report = '${key}'; cmpLoadReport()">${v}</button>`).join('');
+  $('#cmRepDaysWrap').classList.toggle('hidden', k !== 'upcoming');
+  $('#cmRepStatusWrap').classList.toggle('hidden', k !== 'obligations');
+  $('#cmRepRange').classList.toggle('hidden', !ranged); document.querySelectorAll('#cmRepRange label').forEach(l => l.classList.toggle('hidden', !ranged));
+  const q = k === 'upcoming' ? { days: CMP_REP.repDays } : ranged ? { ...cmpRangeDates('rep'), ...(k === 'obligations' ? { status: CMP_REP.repStatus, projected: '1' } : {}) } : {};
+  const qs = Object.keys(q).length ? '?' + cmpQs(q) : '';
+  const exportKind = { clients: 'clientsummary' }[k] || k;
+  $('#cmRepExport').innerHTML = cmpCan('EXPORT') ? cmpBtn('Download (Excel)', `cmpDownload('/api/cmp/export/${exportKind}${qs}', 'compliance-${k}.csv')`) : '';
   let d;
-  try { d = await api(`/api/cmp/reports/${CMP_REP.report}${qs}`); } catch (err) { $('#cmRepBody').innerHTML = cmpEmpty(esc(err.message)); return; }
+  try { d = await api(`/api/cmp/reports/${k}${qs}`); } catch (err) { $('#cmRepBody').innerHTML = cmpEmpty(esc(err.message)); return; }
+  const when = esc(cmpRangeText('rep')), money = (list, f) => list.map(t => f(t)).join(' · ');
+  if (d.kind === 'obligations') {
+    $('#cmRepTitle').textContent = `Obligations due ${cmpRangeText('rep')} (${d.rows.length})`;
+    const c = d.counts || {};
+    $('#cmRepBody').innerHTML = `<div class="flex flex-wrap gap-2 mb-3 text-xs">${Object.entries(c).map(([st, n]) => `<span class="inline-flex items-center gap-1">${st === 'PLANNED' ? CMP_PLANNED_CHIP : cmpStatusChip(st)} <b>${n}</b></span>`).join('')}</div>${cmpOccTable(d.rows, 'cmRepTable')}`;
+    return;
+  }
+  if (d.kind === 'invoices') {
+    $('#cmRepTitle').textContent = `Invoices of ${cmpRangeText('rep')} (${d.rows.length})`;
+    $('#cmRepBody').innerHTML = `<div class="text-sm mb-3">${money(d.totals, t => `${t.count} issued · ${cmpMoney(t.total, t.currency)} invoiced · ${cmpMoney(t.received, t.currency)} received · <b>${cmpMoney(t.outstanding, t.currency)}</b> outstanding`) || 'Nothing issued.'}</div>
+      <div class="overflow-x-auto"><table id="cmRepTable" class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Invoice</th><th>Date</th><th>Client</th><th>For</th><th class="text-right">Total</th><th class="text-right">Received</th><th class="text-right">Outstanding</th><th>Status</th></tr></thead><tbody>
+      ${d.rows.map(i => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onclick="cmpInvoiceOpen('${i.id}', cmpLoadReport)"><td class="py-1.5">${i.number ? esc(i.number) : '(draft)'}</td><td class="whitespace-nowrap">${cmpDay(i.issueDate)}</td><td>${cmpCountry(i.client.country).flag} ${esc(i.client.name)}</td>
+        <td class="text-xs">${i.obligation ? `${esc(i.obligation.name)} · ${esc(CmpRules.periodName(i.obligation))}` : ''}</td><td class="text-right whitespace-nowrap">${cmpMoney(i.total, i.currency)}</td><td class="text-right whitespace-nowrap">${cmpMoney(i.received, i.currency)}</td>
+        <td class="text-right whitespace-nowrap">${['DRAFT', 'CANCELLED'].includes(i.status) ? '—' : cmpMoney(i.outstanding, i.currency)}</td><td>${cmpInvChip(i.status)}</td></tr>`).join('') || `<tr><td colspan="8">${cmpEmpty(`No invoices for ${when}.`)}</td></tr>`}</tbody></table></div>`;
+    return;
+  }
+  if (d.kind === 'receipts') {
+    $('#cmRepTitle').textContent = `Receipts of ${cmpRangeText('rep')} (${d.rows.length})`;
+    $('#cmRepBody').innerHTML = `<div class="text-sm mb-3">${money(d.totals, t => `${t.count} receipt${t.count === 1 ? '' : 's'} · <b>${cmpMoney(t.total, t.currency)}</b> received`) || 'Nothing received.'}</div>
+      <div class="overflow-x-auto"><table id="cmRepTable" class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Receipt</th><th>Date</th><th>Client</th><th>Invoice</th><th class="text-right">Amount</th><th>Paid by</th></tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="border-b last:border-0 ${r.voidedAt ? 'opacity-50 line-through' : ''}"><td class="py-1.5">${esc(r.number)}</td><td class="whitespace-nowrap">${cmpDay(r.receivedOn)}</td><td>${cmpCountry(r.client.country).flag} ${esc(r.client.name)}</td>
+        <td><a href="#/cm-invoices/${encodeURIComponent(r.invoice.number)}" class="text-emerald-700 underline">${esc(r.invoice.number)}</a></td><td class="text-right whitespace-nowrap">${cmpMoney(r.amount, r.currency)}</td><td>${esc(CMP_METHODS[r.method] || r.method)}</td></tr>`).join('') || `<tr><td colspan="6">${cmpEmpty(`No receipts for ${when}.`)}</td></tr>`}</tbody></table></div>`;
+    return;
+  }
+  if (d.kind === 'clients') {
+    $('#cmRepTitle').textContent = `Clients summary — ${cmpRangeText('rep')} (${d.rows.length} clients)`;
+    const m = (r, key) => r.money.map(x => cmpMoney(x[key], x.currency)).join('<br>') || '—';
+    $('#cmRepBody').innerHTML = `<div class="overflow-x-auto"><table id="cmRepTable" class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Client</th><th>Country</th><th class="text-right">Periods due</th><th class="text-right">Completed</th><th class="text-right">Open</th><th class="text-right">Overdue</th>
+      ${d.money ? '<th class="text-right">Invoiced</th><th class="text-right">Received</th><th class="text-right">Outstanding</th>' : ''}</tr></thead><tbody>
+      ${d.rows.map(r => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onclick="cmpOpenClient('${r.client.id}')"><td class="py-1.5">${esc(r.client.name)} <span class="text-xs text-slate-500">${esc(r.client.code)}</span></td><td>${cmpFlagName(r.client.country)}</td>
+        <td class="text-right">${r.periods}</td><td class="text-right">${r.completed}</td><td class="text-right">${r.open}</td><td class="text-right ${r.overdue ? 'text-red-700 font-semibold' : ''}">${r.overdue}</td>
+        ${d.money ? `<td class="text-right whitespace-nowrap">${m(r, 'invoiced')}</td><td class="text-right whitespace-nowrap">${m(r, 'received')}</td><td class="text-right whitespace-nowrap font-medium">${m(r, 'outstanding')}</td>` : ''}</tr>`).join('') || `<tr><td colspan="9">${cmpEmpty('No clients.')}</td></tr>`}</tbody></table></div>`;
+    return;
+  }
   if (d.kind === 'aging') {
     $('#cmRepTitle').textContent = `Invoice aging — invoices not paid in full, by days since the invoice date (${CmpRules.fmtDay(d.today)})`;
     $('#cmRepBody').innerHTML = `<div class="overflow-x-auto mb-4"><table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Currency</th>${d.buckets.map(b => `<th class="text-right">${b} days</th>`).join('')}<th class="text-right">Total</th></tr></thead><tbody>

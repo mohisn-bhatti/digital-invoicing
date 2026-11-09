@@ -127,7 +127,7 @@ run('custom fields: for the chosen countries only; missing on existing clients; 
 });
 
 run('obligations: dates checked; reminders bleak until their time; suggestions stay within the country', async () => {
-    const body = { name: 'VAT Return Q3', periodStart: day(-91), periodEnd: day(-2), dueDate: day(30), portalUrl: 'https://eservices.tax.gov.ae',
+    const body = { name: 'VAT Return Q3', frequency: 'YEARLY', periodStart: day(-91), periodEnd: day(-2), dueDate: day(30), portalUrl: 'https://eservices.tax.gov.ae',
         reminders: [{ offsetDays: -40, templateId: W.tFirst.id }, { offsetDays: -5, templateId: W.tLast.id }] };
     let r = await A.call(`/api/cmp/clients/${W.client.id}/obligations`, { token: A.manager.token, method: 'POST', body: { ...body, dueDate: day(-3) } });
     assert.strictEqual(r.status, 400);
@@ -188,7 +188,7 @@ run('WhatsApp: a bleak reminder cannot be sent; an active one is filled in, logg
 
 run('notifications: overdue and ready to send first; the dashboard needs reports or WhatsApp, the counts only viewing', async () => {
     // an overdue one for the Pakistani client
-    let r = await A.call(`/api/cmp/clients/${W.pkClient.id}/obligations`, { token: A.manager.token, method: 'POST', body: { name: 'Sales Tax Return', periodStart: day(-60), periodEnd: day(-31), dueDate: day(-15), yearsTotal: 1 } });
+    let r = await A.call(`/api/cmp/clients/${W.pkClient.id}/obligations`, { token: A.manager.token, method: 'POST', body: { name: 'Sales Tax Return', frequency: 'YEARLY', periodStart: day(-60), periodEnd: day(-31), dueDate: day(-15), yearsTotal: 1 } });
     assert.strictEqual(r.status, 200, r.text);
     W.overdueOb = r.json;
     assert.deepStrictEqual([r.json.occurrences.length, r.json.occurrences[0].view.status, r.json.occurrences[0].view.colour], [1, 'OVERDUE', 'red']);
@@ -281,7 +281,7 @@ run('one firm never sees another\'s clients, obligations or templates', async ()
     }
     assert.strictEqual((await A.call(`/api/cmp/obligations/${W.ob.id}`, { token: W.other.token })).status, 404);
     assert.strictEqual((await A.call(`/api/cmp/occurrences/${W.y1.id}/complete`, { token: W.other.token, method: 'POST' })).status, 404);
-    r = await A.call(`/api/cmp/clients/${theirs}/obligations`, { token: W.other.token, method: 'POST', body: { name: 'VAT', periodStart: day(0), periodEnd: day(10), dueDate: day(20), reminders: [{ offsetDays: -1, templateId: W.tFirst.id }] } });
+    r = await A.call(`/api/cmp/clients/${theirs}/obligations`, { token: W.other.token, method: 'POST', body: { name: 'VAT', frequency: 'YEARLY', periodStart: day(0), periodEnd: day(10), dueDate: day(20), reminders: [{ offsetDays: -1, templateId: W.tFirst.id }] } });
     assert.strictEqual(r.status, 400); // our template is not theirs
     assert.deepStrictEqual((await A.call('/api/cmp/clients', { token: W.other.token })).json.clients.map(c => c.name), ['Other firm client']);
     assert.strictEqual((await A.call('/api/cmp/notifications', { token: W.other.token })).json.items.length, 0);

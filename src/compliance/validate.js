@@ -72,6 +72,7 @@ function cleanClient(b, { creating }) {
         registrationNo: line(b.registrationNo, 60, 'Registration No.'),
         reference: line(b.reference, 200, 'Reference'),
         noPortal: b.noPortal === true,
+        noWhatsApp: b.noWhatsApp === true,
     };
     data.portalUsername = data.noPortal ? '' : line(b.portalUsername, 200, 'Username', { required: true });
     const password = data.noPortal ? '' : secret(b.portalPassword, 200, 'Password');
@@ -82,10 +83,11 @@ function cleanClient(b, { creating }) {
 
 const FIELD_TYPES = { TEXT: 'Text', NUMBER: 'Number', DATE: 'Date', MULTILINE: 'Multi-line text' };
 // SRS 3.3: a name, a type, and the countries it is for (by default the country of the client being edited)
-function cleanFieldDef(b, { defaultCountry } = {}) {
+// keepKey: the field's own name as it is now (a field made before a name became a basic detail can keep it)
+function cleanFieldDef(b, { defaultCountry, keepKey } = {}) {
     const name = line(b.name, 60, 'Field name', { required: true });
     const key = R.keyOf(name);
-    if (R.RESERVED.has(key)) throw bad(`"${name}" is already one of the basic details of every client. Choose another name.`);
+    if (R.RESERVED.has(key) && key !== keepKey) throw bad(`"${name}" is already one of the basic details of every client. Choose another name.`);
     const type = String(b.type || 'TEXT').toUpperCase();
     if (!FIELD_TYPES[type]) throw bad('Choose the type of the field: text, number, date or multi-line text.');
     const allCountries = b.allCountries === true;
@@ -111,15 +113,20 @@ function cleanFieldValue(def, v) {
     return line(v, 500, label);
 }
 
-// SRS 4. frequency: YEARLY (the SRS), QUARTERLY or MONTHLY (the CA), chosen when the obligation is added and fixed after that.
-// yearsTotal: '' / null / 0 = no end; otherwise 1 to 100 years in all (the first one included).
+// SRS 4. frequency: how often it comes back, fixed once added. The CA (9 Nov 2026): no list to choose from, the three dates say it
+// (a one-month period every month, three months every quarter, six months every six months, else every year: R.detectFrequency);
+// "YEARLY" can still be asked for a shorter period that comes back once a year.
+// yearsTotal ("How many years"): '' / null / 0 = unlimited; otherwise 1 to 100 years in all (the first one included).
+// amberDays and autoNext: set on each obligation (the CA), no longer one setting for the whole firm.
 function cleanObligation(b, { partial = false } = {}) {
     const out = {};
     if (!partial || b.name !== undefined) out.name = line(b.name, 120, 'Obligation name', { required: true });
     if (!partial) {
-        out.frequency = String(b.frequency || 'YEARLY').toUpperCase();
-        if (!R.FREQUENCIES[out.frequency]) throw bad('Choose how often the obligation comes back: every month, every quarter or every year.');
+        out.frequency = b.frequency ? String(b.frequency).toUpperCase() : R.detectFrequency(b.periodStart, b.periodEnd);
+        if (!R.FREQUENCIES[out.frequency]) throw bad('Choose how often the obligation comes back: every month, every quarter, every six months or every year.');
     }
+    if (!partial || b.amberDays !== undefined) out.amberDays = b.amberDays === undefined || b.amberDays === null || b.amberDays === '' ? 7 : int(b.amberDays, 0, 90, 'The number of days before the due date it turns amber');
+    if (!partial || b.autoNext !== undefined) out.autoNext = b.autoNext === undefined ? true : b.autoNext === true;
     if (!partial || b.portalUrl !== undefined) {
         const url = line(b.portalUrl, 500, 'Portal link');
         if (url) { let ok = false; try { const u = new URL(url); ok = ['http:', 'https:'].includes(u.protocol) && Boolean(u.hostname); } catch { /* not a link */ } if (!ok) throw bad('The portal link must be a web address starting with https://'); }
@@ -189,6 +196,14 @@ function cleanSettings(b) {
         });
         const first = out.waSenders.findIndex(s => s.isDefault);
         out.waSenders.forEach((s, i) => { s.isDefault = i === (first < 0 ? 0 : first); });
+    }
+    if (b.invoiceHeader !== undefined) out.invoiceHeader = multiline(b.invoiceHeader, 300, 'Header');
+    // the logo: a small picture as a data: URL (the screen shrinks it before it is sent), PNG, JPEG or WebP, at most 300 KB
+    if (b.logo !== undefined) {
+        const l = String(b.logo || '');
+        if (l && !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(l)) throw bad('The logo must be a PNG, JPEG or WebP picture.');
+        if (l.length > 400000) throw bad('The logo is too large: choose a smaller picture (at most 300 KB).');
+        out.logo = l;
     }
     for (const k of ['invoiceFormat', 'receiptFormat']) {
         if (b[k] === undefined) continue;

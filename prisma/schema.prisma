@@ -127,6 +127,7 @@ model Tenant {
   cmpTemplates        CmpTemplate[]
   cmpTaxRates         CmpTaxRate[]
   cmpInvoices         CmpInvoice[]
+  cmpItems            CmpItem[]
 }
 
 model Invoice {
@@ -956,6 +957,9 @@ model CmpSettings {
   invoiceFooter String   @default("")
   invoiceFormat String   @default("INV-{YYYY}-{NNNN}")
   receiptFormat String   @default("RCT-{YYYY}-{NNNN}")
+  // The top of the firm's invoices and receipts (the CA): a logo (a small image, kept as a data: URL) and a header line or two
+  logo          String   @default("")
+  invoiceHeader String   @default("")
   invoiceSeq    Int      @default(0) // last invoice number handed out
   receiptSeq    Int      @default(0) // last receipt number handed out
   updatedAt     DateTime @updatedAt
@@ -976,6 +980,7 @@ model CmpClient {
   registrationNo    String          @default("")
   reference         String          @default("")
   noPortal          Boolean         @default(false) // the client has no online filing portal: no username or password to keep
+  noWhatsApp        Boolean         @default(false) // the client has no WhatsApp (the CA): reminders are not sent to it on WhatsApp
   portalUsername    String          @default("")
   portalPasswordEnc String          @default("")
   pinCodeEnc        String?
@@ -1044,6 +1049,9 @@ model CmpObligation {
   basePeriodEnd   DateTime        @db.Date
   baseDueDate     DateTime        @db.Date
   baseSeq         Int             @default(1) // the period the base dates belong to: later periods are counted on from it (a change "for the periods after" moves it)
+  // Set on each obligation (the CA: not one setting for the whole firm): when it turns amber, and whether the next period is prepared by itself
+  amberDays       Int             @default(7)
+  autoNext        Boolean         @default(true)
   notes           String          @default("")
   assignedToId    String? // who does this obligation; if nobody, the client's person (SRS 10)
   archivedAt      DateTime?
@@ -1175,6 +1183,26 @@ model CmpTaxRate {
   updatedAt    DateTime @updatedAt
 
   @@unique([tenantId, name, rate])
+}
+
+// An item or service the firm bills (the CA: typed once on an invoice, then suggested with its price on the invoices of clients of the
+// same countries). One per name and currency; the price is the last one used.
+model CmpItem {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  name         String
+  key          String // the name in lower case with single spaces: what makes two items the same
+  currency     String
+  amount       Decimal  @db.Decimal(14, 3)
+  allCountries Boolean  @default(false)
+  countries    String[] @default([])
+  active       Boolean  @default(true)
+  createdBy    String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, key, currency])
 }
 
 // The firm's fee invoice to a client (SRS 9). A draft has no number and can still change; issuing gives it the next number and fixes

@@ -69,7 +69,8 @@ async function cmpClientForm(id) {
       <div id="cfRest" class="${c ? '' : 'hidden'} space-y-4">
         <div class="grid sm:grid-cols-2 gap-3">
           <label class="sm:col-span-2"><span>Client name *</span><input name="name" required maxlength="200" value="${c ? esc(c.name) : ''}"></label>
-          <label><span>Contact number * <span id="cfDial" class="text-slate-400"></span></span><input name="contactNumber" required maxlength="30" inputmode="tel" value="${c ? esc(c.contactNumber) : ''}"></label>
+          <div><label><span>Contact number * <span id="cfDial" class="text-slate-400"></span></span><input name="contactNumber" required maxlength="30" inputmode="tel" value="${c ? esc(c.contactNumber) : ''}"></label>
+            <label class="flex items-center gap-2 text-sm mt-1"><input type="checkbox" name="noWhatsApp" ${c && c.noWhatsApp ? 'checked' : ''}> This client has no WhatsApp <span class="text-slate-400">(no WhatsApp messages; reminders by phone or email)</span></label></div>
           <label><span>Email</span><input name="email" type="email" maxlength="200" value="${c ? esc(c.email) : ''}"></label>
           <label class="sm:col-span-2"><span>Address</span><textarea name="address" rows="2" maxlength="500">${c ? esc(c.address) : ''}</textarea></label>
           <label><span>Registration No.</span><input name="registrationNo" maxlength="60" value="${c ? esc(c.registrationNo) : ''}"></label>
@@ -132,9 +133,25 @@ async function cmpClientFields(code) {
     const v = esc(saved.get(d.id) || ''), miss = !saved.get(d.id) ? ' <span class="text-amber-700">· missing</span>' : '';
     const input = d.type === 'MULTILINE' ? `<textarea data-field="${d.id}" rows="2" maxlength="2000">${v}</textarea>`
       : `<input data-field="${d.id}" type="${d.type === 'DATE' ? 'date' : 'text'}" ${d.type === 'NUMBER' ? 'inputmode="decimal"' : ''} maxlength="${d.type === 'NUMBER' ? 40 : 500}" value="${v}">`;
-    return `<label class="${d.type === 'MULTILINE' ? 'sm:col-span-2' : ''}"><span>${esc(d.name)}${miss}</span>${input}</label>`;
+    // the heading can be renamed here too (the CA), with a warning: it changes for every client of its countries
+    const ren = cmpCan('SETUP') ? ` <button type="button" class="text-slate-400 hover:text-emerald-700" title="Rename this heading" onclick="event.preventDefault(); cmpFieldRename('${d.id}')">✎</button>` : '';
+    return `<label class="${d.type === 'MULTILINE' ? 'sm:col-span-2' : ''}"><span data-label="${d.id}" data-name="${esc(d.name)}">${esc(d.name)}${ren}${miss}</span>${input}</label>`;
   };
   $('#cfFields').innerHTML = defs.length ? defs.map(box).join('') : `<p class="text-sm text-slate-500 sm:col-span-2">No extra fields for ${esc(cmpCountry(code).name)} yet.${cmpCan('SETUP') ? ' Add one (e.g. Trade License Number): it will then show for every client of this country.' : ''}</p>`;
+}
+function cmpFieldRename(id) {
+  const el = document.querySelector(`#cfFields [data-label="${id}"]`); if (!el) return;
+  const old = el.dataset.name;
+  el.outerHTML = `<span class="block rounded-lg bg-amber-50 border border-amber-300 p-2 mb-1 text-xs text-amber-900 font-normal">⚠ Renaming changes this heading for <b>every client</b> of its countries, here and in the lists. Templates that use [${esc(old)}] keep the old name: change them too (Setup → Message Templates).
+    <span class="flex gap-2 mt-2"><input id="cfRen_${id}" value="${esc(old)}" maxlength="60" class="!py-1.5 !text-sm" onclick="event.preventDefault()" onkeydown="if (event.key === 'Enter') { event.preventDefault(); cmpFieldRenameSave('${id}'); }">
+      <button type="button" class="px-3 rounded-lg bg-emerald-700 text-white text-sm" onclick="event.preventDefault(); cmpFieldRenameSave('${id}')">Rename</button>
+      <button type="button" class="px-3 rounded-lg border bg-white text-sm" onclick="event.preventDefault(); cmpClientFields($('#cfCountry').value)">Cancel</button></span></span>`;
+  setTimeout(() => { const i = document.getElementById('cfRen_' + id); if (i) { i.focus(); i.select(); } }, 0);
+}
+async function cmpFieldRenameSave(id) {
+  const v = document.getElementById('cfRen_' + id).value;
+  try { await api(`/api/cmp/fields/${id}`, { method: 'PUT', body: { name: v } }); toast('Heading renamed for every client of its countries', true); await cmpClientFields($('#cfCountry').value); }
+  catch (err) { toast(err.message); }
 }
 // SRS 3.3: a new field from the client's form, for its country by default (or several countries, or all)
 function cmpFieldInline() {
@@ -173,6 +190,7 @@ async function cmpClientSave() {
   body.assignedToId = fd.get('assignedToId') || null;
   body.country = $('#cfCountry').value;
   body.noPortal = form.noPortal.checked;
+  body.noWhatsApp = form.noWhatsApp.checked;
   if (form.removePin) body.removePin = form.removePin.checked;
   if (body.timeZone === '__other') delete body.timeZone;
   body.fields = Object.fromEntries([...document.querySelectorAll('#cfFields [data-field]')].map(el => [el.dataset.field, el.value]));
@@ -185,11 +203,14 @@ async function cmpClientSave() {
 
 /* ---------- the client's 360° view ---------- */
 CMP_PAGES.push({ id: 'cm-client', html: () => '<div id="cmClient"></div>', enter: () => cmpLoadClient() });
+// The client's obligations, invoices, messages and history are shown for the dates chosen (the CA: the calendar year by default,
+// 1 January to 31 December, or other years side by side, any dates, or everything); the history stays closed until opened.
 async function cmpLoadClient() {
   const box = $('#cmClient');
   if (!CMP.clientId) return go('cm-clients');
+  const range = cmpRangeDates('cl');
   let d;
-  try { d = await api(`/api/cmp/clients/${CMP.clientId}`); } catch (err) { box.innerHTML = cmpEmpty(esc(err.message)); return; }
+  try { d = await api(`/api/cmp/clients/${CMP.clientId}?` + cmpQs(range)); } catch (err) { box.innerHTML = cmpEmpty(esc(err.message)); return; }
   const c = d.client, country = cmpCountry(c.country), archived = Boolean(c.archivedAt);
   $('#pageTitle').textContent = c.name;
   const row = (k, v) => `<div class="flex gap-3 py-1 border-b last:border-0"><dt class="w-36 shrink-0 text-slate-500">${k}</dt><dd class="min-w-0 break-words">${v || '<span class="text-slate-400">—</span>'}</dd></div>`;
@@ -202,7 +223,7 @@ async function cmpLoadClient() {
           <div><div class="text-xl font-semibold">${esc(c.name)}</div><div class="text-sm text-slate-500">${esc(c.code)} · ${esc(country.name)} · ${esc(CmpCountries.zoneCity(c.timeZone))} time${c.assignedToId ? ` · looked after by ${esc(cmpWho(c.assignedToId))}` : ''}</div></div></div>
         <div class="flex flex-wrap gap-2">
           ${!archived && cmpCan('OBLIGATION_EDIT') ? cmpBtn('+ Obligation', `cmpObligationForm('${c.id}')`, 'primary', 'needs-write') : ''}
-          ${!archived && cmpCan('WHATSAPP') ? cmpBtn(`${CMP_WA_ICON} WhatsApp`, `cmpClientMessage('${c.id}')`, 'plain', 'needs-write') : ''}
+          ${!archived && cmpCan('WHATSAPP') && !c.noWhatsApp ? cmpBtn(`${CMP_WA_ICON} WhatsApp`, `cmpClientMessage('${c.id}')`, 'plain', 'needs-write') : ''}
           ${!archived && cmpCan('INVOICE') ? cmpBtn('+ Invoice', `cmpInvoiceNew('${c.id}')`, 'plain', 'needs-write') : ''}
           ${!archived && cmpCan('CLIENT_EDIT') ? cmpBtn('Edit', `cmpClientForm('${c.id}')`, 'plain', 'needs-write') : ''}
           ${!archived && cmpCan('ARCHIVE') ? cmpBtn('Archive', `cmpClientArchive('${c.id}', true)`, 'danger', 'needs-write') : ''}
@@ -211,23 +232,27 @@ async function cmpLoadClient() {
     </div>
     <div class="grid lg:grid-cols-2 gap-4 mb-4">
       <section class="min-w-0 bg-white rounded-xl shadow p-4"><h2 class="font-semibold mb-2">Details</h2><dl class="text-sm">
-        ${row('Contact number', esc(c.contactNumber))}${row('Email', c.email ? `<a class="text-emerald-700 underline" href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : '')}
+        ${row('Contact number', esc(c.contactNumber) + (c.noWhatsApp ? ' <span class="px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-600">no WhatsApp</span>' : ''))}${row('Email', c.email ? `<a class="text-emerald-700 underline" href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : '')}
         ${row('Address', esc(c.address).replace(/\n/g, '<br>'))}${row('Registration No.', esc(c.registrationNo))}${row('Reference', esc(c.reference))}
         ${c.noPortal ? row('Online portal', 'No online portal') : row('Portal username', esc(c.portalUsername)) + row('Password', `<span id="cmSecPw">${c.hasPassword ? '••••••••' : ''}</span>`) + row('Pin code', `<span id="cmSecPin">${c.hasPin ? '••••' : ''}</span>`)}
         </dl>${!c.noPortal && cmpCan('SECRETS') && (c.hasPassword || c.hasPin) ? `<div class="mt-2">${cmpBtn('Show password', `cmpShowSecrets('${c.id}')`)} <span class="text-xs text-slate-500">(written in the activity log)</span></div>` : ''}</section>
       <section class="min-w-0 bg-white rounded-xl shadow p-4"><h2 class="font-semibold mb-2">Additional information</h2><dl class="text-sm">
         ${d.fields.length ? d.fields.map(f => row(esc(f.name), f.missing ? '<span class="px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800">Missing</span>' : esc(f.type === 'DATE' ? CmpRules.fmtDay(f.value) : f.value).replace(/\n/g, '<br>'))).join('') : `<p class="text-slate-500">No extra fields for ${esc(country.name)}.</p>`}</dl></section>
     </div>
+    <div class="bg-white rounded-xl shadow px-4 py-3 mb-4 flex flex-wrap items-end gap-3"><div class="flex flex-wrap items-end gap-2">${cmpRangeBar('cl', cmpLoadClient)}</div>
+      <p class="text-xs text-slate-500 pb-2">Obligations, invoices, receipts and messages of <b>${esc(cmpRangeText('cl'))}</b>.</p></div>
     <section class="bg-white rounded-xl shadow p-4 mb-4"><h2 class="font-semibold mb-3">Obligations</h2>
-      ${live.length ? live.map(o => cmpSeriesCard(o, c)).join('') : cmpEmpty('No obligations yet.')}
-      ${gone.length ? `<details class="mt-3"><summary class="cursor-pointer text-sm text-slate-600">Archived obligations (${gone.length})</summary><div class="mt-2">${gone.map(o => cmpSeriesCard(o, c)).join('')}</div></details>` : ''}</section>
-    ${d.invoices ? `<section class="bg-white rounded-xl shadow p-4 mb-4"><h2 class="font-semibold mb-3">Invoices and receipts</h2>${d.invoices.length ? `<table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Number</th><th>Date</th><th>For</th><th class="text-right">Total</th><th class="text-right">Outstanding</th><th>Status</th></tr></thead><tbody>
+      ${live.length ? live.map(o => cmpSeriesCard(o, c, range)).join('') : cmpEmpty('No obligations yet.')}
+      ${gone.length ? `<details class="mt-3"><summary class="cursor-pointer text-sm text-slate-600">Archived obligations (${gone.length})</summary><div class="mt-2">${gone.map(o => cmpSeriesCard(o, c, range)).join('')}</div></details>` : ''}</section>
+    ${d.invoices ? `<section class="bg-white rounded-xl shadow p-4 mb-4"><div class="flex flex-wrap items-center justify-between gap-2 mb-3"><h2 class="font-semibold">Invoices and receipts</h2>
+      <a href="#/cm-receipts" class="text-sm text-emerald-700 underline" onclick="CMP_RC.q = '${esc(c.code)}'">This client's receipts ›</a></div>${d.invoices.length ? `<table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Number</th><th>Date</th><th>For</th><th class="text-right">Total</th><th class="text-right">Outstanding</th><th>Status</th></tr></thead><tbody>
       ${d.invoices.map(i => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onclick="cmpInvoiceOpen('${i.id}', cmpLoadClient)"><td class="py-1.5">${i.number ? esc(i.number) : '<span class="text-slate-400">(draft)</span>'}</td><td>${cmpDay(i.issueDate)}</td>
-        <td class="text-xs">${i.obligation ? `${esc(i.obligation.name)} · ${esc(CmpRules.periodName(i.obligation))}` : ''}</td><td class="text-right">${cmpMoney(i.total, i.currency)}</td><td class="text-right">${['DRAFT', 'CANCELLED'].includes(i.status) ? '—' : cmpMoney(i.outstanding, i.currency)}</td><td>${cmpInvChip(i.status)}</td></tr>`).join('')}</tbody></table>` : cmpEmpty('No invoices yet.')}</section>` : ''}
+        <td class="text-xs">${i.obligation ? `${esc(i.obligation.name)} · ${esc(CmpRules.periodName(i.obligation))}` : ''}</td><td class="text-right">${cmpMoney(i.total, i.currency)}</td><td class="text-right">${['DRAFT', 'CANCELLED'].includes(i.status) ? '—' : cmpMoney(i.outstanding, i.currency)}</td><td>${cmpInvChip(i.status)}</td></tr>`).join('')}</tbody></table>` : cmpEmpty(`No invoices for ${esc(cmpRangeText('cl'))}.`)}</section>` : ''}
     ${d.messages ? `<section class="bg-white rounded-xl shadow p-4 mb-4"><h2 class="font-semibold mb-3">WhatsApp messages</h2>${d.messages.length ? `<div class="space-y-2">${d.messages.map(m => `<div class="border rounded-lg p-2 text-sm ${m.voidedAt ? 'opacity-60' : ''}">
         <div class="text-xs text-slate-500">${esc(cmpAt(m.createdAt))} · ${esc(CmpRules.MESSAGE_KINDS[m.kind] || m.kind)}${m.obligation ? ` · ${esc(m.obligation)}` : ''}${m.templateName ? ` · ${esc(m.templateName)}` : ''} · ${esc(m.userEmail)}${m.voidedAt ? ' · <b>marked not sent</b>' : ''}</div>
-        <div class="whitespace-pre-wrap mt-1">${esc(m.body)}</div></div>`).join('')}</div>` : cmpEmpty('No messages yet.')}</section>` : ''}
-    ${d.activity ? `<section class="bg-white rounded-xl shadow p-4"><h2 class="font-semibold mb-3">History</h2>${d.activity.length ? `<ul class="text-sm divide-y">${d.activity.map(a => `<li class="py-1.5"><span class="text-xs text-slate-500">${esc(cmpAt(a.createdAt))} · ${esc(a.userEmail)}</span><div>${esc(a.summary)}</div></li>`).join('')}</ul>` : cmpEmpty('Nothing yet.')}</section>` : ''}`;
+        <div class="whitespace-pre-wrap mt-1">${esc(m.body)}</div></div>`).join('')}</div>` : cmpEmpty(`No messages for ${esc(cmpRangeText('cl'))}.`)}</section>` : ''}
+    ${d.activity ? `<details class="bg-white rounded-xl shadow p-4"><summary class="cursor-pointer font-semibold">History <span class="text-sm font-normal text-slate-500">(${d.activity.length}${d.activity.length >= 300 ? '+' : ''} — click to open)</span></summary>
+      <div class="mt-3">${d.activity.length ? `<ul class="text-sm divide-y">${d.activity.map(a => `<li class="py-1.5"><span class="text-xs text-slate-500">${esc(cmpAt(a.createdAt))} · ${esc(a.userEmail)}</span><div>${esc(a.summary)}</div></li>`).join('')}</ul>` : cmpEmpty('Nothing for these dates.')}</div></details>` : ''}`;
 }
 async function cmpShowSecrets(id) {
   try {
@@ -242,9 +267,13 @@ async function cmpClientArchive(id, archive) {
   try { await api(`/api/cmp/clients/${id}/${archive ? 'archive' : 'restore'}`, { method: 'POST' }); toast(archive ? 'Client archived' : 'Client restored', true); cmpLoadClient(); }
   catch (err) { toast(err.message); }
 }
-// One obligation in the client's view: how it repeats, its reminders and every period
-function cmpSeriesCard(o, c) {
+// One obligation in the client's view: how it repeats, its reminders, and its periods of the dates chosen (with those still to come)
+function cmpSeriesCard(o, c, range = {}) {
   const rem = o.reminders.length ? o.reminders.map(r => `${esc(CmpRules.offsetLabel(r.offsetDays))} (${esc(r.templateName)})`).join(' · ') : 'no reminders';
+  const inRange = p => (!range.from || p.dueDate >= range.from) && (!range.to || p.dueDate <= range.to);
+  const shown = o.occurrences.filter(inRange), outside = o.occurrences.length - shown.length, lastSeq = o.occurrences.length ? o.occurrences[o.occurrences.length - 1].seq : 0;
+  const planned = o.archivedAt ? [] : (range.to ? CmpRules.projectPeriods(o, lastSeq + 1, range.to).filter(inRange) : CmpRules.projectPeriods(o, lastSeq + 1, '2200-12-31', 1));
+  const rows = [...shown.map(p => ({ ...p, kind: 'real' })), ...planned.map(p => ({ ...p, kind: 'planned' }))].sort((a, b) => (a.dueDate < b.dueDate ? 1 : -1));
   return `<div class="border rounded-lg p-3 mb-3 ${o.archivedAt ? 'bg-slate-50' : ''}">
     <div class="flex flex-wrap items-start justify-between gap-2">
       <div><div class="font-medium">${esc(o.name)}</div><div class="text-xs text-slate-500">${esc(CmpRules.repeatsLabel(o.frequency, o.yearsTotal))} · reminders: ${rem}</div></div>
@@ -253,11 +282,17 @@ function cmpSeriesCard(o, c) {
         ${!o.archivedAt && cmpCan('OBLIGATION_EDIT') ? cmpBtn('Edit', `cmpObligationForm('${c.id}', '${o.id}')`, 'plain', 'needs-write') : ''}
         ${!o.archivedAt && cmpCan('OBLIGATION_EDIT') ? cmpBtn('+ Next period', `cmpNextPeriod('${o.id}')`, 'plain', 'needs-write') : ''}
         ${cmpCan('ARCHIVE') && !c.archivedAt ? cmpBtn(o.archivedAt ? 'Restore' : 'Archive', `cmpObligationArchive('${o.id}', ${!o.archivedAt})`, o.archivedAt ? 'plain' : 'danger', 'needs-write') : ''}
+        ${cmpCan('ARCHIVE') ? cmpBtn('Delete', `cmpObligationDelete('${o.id}')`, 'danger', 'needs-write') : ''}
       </div>
     </div>
     <div class="overflow-x-auto mt-2"><table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1"></th><th>Period</th><th>Due date</th><th>Status</th><th></th></tr></thead><tbody>
-      ${[...o.occurrences].reverse().map(p => `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onclick="cmpOpenPeriod('${o.id}', '${p.id}', cmpLoadClient)">
+      ${rows.map(p => p.kind === 'planned' ? `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer text-slate-500" onclick="cmpOpenPlanned('${o.id}', ${p.seq}, cmpLoadClient)">
+        <td class="py-1.5 w-5"><span class="inline-block w-2.5 h-2.5 rounded-full border border-dashed border-slate-400"></span></td><td>${esc(CmpRules.periodName(p))}</td>
+        <td class="whitespace-nowrap">${cmpDay(p.dueDate)}</td><td>${CMP_PLANNED_CHIP}</td><td class="text-right">›</td></tr>`
+        : `<tr class="border-b last:border-0 hover:bg-slate-50 cursor-pointer" onclick="cmpOpenPeriod('${o.id}', '${p.id}', cmpLoadClient)">
         <td class="py-1.5 w-5">${cmpDot(p.view.colour)}</td><td>${esc(CmpRules.periodName(p))}${p.datesConfirmed ? '' : ' <span class="text-xs text-sky-700">dates to confirm</span>'}${p.overridden ? ' <span class="text-xs text-slate-500">(own dates)</span>' : ''}</td>
-        <td class="whitespace-nowrap">${cmpDay(p.dueDate)} <span class="text-xs text-slate-500">${cmpDaysLeft(p.view)}</span></td><td>${cmpStatusChip(p.view.status)}</td><td class="text-right text-emerald-700">Open ›</td></tr>`).join('')}
-    </tbody></table></div></div>`;
+        <td class="whitespace-nowrap">${cmpDay(p.dueDate)} <span class="text-xs text-slate-500">${cmpDaysLeft(p.view)}</span></td><td>${cmpStatusChip(p.view.status)}</td><td class="text-right text-emerald-700">Open ›</td></tr>`).join('')
+        || `<tr><td colspan="5" class="py-2 text-xs text-slate-500">No period due in these dates.</td></tr>`}
+    </tbody></table></div>
+    ${outside ? `<div class="text-xs text-slate-500 mt-1">${outside} other period${outside === 1 ? '' : 's'} outside these dates: choose other dates above to see ${outside === 1 ? 'it' : 'them'}.</div>` : ''}</div>`;
 }
