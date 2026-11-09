@@ -3,6 +3,8 @@
 // Every route checks the module and one permission here, on the server (SRS 2); test/cmpRouteGuards.test.js holds each route to its
 // permission, so a route cannot be added without one.
 const CmpPerms = require('../../public/cmp-perms');
+const CmpRules = require('../../public/cmp-rules');
+const V = require('./validate');
 const { CmpError } = require('./common');
 const { guardPrefix } = require('../requestGuard');
 
@@ -67,16 +69,20 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('get', '/api/cmp/clients', can('VIEW'), (req, ctx) => clients.list(ctx, req.query));
     route('post', '/api/cmp/clients', can('CLIENT_EDIT'), (req, ctx) => clients.create(ctx, req.body || {}));
     // the client's 360° view (SRS 11): details, fields, obligations; its messages and history for those who may see the logs
+    // ?from=&to= (days): the invoices, messages and history of those dates only (the CA: one calendar year at a time, or any years)
     route('get', '/api/cmp/clients/:id', can('VIEW'), async (req, ctx) => {
         const out = await clients.get(ctx, req.params.id);
         out.obligations = await obligations.forClient(ctx, out.client.id);
-        if (ctx.perms.has('INVOICE')) out.invoices = (await invoices.list(ctx, { clientId: out.client.id })).invoices;
+        const tz = (await clients.getSettings(ctx)).timeZone, q = req.query;
+        const from = q.from ? CmpRules.zoned(V.day(q.from, 'From'), 0, 0, tz) : null, to = q.to ? CmpRules.zoned(CmpRules.addDays(V.day(q.to, 'To'), 1), 0, 0, tz) : null;
+        const when = from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {};
+        if (ctx.perms.has('INVOICE')) out.invoices = (await invoices.list(ctx, { clientId: out.client.id, from: q.from, to: q.to })).invoices;
         if (ctx.perms.has('LOGS')) {
-            out.messages = (await prisma.cmpMessage.findMany({ where: { tenantId: ctx.tenantId, clientId: out.client.id }, orderBy: { createdAt: 'desc' }, take: 100,
+            out.messages = (await prisma.cmpMessage.findMany({ where: { tenantId: ctx.tenantId, clientId: out.client.id, ...when }, orderBy: { createdAt: 'desc' }, take: 300,
                 include: { occurrence: { select: { seq: true, obligation: { select: { name: true } } } } } }))
                 .map(m => ({ id: m.id, createdAt: m.createdAt, kind: m.kind, templateName: m.templateName, phone: m.phone, body: m.body, userEmail: m.userEmail, voidedAt: m.voidedAt, obligation: m.occurrence ? m.occurrence.obligation.name : '' }));
-            out.activity = await prisma.auditLog.findMany({ where: { tenantId: ctx.tenantId, action: { startsWith: 'cmp.' }, OR: [{ entityId: out.client.id }, { details: { path: ['clientId'], equals: out.client.id } }] },
-                orderBy: { createdAt: 'desc' }, take: 100, select: { id: true, createdAt: true, userEmail: true, action: true, summary: true } });
+            out.activity = await prisma.auditLog.findMany({ where: { tenantId: ctx.tenantId, action: { startsWith: 'cmp.' }, OR: [{ entityId: out.client.id }, { details: { path: ['clientId'], equals: out.client.id } }], ...when },
+                orderBy: { createdAt: 'desc' }, take: 300, select: { id: true, createdAt: true, userEmail: true, action: true, summary: true } });
         }
         return out;
     });
@@ -99,6 +105,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('post', '/api/cmp/obligations/:id/next', can('OBLIGATION_EDIT'), (req, ctx) => obligations.next(ctx, req.params.id));
     route('post', '/api/cmp/obligations/:id/archive', can('ARCHIVE'), (req, ctx) => obligations.setArchived(ctx, req.params.id, true));
     route('post', '/api/cmp/obligations/:id/restore', can('ARCHIVE'), (req, ctx) => obligations.setArchived(ctx, req.params.id, false));
+    // deleted for good (the CA); a note is required once a message was sent or an invoice issued for it
+    route('post', '/api/cmp/obligations/:id/delete', can('ARCHIVE'), (req, ctx) => obligations.remove(ctx, req.params.id, req.body || {}));
     route('get', '/api/cmp/occurrences', can('VIEW'), (req, ctx) => obligations.listOccurrences(ctx, req.query));
     route('put', '/api/cmp/occurrences/:id', can('OBLIGATION_EDIT'), (req, ctx) => obligations.updateOccurrence(ctx, req.params.id, req.body || {}));
     route('post', '/api/cmp/occurrences/:id/stage', can('COMPLETE'), (req, ctx) => obligations.setStage(ctx, req.params.id, String((req.body || {}).stage || '')));
@@ -116,6 +124,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
 
     // templates (SRS 7)
     route('get', '/api/cmp/templates', can('VIEW'), (req, ctx) => comms.listTemplates(ctx, req.query));
+    // a client's real values for every placeholder, in groups (the templates page)
+    route('get', '/api/cmp/templates/context', can('VIEW'), (req, ctx) => comms.templateContext(ctx, req.query));
     route('post', '/api/cmp/templates', can('SETUP'), (req, ctx) => comms.createTemplate(ctx, req.body || {}));
     route('put', '/api/cmp/templates/:id', can('SETUP'), (req, ctx) => comms.updateTemplate(ctx, req.params.id, req.body || {}));
     route('delete', '/api/cmp/templates/:id', can('SETUP'), (req, ctx) => comms.deleteTemplate(ctx, req.params.id));
@@ -153,19 +163,24 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('delete', '/api/cmp/invoices/:id', can('INVOICE'), (req, ctx) => invoices.remove(ctx, req.params.id));
     route('post', '/api/cmp/invoices/:id/issue', can('INVOICE'), (req, ctx) => invoices.issue(ctx, req.params.id));
     route('post', '/api/cmp/invoices/:id/sent', can('INVOICE'), (req, ctx) => invoices.markSent(ctx, req.params.id));
-    route('post', '/api/cmp/invoices/:id/cancel', can('INVOICE'), (req, ctx) => invoices.cancel(ctx, req.params.id, (req.body || {}).reason));
+    route('post', '/api/cmp/invoices/:id/unsent', can('INVOICE'), (req, ctx) => invoices.unmarkSent(ctx, req.params.id));
+    route('post', '/api/cmp/invoices/:id/cancel', can('INVOICE'), (req, ctx) => invoices.cancel(ctx, req.params.id, (req.body || {}).reason, { voidReceipts: (req.body || {}).voidReceipts === true }));
     route('post', '/api/cmp/invoices/:id/receipts', can('INVOICE'), (req, ctx) => invoices.addReceipt(ctx, req.params.id, req.body || {}));
     route('get', '/api/cmp/receipts', can('INVOICE'), (req, ctx) => invoices.listReceipts(ctx, req.query));
     route('post', '/api/cmp/receipts/:id/void', can('INVOICE'), (req, ctx) => invoices.voidReceipt(ctx, req.params.id, (req.body || {}).reason));
     route('get', '/api/cmp/taxes', can('INVOICE', 'SETUP'), (req, ctx) => invoices.listTaxRates(ctx, req.query));
     route('post', '/api/cmp/taxes', can('INVOICE', 'SETUP'), (req, ctx) => invoices.createTaxRate(ctx, req.body || {}));
     route('put', '/api/cmp/taxes/:id', can('INVOICE', 'SETUP'), (req, ctx) => invoices.updateTaxRate(ctx, req.params.id, req.body || {}));
+    // items and services with their price, per country (the CA)
+    route('get', '/api/cmp/items', can('INVOICE', 'SETUP'), (req, ctx) => invoices.listItems(ctx, req.query));
+    route('post', '/api/cmp/items', can('INVOICE', 'SETUP'), (req, ctx) => invoices.createItem(ctx, req.body || {}));
+    route('put', '/api/cmp/items/:id', can('INVOICE', 'SETUP'), (req, ctx) => invoices.updateItem(ctx, req.params.id, req.body || {}));
 
     // dashboard, calendar, reports and downloads (SRS 11, 13)
     route('get', '/api/cmp/dashboard', can('REPORTS'), (req, ctx) => reports.dashboard(ctx, req.query));
     route('get', '/api/cmp/calendar', can('VIEW'), (req, ctx) => reports.calendar(ctx, req.query));
     route('get', '/api/cmp/reports/:kind', can('REPORTS'), (req, ctx) => {
-        if (req.params.kind === 'aging' && !ctx.perms.has('INVOICE')) throw new HttpError(403, `You do not have permission to ${NO_PERM.INVOICE}.`);
+        if (['aging', 'invoices', 'receipts'].includes(req.params.kind) && !ctx.perms.has('INVOICE')) throw new HttpError(403, `You do not have permission to ${NO_PERM.INVOICE}.`);
         return reports.report(ctx, req.params.kind, req.query);
     });
     // a download needs the export permission AND the permission to see that data

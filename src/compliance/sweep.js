@@ -22,17 +22,16 @@ function createSweep({ prisma, audit, obligations, now }) {
                 summary: `${o.obligation.name} ${R.fmtDay(o.periodStart)} – ${R.fmtDay(o.periodEnd)} for ${o.obligation.client.name} (${o.obligation.client.code}): overdue, due ${R.fmtDay(o.dueDate)} and not completed`,
                 details: { clientId: o.clientId, obligationId: o.obligationId } });
         }
-        // series whose last year's period is over, that may still repeat, for active firms that use the module and want the copies made
+        // series whose last year's period is over, that may still repeat and are set to prepare the next one by themselves, for active firms that use the module
         // (the last year's due date + 13 months is a cheap first look; ensureNext checks the exact dates)
         const rows = await prisma.$queryRaw`
             SELECT o.id FROM "CmpObligation" o
             JOIN "CmpClient" c ON c.id = o."clientId"
             JOIN "Tenant" t ON t.id = o."tenantId"
-            LEFT JOIN "CmpSettings" s ON s."tenantId" = o."tenantId"
             JOIN LATERAL (SELECT x.seq, x."periodEndAt", x."dueAt" FROM "CmpOccurrence" x WHERE x."obligationId" = o.id ORDER BY x.seq DESC LIMIT 1) last ON true
             WHERE o."archivedAt" IS NULL AND c."archivedAt" IS NULL AND t.active = true AND 'COMPLIANCE' = ANY(t.modules)
-              AND COALESCE(s."autoNextYear", true) AND last."periodEndAt" <= ${at} AND last."dueAt" + interval '13 months' > ${at}
-              AND (o."yearsTotal" IS NULL OR last.seq < o."yearsTotal")
+              AND o."autoNext" AND last."periodEndAt" <= ${at} AND last."dueAt" + interval '13 months' > ${at}
+              AND (o."yearsTotal" IS NULL OR last.seq < o."yearsTotal" * (CASE o.frequency WHEN 'MONTHLY' THEN 12 WHEN 'QUARTERLY' THEN 4 WHEN 'HALF_YEARLY' THEN 2 ELSE 1 END))
               AND (${tenantId}::text IS NULL OR o."tenantId" = ${tenantId})
             LIMIT ${limit}`;
         let made = 0;

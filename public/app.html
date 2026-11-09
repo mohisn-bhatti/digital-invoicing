@@ -1292,13 +1292,15 @@ const NAV = {
   cmp: [
     { id: 'cm-none', label: 'No access yet', icon: 'home', crumb: 'Compliance', none: true },
     { id: 'cm-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview', perms: ['REPORTS'] },
-    { id: 'cm-notify', label: 'Notifications', icon: 'bell', crumb: 'Overview', perms: ['REPORTS', 'WHATSAPP'] },
-    { id: 'cm-tasks', label: 'My Tasks', icon: 'draft', crumb: 'Work', perms: ['VIEW'] },
-    { id: 'cm-obligations', label: 'Obligations', icon: 'list', crumb: 'Work', perms: ['VIEW'] },
+    // (the CA: Notifications open from the bell at the top right, My Tasks is My Obligations: neither is in the menu)
+    { id: 'cm-notify', label: 'Notifications', icon: 'bell', crumb: 'Overview', perms: ['REPORTS', 'WHATSAPP'], nomenu: true },
+    { id: 'cm-tasks', label: 'My Tasks', icon: 'draft', crumb: 'Work', perms: ['VIEW'], nomenu: true },
+    { id: 'cm-obligations', label: 'My Obligations', icon: 'list', crumb: 'Work', perms: ['VIEW'] },
     { id: 'cm-clients', label: 'Clients', icon: 'users', crumb: 'Work', perms: ['VIEW'] },
     { id: 'cm-client', label: 'Client', crumb: 'Clients', parent: 'cm-clients', perms: ['VIEW'] },
     { id: 'cm-calendar', label: 'Calendar', icon: 'clock', crumb: 'Work', perms: ['VIEW'] },
     { id: 'cm-invoices', label: 'Invoices', icon: 'book', crumb: 'Billing', perms: ['INVOICE'] },
+    { id: 'cm-receipts', label: 'Receipts', icon: 'draft', crumb: 'Billing', perms: ['INVOICE'] },
     { id: 'cm-reports', label: 'Reports', icon: 'chart', crumb: 'Reports', perms: ['REPORTS'] },
     { id: 'cm-messages', label: 'WhatsApp Log', icon: 'chat', crumb: 'Logs', group: 'cmlogs', perms: ['LOGS'] },
     { id: 'cm-activity', label: 'Activity Log', icon: 'clock', crumb: 'Logs', group: 'cmlogs', perms: ['LOGS'] },
@@ -1353,7 +1355,7 @@ const navOpen = id => { try { return localStorage.getItem('navGroup:' + id) !== 
 function renderNav() {
   const svg = icon => `<svg viewBox="0 0 24 24" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[icon]}"/></svg>`;
   const link = (n, sub) => `<a href="#/${n.id}" data-nav="${n.id}" class="flex items-center gap-3 mx-3 my-0.5 ${sub ? 'pl-3 pr-2 py-1.5 text-[13px] whitespace-nowrap' : 'px-3 py-2'} rounded-lg hover:bg-white/10">${svg(n.icon)}${esc(n.label)}</a>`;
-  const items = navList().filter(n => !n.parent), html = [], done = new Set();
+  const items = navList().filter(n => !n.parent && !n.nomenu), html = [], done = new Set();
   for (const n of items) {
     if (!n.group) { html.push(link(n)); continue; }
     if (done.has(n.group)) continue;
@@ -1391,11 +1393,14 @@ function route() {
   if (!S.token || needsModuleChoice()) return;
   const list = navList(), view = S.role === 'SUPER_ADMIN' ? '#adminView' : '#clientView';
   if (!list.length) return; // (a product's menu not ready yet: its start function routes when it is)
-  let id = location.hash.replace(/^#\/?/, '');
+  // #/page, or #/page/something: the something is for the page (e.g. #/cm-invoices/INV-2026-0001 opens that invoice)
+  const raw = location.hash.replace(/^#\/?/, '');
+  let id = raw.split('/')[0];
+  S.routeArg = raw.slice(id.length + 1);
   if (id === 'c-taxrules') { id = 'c-products'; history.replaceState(null, '', '#/c-products'); } // merged into Items with Tax Rules
   const meta = list.find(n => n.id === id);
   if (!meta || !document.querySelector(`${view} [data-page="${id}"]`) || (id === 'a-client' && !S.manageId)) {
-    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : S.module === 'COMPLIANCE' ? list.find(n => !n.parent).id : (S.module === 'POS' ? (['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER') ? 'p-dashboard' : isReadOnly() ? 'p-sales' : 'p-sale') : (S.adminSession ? 'c-new' : 'c-dashboard'));
+    id = S.role === 'SUPER_ADMIN' ? 'a-dashboard' : S.module === 'COMPLIANCE' ? list.find(n => !n.parent && !n.nomenu).id : (S.module === 'POS' ? (['OWNER', 'ACCOUNTANT'].includes(S.tenantRole || 'OWNER') ? 'p-dashboard' : isReadOnly() ? 'p-sales' : 'p-sale') : (S.adminSession ? 'c-new' : 'c-dashboard'));
     history.replaceState(null, '', '#/' + id);
   }
   const m = list.find(n => n.id === id);

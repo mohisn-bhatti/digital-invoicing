@@ -27,9 +27,11 @@ function createObligations({ prisma, audit, common, now }) {
         return m;
     }
     const reminderList = rs => rs.map(r => ({ id: r.id, offsetDays: r.offsetDays, templateId: r.templateId, templateName: r.template ? r.template.name : '', templateActive: r.template ? r.template.active : false }));
-    // One year as the screens need it, with its status, colour and reminders worked out on the client's clock
-    function present(occ, { reminders, tz, settings, sent, at }) {
-        const v = R.occurrenceView(occ, { tz, hour: settings.reminderHour, amberDays: settings.amberDays, now: at, reminders, sent: sent.get(occ.id) || new Map() });
+    // One year as the screens need it, with its status, colour and reminders worked out on the client's clock. amberDays: the
+    // obligation's own (the CA); noWhatsApp: the client has none, so no reminder waits to be sent on WhatsApp.
+    function present(occ, { reminders, tz, settings, sent, at, amberDays, noWhatsApp = false }) {
+        const v = R.occurrenceView(occ, { tz, hour: settings.reminderHour, amberDays: amberDays ?? settings.amberDays, now: at, reminders, sent: sent.get(occ.id) || new Map() });
+        if (noWhatsApp) v.actionable = false;
         return {
             id: occ.id, seq: occ.seq, periodStart: ymd(occ.periodStart), periodEnd: ymd(occ.periodEnd), dueDate: ymd(occ.dueDate), stage: occ.stage,
             datesConfirmed: occ.datesConfirmed, overridden: occ.overridden, closedAt: occ.closedAt, closedBy: occ.closedBy, closeKind: occ.closeKind, notes: occ.notes,
@@ -39,8 +41,8 @@ function createObligations({ prisma, audit, common, now }) {
             },
         };
     }
-    const clientBrief = c => ({ id: c.id, code: c.code, name: c.name, country: c.country, timeZone: c.timeZone, archivedAt: c.archivedAt, assignedToId: c.assignedToId });
-    const seriesView = ob => ({ id: ob.id, clientId: ob.clientId, name: ob.name, portalUrl: ob.portalUrl, frequency: ob.frequency, yearsTotal: ob.yearsTotal, notes: ob.notes, assignedToId: ob.assignedToId,
+    const clientBrief = c => ({ id: c.id, code: c.code, name: c.name, country: c.country, timeZone: c.timeZone, noWhatsApp: c.noWhatsApp, archivedAt: c.archivedAt, assignedToId: c.assignedToId });
+    const seriesView = ob => ({ id: ob.id, clientId: ob.clientId, name: ob.name, portalUrl: ob.portalUrl, frequency: ob.frequency, yearsTotal: ob.yearsTotal, notes: ob.notes, assignedToId: ob.assignedToId, amberDays: ob.amberDays, autoNext: ob.autoNext,
         basePeriodStart: ymd(ob.basePeriodStart), basePeriodEnd: ymd(ob.basePeriodEnd), baseDueDate: ymd(ob.baseDueDate), baseSeq: ob.baseSeq, archivedAt: ob.archivedAt, archivedBy: ob.archivedBy, createdAt: ob.createdAt });
 
     const INCLUDE = { client: true, reminders: { include: { template: { select: { id: true, name: true, active: true } } } }, occurrences: { orderBy: { seq: 'asc' } } };
@@ -49,13 +51,21 @@ function createObligations({ prisma, audit, common, now }) {
         const sent = await sentMap(list.flatMap(ob => ob.occurrences.map(o => o.id)));
         return list.map(ob => {
             const reminders = reminderList(ob.reminders);
-            return { ...seriesView(ob), client: clientBrief(ob.client), reminders, occurrences: ob.occurrences.map(o => present(o, { reminders, tz: ob.client.timeZone, settings, sent, at })) };
+            return { ...seriesView(ob), client: clientBrief(ob.client), reminders, occurrences: ob.occurrences.map(o => present(o, { reminders, tz: ob.client.timeZone, settings, sent, at, amberDays: ob.amberDays, noWhatsApp: ob.client.noWhatsApp })) };
         });
     }
     async function get(ctx, id) {
         await common.findObligation(ctx.tenantId, id);
         const ob = await prisma.cmpObligation.findUnique({ where: { id }, include: INCLUDE });
-        return (await presentSeries(ctx.tenantId, [ob]))[0];
+        const out = (await presentSeries(ctx.tenantId, [ob]))[0];
+        // what deleting it would touch (the CA: once a message was sent, it is deleted only with a warning and a note)
+        const ids = ob.occurrences.map(o => o.id);
+        const [messages, invoices] = ids.length ? await Promise.all([
+            prisma.cmpMessage.count({ where: { occurrenceId: { in: ids }, voidedAt: null } }),
+            prisma.cmpInvoice.count({ where: { occurrenceId: { in: ids }, status: { notIn: ['DRAFT', 'CANCELLED'] } } }),
+        ]) : [0, 0];
+        out.usage = { messages, invoices };
+        return out;
     }
     async function forClient(ctx, clientId) {
         const list = await prisma.cmpObligation.findMany({ where: { tenantId: ctx.tenantId, clientId }, orderBy: [{ archivedAt: { sort: 'asc', nulls: 'first' } }, { name: 'asc' }], include: INCLUDE });
@@ -89,7 +99,7 @@ function createObligations({ prisma, audit, common, now }) {
         await common.checkTemplates(ctx.tenantId, rems);
         const assignedToId = (await common.assignee(ctx.tenantId, b.assignedToId)) || null;
         const ob = await prisma.$transaction(async tx => {
-            const row = await tx.cmpObligation.create({ data: { tenantId: ctx.tenantId, clientId: client.id, name: o.name, portalUrl: o.portalUrl, frequency: o.frequency, yearsTotal: o.yearsTotal, notes: o.notes, assignedToId,
+            const row = await tx.cmpObligation.create({ data: { tenantId: ctx.tenantId, clientId: client.id, name: o.name, portalUrl: o.portalUrl, frequency: o.frequency, yearsTotal: o.yearsTotal, notes: o.notes, assignedToId, amberDays: o.amberDays, autoNext: o.autoNext,
                 basePeriodStart: dateOf(o.periodStart), basePeriodEnd: dateOf(o.periodEnd), baseDueDate: dateOf(o.dueDate), createdBy: ctx.email } });
             await tx.cmpOccurrence.create({ data: { tenantId: ctx.tenantId, clientId: client.id, obligationId: row.id, seq: 1, ...occData(o, client.timeZone) } });
             if (rems.length) await tx.cmpReminder.createMany({ data: rems.map(r => ({ tenantId: ctx.tenantId, obligationId: row.id, offsetDays: r.offsetDays, templateId: r.templateId })) });
@@ -98,8 +108,7 @@ function createObligations({ prisma, audit, common, now }) {
         const names = new Map((await prisma.cmpTemplate.findMany({ where: { id: { in: rems.map(r => r.templateId) } }, select: { id: true, name: true } })).map(t => [t.id, t.name]));
         await log(ctx, 'cmp.obligation.create', 'CmpObligation', ob.id, `${o.name} added for ${common.clientLabel(client)}: ${datesText(o)}; ${R.repeatsLabel(o.frequency, o.yearsTotal).toLowerCase()}; reminders: ${remText(rems.map(r => ({ ...r, templateName: names.get(r.templateId) })))}`, { clientId: client.id, obligationId: ob.id });
         // a period that is already over: next year's copy straight away (otherwise the background job makes it when the period ends)
-        const settings = await common.settings(ctx.tenantId);
-        if (settings.autoNextYear && R.instants(o, client.timeZone).periodEndAt <= now()) await ensureNext(ob.id, { req: ctx.req });
+        if (o.autoNext && R.instants(o, client.timeZone).periodEndAt <= now()) await ensureNext(ob.id, { req: ctx.req });
         return get(ctx, ob.id);
     }
 
@@ -116,10 +125,11 @@ function createObligations({ prisma, audit, common, now }) {
         }
         await prisma.cmpObligation.update({ where: { id: ob.id }, data: o });
         const what = [o.name !== undefined && o.name !== ob.name && `renamed "${ob.name}" → "${o.name}"`, o.portalUrl !== undefined && o.portalUrl !== ob.portalUrl && 'portal link',
-            o.yearsTotal !== undefined && o.yearsTotal !== ob.yearsTotal && `repeats: ${R.repeatsLabel(ob.frequency, ob.yearsTotal).toLowerCase()} → ${R.repeatsLabel(ob.frequency, o.yearsTotal).toLowerCase()}`, o.notes !== undefined && o.notes !== ob.notes && 'notes', o.assignedToId !== undefined && o.assignedToId !== ob.assignedToId && 'assigned to someone else'].filter(Boolean);
+            o.yearsTotal !== undefined && o.yearsTotal !== ob.yearsTotal && `repeats: ${R.repeatsLabel(ob.frequency, ob.yearsTotal).toLowerCase()} → ${R.repeatsLabel(ob.frequency, o.yearsTotal).toLowerCase()}`, o.notes !== undefined && o.notes !== ob.notes && 'notes', o.assignedToId !== undefined && o.assignedToId !== ob.assignedToId && 'assigned to someone else',
+            o.amberDays !== undefined && o.amberDays !== ob.amberDays && `turns amber ${ob.amberDays} → ${o.amberDays} days before`, o.autoNext !== undefined && o.autoNext !== ob.autoNext && (o.autoNext ? 'next period prepared by itself' : 'next period added by hand')].filter(Boolean);
         if (what.length) await log(ctx, 'cmp.obligation.update', 'CmpObligation', ob.id, `${o.name || ob.name} for ${common.clientLabel(ob.client)}: ${what.join(', ')}`, { clientId: ob.clientId, obligationId: ob.id });
-        // more years allowed than before, and the last one's period is over: the next one can come now
-        if (o.yearsTotal !== undefined && (await common.settings(ctx.tenantId)).autoNextYear) {
+        // more years allowed than before (or "by itself" switched on), and the last one's period is over: the next one can come now
+        if ((o.yearsTotal !== undefined || o.autoNext === true) && (o.autoNext ?? ob.autoNext)) {
             const last = await prisma.cmpOccurrence.findFirst({ where: { obligationId: ob.id }, orderBy: { seq: 'desc' } });
             if (last && last.periodEndAt <= now()) await ensureNext(ob.id, { req: ctx.req });
         }
@@ -213,7 +223,7 @@ function createObligations({ prisma, audit, common, now }) {
             return mode === 'INVOICE' && makeInvoice ? makeInvoice(tx) : null;
         });
         await log(ctx, 'cmp.occurrence.complete', 'CmpOccurrence', occ.id, `${occ.obligation.name} ${period(occ)} for ${common.clientLabel(occ.obligation.client)}: ${STEP_NAMES[occ.stage]} → Completed (${mode === 'INVOICE' ? 'with an invoice' : 'closed without an invoice'})`, { clientId: occ.clientId, obligationId: occ.obligationId, from: occ.stage, to: 'COMPLETED', closeKind: mode });
-        if ((await common.settings(ctx.tenantId)).autoNextYear) {
+        if (occ.obligation.autoNext) {
             const last = await prisma.cmpOccurrence.findFirst({ where: { obligationId: occ.obligationId }, orderBy: { seq: 'desc' } });
             if (last.id === occ.id) await ensureNext(occ.obligationId, { req: ctx.req });
         }
@@ -236,6 +246,30 @@ function createObligations({ prisma, audit, common, now }) {
         await log(ctx, archive ? 'cmp.obligation.archive' : 'cmp.obligation.restore', 'CmpObligation', ob.id, `${ob.name} for ${common.clientLabel(ob.client)} ${archive ? 'archived' : 'restored'}`, { clientId: ob.clientId, obligationId: ob.id });
         return get(ctx, ob.id);
     }
+    // Deleted for good (the CA). Its periods and reminders go; WhatsApp messages and invoices already made stay in their logs and lists,
+    // no longer tied to it. Once a message was sent or an invoice issued for it, a note saying why is required (and kept in the activity log).
+    async function remove(ctx, id, b = {}) {
+        const ob = await common.findObligation(ctx.tenantId, id);
+        const occs = await prisma.cmpOccurrence.findMany({ where: { obligationId: ob.id }, select: { id: true } }), ids = occs.map(o => o.id);
+        const [messages, invoices] = ids.length ? await Promise.all([
+            prisma.cmpMessage.count({ where: { occurrenceId: { in: ids }, voidedAt: null } }),
+            prisma.cmpInvoice.count({ where: { occurrenceId: { in: ids }, status: { notIn: ['DRAFT', 'CANCELLED'] } } }),
+        ]) : [0, 0];
+        const note = V.multiline(b.note, 500, 'Note');
+        if ((messages || invoices) && !note) throw new CmpError(409, `${[messages && `${messages} WhatsApp message${messages === 1 ? ' was' : 's were'} sent`, invoices && `${invoices} invoice${invoices === 1 ? ' was' : 's were'} issued`].filter(Boolean).join(' and ')} for this obligation. Write a note saying why it is deleted.`);
+        await prisma.$transaction(async tx => {
+            if (ids.length) {
+                await tx.cmpMessage.updateMany({ where: { occurrenceId: { in: ids } }, data: { occurrenceId: null, reminderId: null } });
+                await tx.cmpInvoice.updateMany({ where: { occurrenceId: { in: ids } }, data: { occurrenceId: null } });
+            }
+            await tx.cmpReminder.deleteMany({ where: { obligationId: ob.id } });
+            await tx.cmpOccurrence.deleteMany({ where: { obligationId: ob.id } });
+            await tx.cmpObligation.delete({ where: { id: ob.id } });
+        });
+        await log(ctx, 'cmp.obligation.delete', 'CmpObligation', ob.id, `${ob.name} for ${common.clientLabel(ob.client)} deleted (${ids.length} period${ids.length === 1 ? '' : 's'}${messages ? `, ${messages} message${messages === 1 ? '' : 's'} sent` : ''}${invoices ? `, ${invoices} invoice${invoices === 1 ? '' : 's'}` : ''})${note ? `. Note: ${note}` : ''}`,
+            { clientId: ob.clientId, obligationId: ob.id, periods: ids.length, messages, invoices, note });
+        return { ok: true };
+    }
 
     // The obligations list: one row per year, with filters (SRS 10). status: UPCOMING, PERIOD_CLOSED, DATA_COLLECTED, FILED, PAID, COMPLETED,
     // OVERDUE, OPEN (everything not completed, the default), CONFIRM (dates to confirm) or ALL
@@ -251,37 +285,71 @@ function createObligations({ prisma, audit, common, now }) {
             OVERDUE: { stage: { not: 'COMPLETED' }, dueAt: { lte: at } },
             DATA_COLLECTED: { stage: 'DATA_COLLECTED', dueAt: { gt: at } }, FILED: { stage: 'FILED', dueAt: { gt: at } }, PAID: { stage: 'PAID', dueAt: { gt: at } },
             PERIOD_CLOSED: { stage: 'OPEN', periodEndAt: { lte: at }, dueAt: { gt: at } }, UPCOMING: { stage: 'OPEN', periodEndAt: { gt: at } },
-            CONFIRM: { datesConfirmed: false, stage: { not: 'COMPLETED' } },
+            CONFIRM: { datesConfirmed: false, stage: { not: 'COMPLETED' } }, PLANNED: {},
         };
         if (!byStatus[status]) throw bad('Unknown status.');
         AND.push(byStatus[status]);
         if (q.country) AND.push({ obligation: { client: { country: V.country(q.country).code } } });
-        if (q.clientId) AND.push({ clientId: String(q.clientId) });
+        const clientIds = q.clientId ? String(q.clientId).split(',').map(x => x.trim()).filter(Boolean).slice(0, 500) : [];
+        if (clientIds.length) AND.push({ clientId: { in: clientIds } });
         // the obligation's person, or (when it has none) the client's person
         if (q.assignee) {
             const who = common.assigneeFilter(q.assignee, ctx.userId);
             AND.push(who === null ? { obligation: { assignedToId: null, client: { assignedToId: null } } } : { OR: [{ obligation: { assignedToId: who } }, { obligation: { assignedToId: null, client: { assignedToId: who } } }] });
         }
-        if (q.from) AND.push({ dueDate: { gte: dateOf(V.day(q.from, 'From')) } });
-        if (q.to) AND.push({ dueDate: { lte: dateOf(V.day(q.to, 'To')) } });
+        const from = q.from ? V.day(q.from, 'From') : null, to = q.to ? V.day(q.to, 'To') : null;
+        if (from) AND.push({ dueDate: { gte: dateOf(from) } });
+        if (to) AND.push({ dueDate: { lte: dateOf(to) } });
         const s = String(q.q || '').trim().slice(0, 100);
-        if (s) AND.push({ OR: [{ obligation: { name: ciContains(s) } }, { obligation: { client: { name: ciContains(s) } } }, { obligation: { client: { code: ciContains(s) } } }] });
+        const search = s ? [{ name: ciContains(s) }, { client: { name: ciContains(s) } }, { client: { code: ciContains(s) } }] : null;
+        if (search) AND.push({ OR: search.map(x => ({ obligation: x })) });
         where.AND = AND;
-        const [rows, total] = await Promise.all([
-            prisma.cmpOccurrence.findMany({ where, orderBy: [{ dueDate: status === 'COMPLETED' ? 'desc' : 'asc' }, { id: 'asc' }], take: Math.min(Number(q.limit) || 500, 20000),
-                include: { obligation: { include: { client: true, reminders: { include: { template: { select: { id: true, name: true, active: true } } } } } } } }),
+        const limit = Math.min(Number(q.limit) || 500, 20000);
+        // by due date, then the client's name, then the obligation's (the CA: same date → alphabetically)
+        const [rows, total] = status === 'PLANNED' ? [[], 0] : await Promise.all([
+            prisma.cmpOccurrence.findMany({ where, orderBy: [{ dueDate: status === 'COMPLETED' ? 'desc' : 'asc' }, { obligation: { client: { name: 'asc' } } }, { obligation: { name: 'asc' } }, { id: 'asc' }], take: limit,
+                include: { obligation: { include: { client: true, reminders: { include: { template: { select: { id: true, name: true, active: true } } } } } },
+                    invoices: { where: { status: { not: 'CANCELLED' } }, orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, number: true, status: true, currency: true, total: true, received: true } } } }),
             prisma.cmpOccurrence.count({ where }),
         ]);
         const settings = await common.settings(ctx.tenantId), sent = await sentMap(rows.map(r => r.id));
-        return {
-            total,
-            rows: rows.map(o => ({
-                ...present(o, { reminders: reminderList(o.obligation.reminders), tz: o.obligation.client.timeZone, settings, sent, at }),
-                obligation: { id: o.obligation.id, name: o.obligation.name, frequency: o.obligation.frequency, yearsTotal: o.obligation.yearsTotal, portalUrl: o.obligation.portalUrl, archivedAt: o.obligation.archivedAt, assignedToId: o.obligation.assignedToId },
-                client: clientBrief(o.obligation.client),
-                assignedToId: o.obligation.assignedToId || o.obligation.client.assignedToId || null,
-            })),
-        };
+        const out = rows.map(o => ({
+            ...present(o, { reminders: reminderList(o.obligation.reminders), tz: o.obligation.client.timeZone, settings, sent, at, amberDays: o.obligation.amberDays, noWhatsApp: o.obligation.client.noWhatsApp }),
+            obligation: { id: o.obligation.id, name: o.obligation.name, frequency: o.obligation.frequency, yearsTotal: o.obligation.yearsTotal, portalUrl: o.obligation.portalUrl, archivedAt: o.obligation.archivedAt, assignedToId: o.obligation.assignedToId },
+            client: clientBrief(o.obligation.client),
+            assignedToId: o.obligation.assignedToId || o.obligation.client.assignedToId || null,
+            invoice: o.invoices[0] ? { id: o.invoices[0].id, number: o.invoices[0].number, status: o.invoices[0].status, currency: o.invoices[0].currency, total: Number(o.invoices[0].total), received: Number(o.invoices[0].received) } : null,
+        }));
+        // The periods still to come (the CA: the calendar and the year show the future, unlimited when it has no end): not stored, only
+        // shown as "Planned" until their turn comes (or someone prepares them). Only for a stretch of dates, never for archived ones.
+        let planned = [];
+        if (q.projected === '1' && from && to && q.archived !== '1' && ['ALL', 'OPEN', 'UPCOMING', 'PLANNED'].includes(status) && R.daysBetween(from, to) <= 20 * 366) {
+            const obWhere = { tenantId: ctx.tenantId, archivedAt: null, client: { archivedAt: null } };
+            const obAND = [];
+            if (q.country) obAND.push({ client: { country: V.country(q.country).code } });
+            if (clientIds.length) obAND.push({ clientId: { in: clientIds } });
+            if (q.assignee) {
+                const who = common.assigneeFilter(q.assignee, ctx.userId);
+                obAND.push(who === null ? { assignedToId: null, client: { assignedToId: null } } : { OR: [{ assignedToId: who }, { assignedToId: null, client: { assignedToId: who } }] });
+            }
+            if (search) obAND.push({ OR: search });
+            obWhere.AND = obAND;
+            const obs = await prisma.cmpObligation.findMany({ where: obWhere, take: 5000, include: { client: true, occurrences: { orderBy: { seq: 'desc' }, take: 1, select: { seq: true } } } });
+            const today = R.dayIn(settings.timeZone, at);
+            for (const ob of obs) {
+                const series = { basePeriodStart: ymd(ob.basePeriodStart), basePeriodEnd: ymd(ob.basePeriodEnd), baseDueDate: ymd(ob.baseDueDate), baseSeq: ob.baseSeq, frequency: ob.frequency, yearsTotal: ob.yearsTotal };
+                for (const d of R.projectPeriods(series, (ob.occurrences[0] ? ob.occurrences[0].seq : 0) + 1, to)) {
+                    if (d.dueDate < from) continue;
+                    planned.push({ id: `plan:${ob.id}:${d.seq}`, seq: d.seq, periodStart: d.periodStart, periodEnd: d.periodEnd, dueDate: d.dueDate, stage: 'OPEN', datesConfirmed: false, overridden: false, notes: '', projected: true,
+                        view: { status: 'PLANNED', colour: 'planned', overdue: false, daysLeft: R.daysBetween(today, d.dueDate), actionable: false, inWindow: false, reminders: [] },
+                        obligation: { id: ob.id, name: ob.name, frequency: ob.frequency, yearsTotal: ob.yearsTotal, portalUrl: ob.portalUrl, archivedAt: null, assignedToId: ob.assignedToId },
+                        client: clientBrief(ob.client), assignedToId: ob.assignedToId || ob.client.assignedToId || null, invoice: null });
+                    if (planned.length >= 5000) break;
+                }
+            }
+        }
+        const all = planned.length ? [...out, ...planned].sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0) || a.client.name.localeCompare(b.client.name) || a.obligation.name.localeCompare(b.obligation.name)).slice(0, limit) : out;
+        return { total: total + planned.length, planned: planned.length, rows: all };
     }
 
     // SRS 4: names, dates and reminders already used for other clients of the same country, most used first (never another country's).
@@ -303,7 +371,7 @@ function createObligations({ prisma, audit, common, now }) {
         return [...byName.values()].map(x => ({ ...x, clients: x.clients.size })).sort((a, b) => b.clients - a.clients || a.name.localeCompare(b.name));
     }
 
-    return { sentMap, present, reminderList, get, forClient, ensureNext, create, update, setReminders, next, updateOccurrence, setStage, complete, reopen, setArchived, listOccurrences, suggest };
+    return { sentMap, present, reminderList, get, forClient, ensureNext, create, update, setReminders, next, updateOccurrence, setStage, complete, reopen, setArchived, remove, listOccurrences, suggest };
 }
 
 module.exports = { createObligations, occData };

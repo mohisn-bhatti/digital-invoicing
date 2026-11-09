@@ -60,6 +60,51 @@ function createReports({ prisma, audit, common, clients, obligations, comms, inv
             const rows = (await obligations.listOccurrences(ctx, { ...q, status: 'OPEN', from: today, to: R.addDays(today, days), limit: 5000 })).rows.filter(r => !r.view.overdue);
             return { kind, days, rows };
         }
+        // the CA: every report here, each for the dates chosen (by default the calendar year)
+        const range = () => ({ from: q.from ? V.day(q.from, 'From') : '', to: q.to ? V.day(q.to, 'To') : '' });
+        if (kind === 'obligations') {
+            const d = await obligations.listOccurrences(ctx, { ...q, status: q.status || 'ALL', limit: 20000 });
+            const counts = {};
+            for (const r of d.rows) counts[r.view.status] = (counts[r.view.status] || 0) + 1;
+            return { kind, ...range(), rows: d.rows, counts };
+        }
+        if (kind === 'invoices' || kind === 'receipts') {
+            const { from, to } = range();
+            const rows = kind === 'invoices' ? (await invoices.list(ctx, { ...q, from, to, limit: 20000 })).invoices : await invoices.listReceipts(ctx, { ...q, from, to, limit: 20000 });
+            const totals = new Map();
+            for (const r of rows) {
+                if (kind === 'invoices' ? ['DRAFT', 'CANCELLED'].includes(r.status) : r.voidedAt) continue;
+                const t = totals.get(r.currency) || { currency: r.currency, count: 0, total: 0, received: 0, outstanding: 0 };
+                t.count++;
+                if (kind === 'invoices') { t.total += r.total; t.received += r.received; t.outstanding += r.outstanding; } else t.total += r.amount;
+                totals.set(r.currency, t);
+            }
+            return { kind, from, to, rows, totals: [...totals.values()] };
+        }
+        if (kind === 'clients') {
+            const { from, to } = range(), due = {};
+            if (from) due.gte = new Date(from + 'T00:00:00Z');
+            if (to) due.lte = new Date(to + 'T00:00:00Z');
+            const where = { tenantId: ctx.tenantId, archivedAt: null };
+            if (q.country) where.country = V.country(q.country).code;
+            const list = await prisma.cmpClient.findMany({ where, orderBy: { name: 'asc' }, take: 5000 });
+            const ids = list.map(c => c.id), at = now();
+            const [occs, invs] = ids.length ? await Promise.all([
+                prisma.cmpOccurrence.findMany({ where: { clientId: { in: ids }, obligation: { archivedAt: null }, ...(from || to ? { dueDate: due } : {}) }, select: { clientId: true, stage: true, dueAt: true } }),
+                ctx.perms.has('INVOICE') ? prisma.cmpInvoice.findMany({ where: { clientId: { in: ids }, status: { notIn: ['DRAFT', 'CANCELLED'] }, ...(from || to ? { issueDate: due } : {}) }, select: { clientId: true, currency: true, total: true, received: true } }) : [],
+            ]) : [[], []];
+            const rows = list.map(c => {
+                const mine = occs.filter(o => o.clientId === c.id), money = new Map();
+                for (const i of invs.filter(x => x.clientId === c.id)) {
+                    const m = money.get(i.currency) || { currency: i.currency, invoiced: 0, received: 0, outstanding: 0 };
+                    m.invoiced += Number(i.total); m.received += Number(i.received); m.outstanding += Number(i.total) - Number(i.received);
+                    money.set(i.currency, m);
+                }
+                return { client: { id: c.id, code: c.code, name: c.name, country: c.country }, periods: mine.length, completed: mine.filter(o => o.stage === 'COMPLETED').length,
+                    open: mine.filter(o => o.stage !== 'COMPLETED').length, overdue: mine.filter(o => o.stage !== 'COMPLETED' && o.dueAt <= at).length, money: [...money.values()] };
+            });
+            return { kind, from, to, rows, money: ctx.perms.has('INVOICE') };
+        }
         if (kind === 'aging') {
             const inv = (await invoices.list(ctx, { ...q, status: 'UNPAID', limit: 20000 })).invoices;
             const rows = inv.map(i => {
@@ -78,7 +123,7 @@ function createReports({ prisma, audit, common, clients, obligations, comms, inv
     }
 
     // SRS 13: the lists and reports as a spreadsheet (CSV, opens in Excel), with the filters on the screen
-    const KINDS = { clients: 'VIEW', obligations: 'VIEW', invoices: 'INVOICE', receipts: 'INVOICE', overdue: 'REPORTS', upcoming: 'REPORTS', aging: 'REPORTS' };
+    const KINDS = { clients: 'VIEW', obligations: 'VIEW', invoices: 'INVOICE', receipts: 'INVOICE', overdue: 'REPORTS', upcoming: 'REPORTS', aging: 'REPORTS', clientsummary: 'REPORTS' };
     async function exportCsv(ctx, kind, q, res) {
         if (!KINDS[kind]) throw bad('Unknown export.');
         const settings = await common.settings(ctx.tenantId), names = await team(ctx.tenantId);
@@ -103,6 +148,11 @@ function createReports({ prisma, audit, common, clients, obligations, comms, inv
         } else if (kind === 'receipts') {
             head = ['Number', 'Date received', 'Client code', 'Client', 'Invoice', 'Currency', 'Amount', 'Paid by', 'Reference', 'Void'];
             rows = (await invoices.listReceipts(ctx, { ...q, limit: 20000 })).map(r => [r.number, r.receivedOn, r.client.code, r.client.name, r.invoice.number, r.currency, cur(r.amount, r.currency), invoices.METHODS[r.method] || r.method, r.reference, r.voidedAt ? `void: ${r.voidReason}` : '']);
+        } else if (kind === 'clientsummary') {
+            const d = await report(ctx, 'clients', q);
+            head = ['Client code', 'Client', 'Country', 'Periods due', 'Completed', 'Open', 'Overdue', ...(d.money ? ['Invoiced', 'Received', 'Outstanding'] : [])];
+            const m = (r, k) => r.money.map(x => `${x.currency} ${cur(x[k], x.currency)}`).join('; ');
+            rows = d.rows.map(r => [r.client.code, r.client.name, r.client.country, r.periods, r.completed, r.open, r.overdue, ...(d.money ? [m(r, 'invoiced'), m(r, 'received'), m(r, 'outstanding')] : [])]);
         } else {
             const a = await report(ctx, 'aging', q);
             head = ['Invoice', 'Client code', 'Client', 'Currency', 'Invoice date', 'Age (days)', 'Bucket', 'Total', 'Received', 'Outstanding'];

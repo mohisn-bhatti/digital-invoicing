@@ -45,7 +45,7 @@ function createClients({ prisma, audit, encrypt, decrypt, common, now }) {
         if (!def) throw new CmpError(404, 'Field not found.');
         const data = {};
         if (b.name !== undefined || b.type !== undefined || b.allCountries !== undefined || b.countries !== undefined) {
-            const d = V.cleanFieldDef({ name: b.name ?? def.name, type: b.type ?? def.type, allCountries: b.allCountries ?? def.allCountries, countries: b.countries ?? def.countries });
+            const d = V.cleanFieldDef({ name: b.name ?? def.name, type: b.type ?? def.type, allCountries: b.allCountries ?? def.allCountries, countries: b.countries ?? def.countries }, { keepKey: def.key });
             if (d.type !== def.type && def._count.values) throw bad(`"${def.name}" already has values for ${def._count.values} client(s): its type cannot change. Add a new field instead.`);
             Object.assign(data, d);
         }
@@ -60,8 +60,8 @@ function createClients({ prisma, audit, encrypt, decrypt, common, now }) {
     }
 
     /* ---------- clients ---------- */
-    const listView = c => ({ id: c.id, code: c.code, country: c.country, timeZone: c.timeZone, name: c.name, contactNumber: c.contactNumber, email: c.email, registrationNo: c.registrationNo, reference: c.reference, assignedToId: c.assignedToId, archivedAt: c.archivedAt, createdAt: c.createdAt });
-    const fullView = c => ({ ...listView(c), address: c.address, noPortal: c.noPortal, portalUsername: c.portalUsername, hasPassword: Boolean(c.portalPasswordEnc), hasPin: Boolean(c.pinCodeEnc), archivedBy: c.archivedBy, createdBy: c.createdBy, updatedAt: c.updatedAt });
+    const listView = c => ({ id: c.id, code: c.code, country: c.country, timeZone: c.timeZone, name: c.name, contactNumber: c.contactNumber, email: c.email, registrationNo: c.registrationNo, reference: c.reference, noWhatsApp: c.noWhatsApp, assignedToId: c.assignedToId, archivedAt: c.archivedAt, createdAt: c.createdAt });
+    const fullView = c => ({ ...listView(c), address: c.address, noPortal: c.noPortal, noWhatsApp: c.noWhatsApp, portalUsername: c.portalUsername, hasPassword: Boolean(c.portalPasswordEnc), hasPin: Boolean(c.pinCodeEnc), archivedBy: c.archivedBy, createdBy: c.createdBy, updatedAt: c.updatedAt });
 
     async function list(ctx, q = {}) {
         const where = { tenantId: ctx.tenantId, archivedAt: q.archived === '1' ? { not: null } : null };
@@ -148,7 +148,7 @@ function createClients({ prisma, audit, encrypt, decrypt, common, now }) {
         return get(ctx, c.id);
     }
 
-    const LABELS = { country: 'country', timeZone: 'time zone', noPortal: 'no online portal', name: 'name', address: 'address', contactNumber: 'contact number', email: 'email', registrationNo: 'registration no.', reference: 'reference', portalUsername: 'username' };
+    const LABELS = { country: 'country', timeZone: 'time zone', noPortal: 'no online portal', noWhatsApp: 'no WhatsApp', name: 'name', address: 'address', contactNumber: 'contact number', email: 'email', registrationNo: 'registration no.', reference: 'reference', portalUsername: 'username' };
     async function update(ctx, id, b) {
         const c = await common.findClient(ctx.tenantId, id, { live: true });
         // a country change without a new time zone takes the new country's own zone

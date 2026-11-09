@@ -76,6 +76,7 @@
   const MANUAL = ['DATA_COLLECTED', 'FILED', 'PAID']; // the steps a person sets; Upcoming, Period closed and Overdue follow from the dates
   const STATUS = {
     UPCOMING: 'Upcoming', PERIOD_CLOSED: 'Period closed', DATA_COLLECTED: 'Data collected', FILED: 'Filed', PAID: 'Paid', COMPLETED: 'Completed', OVERDUE: 'Overdue',
+    PLANNED: 'Planned', // a period still to come, shown ahead of time (not made yet)
   };
 
   // When the period is over (the midnight after its last day) and when the obligation becomes overdue (the midnight after the due date),
@@ -135,6 +136,7 @@
   // limit is given in years (SRS 4), so a monthly obligation for 2 years has 24 periods.
   const FREQUENCIES = {
     YEARLY: { months: 12, perYear: 1, label: 'Every year', unit: 'year' },
+    HALF_YEARLY: { months: 6, perYear: 2, label: 'Every six months', unit: 'half-year' },
     QUARTERLY: { months: 3, perYear: 4, label: 'Every quarter', unit: 'quarter' },
     MONTHLY: { months: 1, perYear: 12, label: 'Every month', unit: 'month' },
   };
@@ -158,6 +160,31 @@
     return { periodStart, periodEnd, dueDate };
   }
   const yearDates = (base, n) => periodDates(base, n, 'YEARLY');
+  // How often an obligation comes back, from its first period (the CA: no "comes back" list, the three dates say it). A period of
+  // exactly one month comes back every month, three months every quarter, six months every six months; anything else every year
+  // (a year, like 1 Jul 2026 – 30 Jun 2027, or any other stretch). A person can still choose "every year" for a shorter period.
+  function detectFrequency(periodStart, periodEnd) {
+    const a = ymdOf(periodStart), b = ymdOf(periodEnd);
+    if (!ymdOk(a) || !ymdOk(b)) return 'YEARLY';
+    for (const [k, f] of [[1, 'MONTHLY'], [3, 'QUARTERLY'], [6, 'HALF_YEARLY']]) {
+      if (addDays(shiftMonths(a, k, false), -1) === b) return f;
+      const [ya, ma, da] = a.split('-').map(Number);
+      if (da === 1 && shiftMonths(`${ya}-${pad(ma)}-01`, k - 1, false).slice(0, 7) === b.slice(0, 7) && Number(b.slice(8)) === lastDay(...b.split('-').slice(0, 2).map(Number))) return f;
+    }
+    return 'YEARLY';
+  }
+  // The periods still to come of a series, as they would be proposed (the CA: the calendar shows the future, with no end for an obligation
+  // that has none). From period fromSeq while the due date is not after untilDue, never past the number of years, at most max of them.
+  function projectPeriods(series, fromSeq, untilDue, max = 400) {
+    const base = { periodStart: series.basePeriodStart, periodEnd: series.basePeriodEnd, dueDate: series.baseDueDate };
+    const limit = periodsAllowed(series.yearsTotal, series.frequency), out = [];
+    for (let seq = Math.max(1, fromSeq); out.length < max && (!limit || seq <= limit); seq++) {
+      const d = periodDates(base, seq - (series.baseSeq || 1) + 1, series.frequency);
+      if (d.dueDate > untilDue) break;
+      out.push({ seq, ...d });
+    }
+    return out;
+  }
   // How many periods a limit of so many years allows (null = no end)
   const periodsAllowed = (yearsTotal, frequency) => (yearsTotal ? yearsTotal * freqOf(frequency).perYear : null);
   // A short name for a period: "Mar 2027" for a calendar month, "Jan – Mar 2027" for calendar months, "2027" for a calendar year, else the dates
@@ -186,25 +213,42 @@
   const offsetLabel = n => (n < 0 ? `${-n} day${n === -1 ? '' : 's'} before` : n > 0 ? `${n} day${n === 1 ? '' : 's'} after` : 'On the due date');
   const yearsLabel = n => (n ? `for ${n} year${n === 1 ? '' : 's'}` : 'with no end');
   const repeatsLabel = (frequency, yearsTotal) => `${freqOf(frequency).label} ${yearsLabel(yearsTotal)}`;
+  // "for 5 years" / "unlimited": the CA's "How many years"
+  const yearsShort = n => (n ? `${n} year${n === 1 ? '' : 's'}` : 'Unlimited');
 
   /* ---------- templates and WhatsApp ---------- */
   // [Placeholder] names match whatever the case, the spaces and the dots: [client name] = [Client Name], [Registration No] = [Registration No.]
   const keyOf = s => String(s || '').replace(/\./g, '').trim().replace(/\s+/g, ' ').toLowerCase();
-  const PLACEHOLDERS = ['Client Name', 'Due Date', 'Period Start', 'Period End', 'Registration No.', 'Email', 'Invoice Amount', 'Receipt Number',
-    'Obligation', 'Invoice Number', 'Contact Number', 'Address', 'Reference', 'Country'];
-  // A custom field may not take one of these names (nor the portal login's: those never go into a message)
-  const RESERVED = new Set([...PLACEHOLDERS, 'Username', 'User Name', 'Password', 'Pin Code', 'Pin', 'Client Code'].map(keyOf));
+  // Every [placeholder] a template can use, in groups (the CA: from everywhere, the client's details together, the obligation's
+  // together...). The client's own extra fields come after the client's details.
+  const PLACEHOLDER_GROUPS = [
+    ['Client details', ['Client Name', 'Client Code', 'Registration No.', 'Contact Number', 'WhatsApp Number', 'Email', 'Address', 'Reference', 'Country']],
+    ['Obligation', ['Obligation', 'Period Start', 'Period End', 'Due Date', 'Days Left', 'Portal Link']],
+    ['Invoice', ['Invoice Number', 'Invoice Date', 'Invoice Amount', 'Payment Due', 'Amount Outstanding']],
+    ['Receipt', ['Receipt Number', 'Receipt Date', 'Receipt Amount']],
+    ['Your firm', ['Firm Name', 'Firm Phone', 'Firm Email']],
+  ];
+  const PLACEHOLDERS = PLACEHOLDER_GROUPS.flatMap(g => g[1]);
+  // A custom field may not take one of these names (nor the portal login's: those never go into a message). "WhatsApp Number" may: a
+  // field of that name is the number WhatsApp messages go to.
+  const RESERVED = new Set([...PLACEHOLDERS.filter(n => n !== 'WhatsApp Number'), 'Username', 'User Name', 'Password', 'Pin Code', 'Pin'].map(keyOf));
 
-  // Fills a template. ctx: { client, countryName, obligationName, occurrence, fields: { 'Trade License Number': '…' }, invoice: { number, amountText }, receipt: { number } }
+  // Fills a template. ctx: { client, countryName, whatsapp, obligationName, portalUrl, daysLeft, occurrence, fields: { 'Trade License Number': '…' },
+  // invoice: { number, amountText, date, dueDate, outstandingText }, receipt: { number, date, amountText }, firm: { name, phone, email } }
   // Returns the text, the [names] that are not known (left as typed) and the known ones that have no value (left empty).
   function render(body, ctx = {}) {
     const values = new Map();
     const put = (k, v) => { if (!values.has(keyOf(k))) values.set(keyOf(k), v === null || v === undefined ? '' : String(v)); };
     const c = ctx.client || {}, o = ctx.occurrence || {};
-    put('Client Name', c.name); put('Registration No.', c.registrationNo); put('Email', c.email); put('Contact Number', c.contactNumber);
-    put('Address', c.address); put('Reference', c.reference); put('Country', ctx.countryName || c.country);
+    const inv = ctx.invoice || {}, rc = ctx.receipt || {}, firm = ctx.firm || {};
+    put('Client Name', c.name); put('Client Code', c.code); put('Registration No.', c.registrationNo); put('Email', c.email); put('Contact Number', c.contactNumber);
+    put('WhatsApp Number', ctx.whatsapp || c.contactNumber); put('Address', c.address); put('Reference', c.reference); put('Country', ctx.countryName || c.country);
     put('Obligation', ctx.obligationName); put('Due Date', fmtDay(o.dueDate)); put('Period Start', fmtDay(o.periodStart)); put('Period End', fmtDay(o.periodEnd));
-    put('Invoice Amount', ctx.invoice && ctx.invoice.amountText); put('Invoice Number', ctx.invoice && ctx.invoice.number); put('Receipt Number', ctx.receipt && ctx.receipt.number);
+    put('Days Left', ctx.daysLeft === undefined || ctx.daysLeft === null || !o.dueDate ? '' : ctx.daysLeft >= 0 ? `${ctx.daysLeft} day${ctx.daysLeft === 1 ? '' : 's'}` : `${-ctx.daysLeft} day${ctx.daysLeft === -1 ? '' : 's'} overdue`);
+    put('Portal Link', ctx.portalUrl);
+    put('Invoice Number', inv.number); put('Invoice Date', fmtDay(inv.date)); put('Invoice Amount', inv.amountText); put('Payment Due', fmtDay(inv.dueDate)); put('Amount Outstanding', inv.outstandingText);
+    put('Receipt Number', rc.number); put('Receipt Date', fmtDay(rc.date)); put('Receipt Amount', rc.amountText);
+    put('Firm Name', firm.name); put('Firm Phone', firm.phone); put('Firm Email', firm.email);
     for (const [name, v] of Object.entries(ctx.fields || {})) put(name, v);
     const missing = [], empty = [];
     const text = String(body || '').replace(/\[([^[\]\n]{1,60})\]/g, (all, name) => {
@@ -250,7 +294,7 @@
   return {
     DAY, MONTHS, ymdOk, ymdOf, addDays, daysBetween, fmtDay, zoned, dayIn, fmtAt, offsetMs,
     STAGES, MANUAL, STATUS, instants, fireAt, reminderStates, occurrenceView,
-    FREQUENCIES, freqOf, shiftMonths, shiftYears, periodDates, yearDates, periodsAllowed, periodName, datesProblem, offsetLabel, yearsLabel, repeatsLabel,
-    keyOf, PLACEHOLDERS, RESERVED, render, waPhone, toE164, waUrl, SENDER_OPEN, waLink, TEMPLATE_PURPOSES, MESSAGE_KINDS,
+    FREQUENCIES, freqOf, shiftMonths, shiftYears, periodDates, yearDates, detectFrequency, projectPeriods, periodsAllowed, periodName, datesProblem, offsetLabel, yearsLabel, repeatsLabel, yearsShort,
+    keyOf, PLACEHOLDER_GROUPS, PLACEHOLDERS, RESERVED, render, waPhone, toE164, waUrl, SENDER_OPEN, waLink, TEMPLATE_PURPOSES, MESSAGE_KINDS,
   };
 });

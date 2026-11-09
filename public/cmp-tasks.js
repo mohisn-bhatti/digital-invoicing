@@ -2,8 +2,8 @@
 /* Compliance & Deadlines team work (SRS 10): "My Tasks", the team member pickers, and the bulk actions of the obligations and clients
    lists (next period for several clients of one country, the step, assignment, archive). */
 
-const CMP_SEL = { occ: new Map(), cl: new Set() }; // occurrence id → its obligation id; client ids
-CMP_RESETS.push(() => { CMP_SEL.occ.clear(); CMP_SEL.cl.clear(); });
+const CMP_SEL = { occ: new Map(), occClient: new Map(), cl: new Set() }; // occurrence id → its obligation id (and its client id); client ids
+CMP_RESETS.push(() => { CMP_SEL.occ.clear(); CMP_SEL.occClient.clear(); CMP_SEL.cl.clear(); });
 
 // The firm's team (from /api/cmp/me): a name for an id, and a picker
 const cmpWho = id => { if (!id) return ''; const u = ((CMP.me && CMP.me.team) || []).find(x => x.id === id); return u ? (u.name || u.email) : 'someone no longer active'; };
@@ -34,19 +34,23 @@ async function cmpLoadTasks() {
 }
 
 /* ---------- bulk: the obligations list ---------- */
-function cmpOccSelect(box, occId, obId) { if (box.checked) CMP_SEL.occ.set(occId, obId); else CMP_SEL.occ.delete(occId); cmpOccBar(); }
-function cmpOccSelectAll(box) { document.querySelectorAll('#cmObRows input.cmSel').forEach(b => { b.checked = box.checked; cmpOccSelect(b, b.dataset.id, b.dataset.ob); }); }
+function cmpOccSelect(box, occId, obId, clientId) { if (box.checked) { CMP_SEL.occ.set(occId, obId); CMP_SEL.occClient.set(occId, clientId); } else { CMP_SEL.occ.delete(occId); CMP_SEL.occClient.delete(occId); } cmpOccBar(); }
+function cmpOccSelectAll(box) { document.querySelectorAll('#cmObRows input.cmSel').forEach(b => { b.checked = box.checked; cmpOccSelect(b, b.dataset.id, b.dataset.ob, b.dataset.client); }); }
+// The sheet narrowed to the clients of the ticked rows (the CA: tick a client to see only that client, for the dates chosen)
+function cmpOccOnlyClients() { const ids = [...new Set([...CMP_SEL.occ.keys()].map(k => CMP_SEL.occClient.get(k)).filter(Boolean))]; CMP_SEL.occ.clear(); CMP_SEL.occClient.clear(); cmpObOnly(ids.join(',')); }
 function cmpOccBar() {
   const bar = document.getElementById('cmObBulk'); if (!bar) return;
   const n = CMP_SEL.occ.size;
   bar.classList.toggle('hidden', !n);
   if (!n) return;
+  const clients = new Set([...CMP_SEL.occ.keys()].map(k => CMP_SEL.occClient.get(k))).size;
   bar.innerHTML = `<span class="text-sm font-medium">${n} selected</span>
+    ${cmpBtn(clients === 1 ? 'Only this client' : `Only these ${clients} clients`, 'cmpOccOnlyClients()', 'primary')}
     ${cmpCan('OBLIGATION_EDIT') ? cmpBtn('Next period', 'cmpBulkNext()', 'plain', 'needs-write') : ''}
     ${cmpCan('COMPLETE') ? `<select class="!w-auto !text-sm needs-write" onchange="if (this.value) cmpBulkStage(this.value); this.value = ''"><option value="">Set step…</option>${[['OPEN', 'Open'], ['DATA_COLLECTED', 'Data collected'], ['FILED', 'Filed'], ['PAID', 'Paid']].map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>` : ''}
     ${cmpCan('OBLIGATION_EDIT') ? `<select class="!w-auto !text-sm needs-write" onchange="if (this.value !== '-') cmpBulkAssign('obligationIds', this.value); this.value = '-'"><option value="-">Assign to…</option>${cmpTeamOptions('-', 'Nobody')}</select>` : ''}
     ${cmpCan('ARCHIVE') ? cmpBtn('Archive', "cmpBulkArchive('obligationIds')", 'danger', 'needs-write') : ''}
-    <button type="button" class="text-sm underline text-slate-600" onclick="CMP_SEL.occ.clear(); cmpLoadObligations()">Clear</button>`;
+    <button type="button" class="text-sm underline text-slate-600" onclick="CMP_SEL.occ.clear(); CMP_SEL.occClient.clear(); cmpLoadObligations()">Clear</button>`;
 }
 const cmpBulkReport = (what, r) => {
   const skipped = r.skipped || [];
