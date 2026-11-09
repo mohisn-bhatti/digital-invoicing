@@ -1,6 +1,6 @@
 // Compliance & Deadlines: the CA's feedback of 9 November 2026, through the real server.
-// - an obligation is three dates: how often it comes back follows from them; "how many years" or unlimited; amber days and "prepare the
-//   next one by itself" set on each obligation
+// - an obligation is three dates typed by hand and comes back every year (the CA's answer: no quarterly cycle; quarterly returns are
+//   four obligations, added at once); "how many years" or unlimited; amber days and "prepare the next one by itself" per obligation
 // - the periods still to come are shown ahead (Planned), the sheet is sorted by date then client, and filtered by one or several clients
 // - an obligation can be deleted; once a message was sent, only with a note
 // - a client with no WhatsApp; placeholders from everywhere, and a client's real values for the templates page (never its password)
@@ -20,13 +20,9 @@ const today = R.dayIn('Asia/Karachi');
 const day = n => R.addDays(today, n);
 const thisYear = Number(today.slice(0, 4));
 
-test('rules: the cycle follows from the period; the periods to come; placeholders in groups', () => {
-    assert.strictEqual(R.detectFrequency('2026-07-01', '2027-06-30'), 'YEARLY'); // Pakistan income tax year
-    assert.strictEqual(R.detectFrequency('2025-11-01', '2026-01-31'), 'QUARTERLY');
-    assert.strictEqual(R.detectFrequency('2026-02-01', '2026-02-28'), 'MONTHLY');
-    assert.strictEqual(R.detectFrequency('2026-02-15', '2026-03-14'), 'MONTHLY');
-    assert.strictEqual(R.detectFrequency('2026-01-01', '2026-06-30'), 'HALF_YEARLY');
-    assert.strictEqual(R.detectFrequency('2026-03-10', '2026-04-02'), 'YEARLY'); // anything else comes back once a year
+test('rules: the periods to come; placeholders in groups; the ways a reminder is given', () => {
+    assert.strictEqual(R.detectFrequency, undefined, 'no cycle worked out from the dates any more (the CA)');
+    assert.deepStrictEqual(Object.keys(R.CHANNELS), ['WHATSAPP', 'PHONE', 'EMAIL', 'OTHER']);
     const s = { basePeriodStart: '2026-07-01', basePeriodEnd: '2027-06-30', baseDueDate: '2027-09-30', baseSeq: 1, frequency: 'YEARLY', yearsTotal: null };
     assert.deepStrictEqual(R.projectPeriods(s, 2, '2030-12-31').map(p => [p.seq, p.dueDate]), [[2, '2028-09-30'], [3, '2029-09-30'], [4, '2030-09-30']]);
     assert.deepStrictEqual(R.projectPeriods({ ...s, yearsTotal: 2 }, 2, '2040-12-31').map(p => p.seq), [2]); // never past the years
@@ -54,26 +50,26 @@ test('feedback API: start a server, a firm with the module and its users', { tim
     assert.ok(W.pk && W.ae && W.noWa && W.noWa.noWhatsApp === true, 'clients made');
 });
 
-run('an obligation is its three dates: the cycle follows from them; how many years or unlimited; amber and "by itself" per obligation', async () => {
+run('an obligation is its three dates and comes back every year; how many years or unlimited; amber and "by itself" per obligation', async () => {
     // Pakistan income tax: 1 Jul – 30 Jun, due 30 Sep: once a year, unlimited
     let r = await A.call(`/api/cmp/clients/${W.pk.id}/obligations`, { token: A.manager.token, method: 'POST', body: { name: 'Income Tax Return', periodStart: `${thisYear}-07-01`, periodEnd: `${thisYear + 1}-06-30`, dueDate: `${thisYear + 1}-09-30` } });
     assert.strictEqual(r.status, 200, r.text);
     W.itr = r.json;
     assert.deepStrictEqual([W.itr.frequency, W.itr.yearsTotal, W.itr.amberDays, W.itr.autoNext], ['YEARLY', null, 7, true]);
-    // a quarter: every quarter, for 1 year, amber 14 days before, next one by hand
-    r = await A.call(`/api/cmp/clients/${W.ae.id}/obligations`, { token: A.manager.token, method: 'POST', body: { name: 'VAT Return', periodStart: day(-120), periodEnd: R.addDays(R.shiftMonths(day(-120), 3, false), -1), dueDate: day(5), yearsTotal: 1, amberDays: 14, autoNext: false,
+    // a quarter's dates: still once a year (the CA), for 2 years, amber 14 days before, next one by hand
+    r = await A.call(`/api/cmp/clients/${W.ae.id}/obligations`, { token: A.manager.token, method: 'POST', body: { name: 'VAT Return', periodStart: day(-120), periodEnd: R.addDays(R.shiftMonths(day(-120), 3, false), -1), dueDate: day(5), yearsTotal: 2, amberDays: 14, autoNext: false,
         reminders: [{ offsetDays: -10, templateId: W.tpl.id }] } });
     assert.strictEqual(r.status, 200, r.text);
     W.vat = r.json;
-    assert.deepStrictEqual([W.vat.frequency, W.vat.amberDays, W.vat.autoNext, W.vat.occurrences.length], ['QUARTERLY', 14, false, 1]); // period over, but not "by itself": no next one
+    assert.deepStrictEqual([W.vat.frequency, W.vat.amberDays, W.vat.autoNext, W.vat.occurrences.length], ['YEARLY', 14, false, 1]); // period over, but not "by itself": no next one
     assert.strictEqual(W.vat.occurrences[0].view.colour, 'amber'); // due in 5 days, amber from 14
-    // the same quarter, asked to come back once a year (one of four quarterly returns)
+    // (a frequency can still be given through the API, e.g. by older screens)
     r = await A.call(`/api/cmp/clients/${W.ae.id}/obligations`, { token: A.manager.token, method: 'POST', body: { name: 'VAT Q1', frequency: 'YEARLY', periodStart: day(-120), periodEnd: R.addDays(R.shiftMonths(day(-120), 3, false), -1), dueDate: day(5) } });
     assert.strictEqual(r.json.frequency, 'YEARLY');
     W.q1 = r.json;
     // bad values
     assert.strictEqual((await A.call(`/api/cmp/clients/${W.ae.id}/obligations`, { token: A.manager.token, method: 'POST', body: { name: 'x', periodStart: day(1), periodEnd: day(2), dueDate: day(3), amberDays: 500 } })).status, 400);
-    // edited: amber days and "by itself" (switched on: the next quarter comes at once, its period being over)
+    // edited: amber days and "by itself" (switched on: next year's comes at once, the period being over)
     r = await A.call(`/api/cmp/obligations/${W.vat.id}`, { token: A.manager.token, method: 'PUT', body: { amberDays: 3, autoNext: true } });
     assert.strictEqual(r.status, 200, r.text);
     assert.deepStrictEqual([r.json.amberDays, r.json.autoNext, r.json.occurrences.length], [3, true, 2]);
@@ -88,7 +84,7 @@ run('the sheet: the periods still to come as Planned, by due date then client na
     assert.strictEqual(r.status, 200, r.text);
     const planned = r.json.rows.filter(x => x.projected);
     assert.ok(planned.some(x => x.obligation.id === W.itr.id && x.dueDate === `${thisYear + 2}-09-30` && x.view.status === 'PLANNED'), 'next years of the income tax return are planned');
-    assert.ok(!planned.some(x => x.obligation.id === W.vat.id && x.seq > 4), 'never past the number of years');
+    assert.ok(!planned.some(x => x.obligation.id === W.vat.id && x.seq > 2), 'never past the number of years');
     assert.strictEqual(r.json.planned, planned.length);
     const keys = r.json.rows.map(x => [x.dueDate, x.client.name, x.obligation.name]);
     assert.deepStrictEqual(keys, [...keys].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0) || a[1].localeCompare(b[1]) || a[2].localeCompare(b[2])), 'by due date, then client');
@@ -112,17 +108,30 @@ run('the sheet: the periods still to come as Planned, by due date then client na
     assert.ok(r.json.rows.every(x => 'invoice' in x));
 });
 
-run('a client with no WhatsApp: no message can be prepared, and its reminders are not counted as ready to send', async () => {
+run('a client with no WhatsApp: no WhatsApp message; its reminder is given by phone or email and marked so (the CA)', async () => {
     const ob = (await A.call(`/api/cmp/clients/${W.noWa.id}/obligations`, { token: A.manager.token, method: 'POST', body: { name: 'VAT Return', frequency: 'YEARLY', periodStart: day(-60), periodEnd: day(-30), dueDate: day(3), reminders: [{ offsetDays: -5, templateId: W.tpl.id }] } })).json;
-    const occ = ob.occurrences[0];
-    assert.strictEqual(occ.view.actionable, false);
-    let r = await A.call('/api/cmp/messages/prepare', { token: A.manager.token, method: 'POST', body: { kind: 'REMINDER', occurrenceId: occ.id, reminderId: ob.reminders[0].id } });
+    const occ = ob.occurrences[0], rem = ob.reminders[0];
+    assert.strictEqual(occ.view.actionable, true, 'a reminder to give, by phone or email');
+    let r = await A.call('/api/cmp/messages/prepare', { token: A.manager.token, method: 'POST', body: { kind: 'REMINDER', occurrenceId: occ.id, reminderId: rem.id } });
     assert.strictEqual(r.status, 409);
     assert.match(r.json.error, /has no WhatsApp/);
     const alerts = (await A.call('/api/cmp/alerts', { token: A.manager.token })).json;
+    // marked as reminded by phone: the reminder is done, the log says how
+    assert.strictEqual((await A.call('/api/cmp/messages/manual', { token: A.manager.token, method: 'POST', body: { occurrenceId: occ.id, reminderId: rem.id, channel: 'FAX' } })).status, 400);
+    r = await A.call('/api/cmp/messages/manual', { token: A.manager.token, method: 'POST', body: { occurrenceId: occ.id, reminderId: rem.id, channel: 'PHONE', note: 'Spoke to the accountant' } });
+    assert.strictEqual(r.status, 200, r.text);
+    const after = (await A.call(`/api/cmp/obligations/${ob.id}`, { token: A.manager.token })).json.occurrences[0];
+    assert.strictEqual(after.view.reminders[0].state, 'SENT');
+    assert.strictEqual((await A.call('/api/cmp/alerts', { token: A.manager.token })).json.ready, alerts.ready - 1);
+    const log = (await A.call(`/api/cmp/messages?clientId=${W.noWa.id}`, { token: A.owner.token })).json.messages;
+    assert.deepStrictEqual([log[0].channel, log[0].body, log[0].phone], ['PHONE', 'Spoke to the accountant', '']);
+    const csv = await A.call(`/api/cmp/messages?clientId=${W.noWa.id}&format=csv`, { token: A.owner.token });
+    assert.match(csv.text, /,How,/); assert.match(csv.text, /Phone call/);
+    // marked "not done" like any message: the reminder is due again
+    assert.strictEqual((await A.call(`/api/cmp/messages/${r.json.message.id}/void`, { token: A.manager.token, method: 'POST' })).status, 200);
+    assert.notStrictEqual((await A.call(`/api/cmp/obligations/${ob.id}`, { token: A.manager.token })).json.occurrences[0].view.reminders[0].state, 'SENT');
     r = await A.call(`/api/cmp/clients/${W.noWa.id}`, { token: A.owner.token, method: 'PUT', body: { ...W.noWa, portalPassword: '', noWhatsApp: false } });
     assert.strictEqual(r.status, 200, r.text);
-    assert.strictEqual((await A.call('/api/cmp/alerts', { token: A.manager.token })).json.ready, alerts.ready + 1, 'counted again once it has WhatsApp');
     assert.strictEqual((await A.call('/api/cmp/messages/prepare', { token: A.manager.token, method: 'POST', body: { kind: 'REMINDER', occurrenceId: occ.id, reminderId: ob.reminders[0].id } })).status, 200);
     W.noWaOb = ob;
 });
@@ -192,7 +201,7 @@ run('invoices: items kept with their price per country; "sent" undone; cancelled
     assert.strictEqual(r.json.invoice.status, 'RECEIVED');
     r = await A.call(`/api/cmp/invoices/${id}/cancel`, { token: A.owner.token, method: 'POST', body: { reason: 'Wrong client' } });
     assert.strictEqual(r.status, 409);
-    assert.match(r.json.error, /AED 525.00 was received against this invoice \(RCT-.*\)\. Cancelling it voids that receipt too\./);
+    assert.match(r.json.error, /AED 525.00 was received against this invoice \(RCT-.*\)\. Choose what becomes of it: refund it, keep it as the client's credit, or void the receipts\./);
     r = await A.call(`/api/cmp/invoices/${id}/cancel`, { token: A.owner.token, method: 'POST', body: { reason: 'Wrong client', voidReceipts: true } });
     assert.strictEqual(r.status, 200, r.text);
     assert.deepStrictEqual([r.json.status, r.json.received, r.json.receipts.every(x => x.voidedAt), r.json.receipts[0].voidReason], ['CANCELLED', 0, true, 'Invoice cancelled: Wrong client']);
@@ -233,6 +242,84 @@ run('reports by dates: obligations (with the planned ones), invoices, receipts, 
     r = await A.call(`/api/cmp/clients/${W.ae.id}?from=${thisYear + 5}-01-01&to=${thisYear + 5}-12-31`, { token: A.owner.token });
     assert.deepStrictEqual([r.json.invoices.length, r.json.messages.length, r.json.activity.length], [0, 0, 0]);
     assert.ok(r.json.obligations.length >= 1, 'the obligations themselves always come (the screen shows their periods of those dates)');
+});
+
+// ---------- the CA's answers (9 November 2026) ----------
+
+run('several obligations at once (the four quarterly returns), each typed by hand and each coming back every year; all or none', async () => {
+    const y = thisYear + 1, q = (n, a, b, due) => ({ name: `Sales Tax Q${n}`, periodStart: `${y}-${a}`, periodEnd: `${y}-${b}`, dueDate: `${due}` });
+    const items = [q(1, '01-01', '03-31', `${y}-04-28`), q(2, '04-01', '06-30', `${y}-07-28`), q(3, '07-01', '09-30', `${y}-10-28`), q(4, '10-01', '12-31', `${y + 1}-01-28`)];
+    const shared = { yearsTotal: 3, amberDays: 10, reminders: [{ offsetDays: -7, templateId: W.tpl.id }] };
+    // a mistake in the third: none is added
+    let r = await A.call(`/api/cmp/clients/${W.pk.id}/obligations`, { token: A.manager.token, method: 'POST', body: { ...shared, items: [items[0], items[1], { ...items[2], dueDate: `${y}-09-01` }, items[3]] } });
+    assert.strictEqual(r.status, 400);
+    assert.match(r.json.error, /^Obligation 3 \(Sales Tax Q3\): The due date cannot be before the period end\./);
+    assert.strictEqual(await A.prisma.cmpObligation.count({ where: { clientId: W.pk.id, name: { startsWith: 'Sales Tax Q' } } }), 0);
+    assert.strictEqual((await A.call(`/api/cmp/clients/${W.pk.id}/obligations`, { token: A.manager.token, method: 'POST', body: { ...shared, items: [items[0], { ...items[1], name: 'sales tax  q1' }] } })).status, 400); // the same name twice
+    r = await A.call(`/api/cmp/clients/${W.pk.id}/obligations`, { token: A.manager.token, method: 'POST', body: { ...shared, items } });
+    assert.strictEqual(r.status, 200, r.text);
+    assert.deepStrictEqual(r.json.obligations.map(o => [o.name, o.frequency, o.yearsTotal, o.amberDays, o.reminders.length, o.occurrences[0].dueDate]),
+        items.map(i => [i.name, 'YEARLY', 3, 10, 1, i.dueDate]));
+    // each comes back once a year: Q1 is planned for the next years on its own dates
+    r = await A.call('/api/cmp/occurrences?' + new URLSearchParams({ status: 'PLANNED', from: `${y + 1}-01-01`, to: `${y + 1}-12-31`, projected: '1', clientId: W.pk.id, q: 'Sales Tax Q1' }), { token: A.manager.token });
+    assert.deepStrictEqual(r.json.rows.map(x => [x.periodStart, x.dueDate]), [[`${y + 1}-01-01`, `${y + 1}-04-28`]]);
+});
+
+run('cancelling a paid invoice: refund it, keep it as the client\'s credit (which pays a later invoice), or void it', async () => {
+    const issue = async amount => {
+        const d = (await A.call('/api/cmp/invoices', { token: A.owner.token, method: 'POST', body: { clientId: W.ae.id, lines: [{ description: 'Advisory', amount }] } })).json;
+        return (await A.call(`/api/cmp/invoices/${d.id}/issue`, { token: A.owner.token, method: 'POST' })).json;
+    };
+    const pay = (inv, body) => A.call(`/api/cmp/invoices/${inv.id}/receipts`, { token: A.owner.token, method: 'POST', body });
+    // refund: the receipt stays, marked refunded with when and how
+    let a = await issue('300');
+    await pay(a, { amount: '300' });
+    let r = await A.call(`/api/cmp/invoices/${a.id}/cancel`, { token: A.owner.token, method: 'POST', body: { reason: 'Client changed its mind', settle: 'REFUND', refund: { date: today, method: 'CREDIT' } } });
+    assert.strictEqual(r.status, 400); // paid back "from credit" makes no sense
+    r = await A.call(`/api/cmp/invoices/${a.id}/cancel`, { token: A.owner.token, method: 'POST', body: { reason: 'Client changed its mind', settle: 'REFUND', refund: { date: today, method: 'BANK', reference: 'TT-9' } } });
+    assert.strictEqual(r.status, 200, r.text);
+    assert.deepStrictEqual([r.json.status, r.json.cancelSettlement, r.json.receipts[0].voidedAt, r.json.receipts[0].settlement], ['CANCELLED', 'REFUND', null, 'REFUNDED']);
+    assert.match(r.json.receipts[0].settlementNote, /^Refunded on .* by bank transfer \(ref\. TT-9\)$/);
+    assert.strictEqual((await A.call(`/api/cmp/receipts/${r.json.receipts[0].id}/void`, { token: A.owner.token, method: 'POST', body: { reason: 'x' } })).status, 409); // its money was refunded: it stays
+    // credit: kept for the client
+    const b = await issue('200');
+    await pay(b, { amount: '150' });
+    r = await A.call(`/api/cmp/invoices/${b.id}/cancel`, { token: A.owner.token, method: 'POST', body: { reason: 'Wrong period', settle: 'CREDIT' } });
+    assert.strictEqual(r.status, 200, r.text);
+    assert.deepStrictEqual([r.json.cancelSettlement, r.json.receipts[0].settlement, r.json.clientCredit], ['CREDIT', 'CREDITED', [{ currency: 'AED', remaining: 150 }]]);
+    assert.deepStrictEqual((await A.call(`/api/cmp/clients/${W.ae.id}`, { token: A.owner.token })).json.credit, [{ currency: 'AED', remaining: 150 }]);
+    // the credit pays a later invoice: never more than there is
+    const c = await issue('400');
+    assert.strictEqual((await pay(c, { amount: '200', method: 'CREDIT' })).status, 400);
+    r = await pay(c, { amount: '100', method: 'CREDIT' });
+    assert.strictEqual(r.status, 200, r.text);
+    assert.deepStrictEqual([r.json.invoice.status, r.json.invoice.received, r.json.invoice.clientCredit], ['PARTIAL', 100, [{ currency: 'AED', remaining: 50 }]]);
+    // voiding that receipt gives the credit back
+    const rc = r.json.invoice.receipts.find(x => x.method === 'CREDIT');
+    r = await A.call(`/api/cmp/receipts/${rc.id}/void`, { token: A.owner.token, method: 'POST', body: { reason: 'Entered by mistake' } });
+    assert.deepStrictEqual(r.json.clientCredit, [{ currency: 'AED', remaining: 150 }]);
+    // void: the old way
+    const d = await issue('50');
+    await pay(d, { amount: '50' });
+    r = await A.call(`/api/cmp/invoices/${d.id}/cancel`, { token: A.owner.token, method: 'POST', body: { reason: 'Cheque bounced', settle: 'VOID' } });
+    assert.deepStrictEqual([r.json.cancelSettlement, Boolean(r.json.receipts[0].voidedAt)], ['VOID', true]);
+    assert.strictEqual((await A.call(`/api/cmp/invoices/${d.id}/cancel`, { token: A.owner.token, method: 'POST', body: { reason: 'x', settle: 'GIFT' } })).status, 409); // (already cancelled)
+    // the receipts report does not count money refunded or kept as credit
+    const rep = (await A.call(`/api/cmp/reports/receipts?from=${thisYear}-01-01&to=${thisYear + 1}-12-31`, { token: A.owner.token })).json;
+    const counted = rep.rows.filter(x => !x.voidedAt && !x.settlement).reduce((m, x) => m + x.amount, 0);
+    assert.deepStrictEqual(rep.totals.map(t => t.total), counted ? [counted] : []);
+    const act = await A.prisma.auditLog.findFirst({ where: { tenantId: A.tenantId, action: 'cmp.invoice.cancel', entityId: b.id } });
+    assert.match(act.summary, /cancelled: Wrong period \(AED 150\.00 received, receipt RCT-.*: kept as credit\)/);
+});
+
+run('settings: a full letterhead picture instead of the logo and header', async () => {
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    let r = await A.call('/api/cmp/settings', { token: A.owner.token, method: 'PUT', body: { headerStyle: 'letterhead', letterhead: png } });
+    assert.strictEqual(r.status, 200, r.text);
+    assert.deepStrictEqual([r.json.headerStyle, r.json.letterhead], ['LETTERHEAD', png]);
+    assert.strictEqual((await A.call('/api/cmp/settings', { token: A.owner.token, method: 'PUT', body: { headerStyle: 'BANNER' } })).status, 400);
+    assert.strictEqual((await A.call('/api/cmp/settings', { token: A.owner.token, method: 'PUT', body: { letterhead: 'data:image/svg+xml;base64,PHN2Zz4=' } })).status, 400);
+    assert.strictEqual((await A.call('/api/cmp/settings', { token: A.owner.token, method: 'PUT', body: { letterhead: 'data:image/png;base64,' + 'A'.repeat(1300000) } })).status, 400);
 });
 
 test.after(() => A.teardown());

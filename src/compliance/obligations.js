@@ -28,10 +28,9 @@ function createObligations({ prisma, audit, common, now }) {
     }
     const reminderList = rs => rs.map(r => ({ id: r.id, offsetDays: r.offsetDays, templateId: r.templateId, templateName: r.template ? r.template.name : '', templateActive: r.template ? r.template.active : false }));
     // One year as the screens need it, with its status, colour and reminders worked out on the client's clock. amberDays: the
-    // obligation's own (the CA); noWhatsApp: the client has none, so no reminder waits to be sent on WhatsApp.
-    function present(occ, { reminders, tz, settings, sent, at, amberDays, noWhatsApp = false }) {
+    // obligation's own (the CA). (A client with no WhatsApp still has reminders to give: by phone or email, marked by hand.)
+    function present(occ, { reminders, tz, settings, sent, at, amberDays }) {
         const v = R.occurrenceView(occ, { tz, hour: settings.reminderHour, amberDays: amberDays ?? settings.amberDays, now: at, reminders, sent: sent.get(occ.id) || new Map() });
-        if (noWhatsApp) v.actionable = false;
         return {
             id: occ.id, seq: occ.seq, periodStart: ymd(occ.periodStart), periodEnd: ymd(occ.periodEnd), dueDate: ymd(occ.dueDate), stage: occ.stage,
             datesConfirmed: occ.datesConfirmed, overridden: occ.overridden, closedAt: occ.closedAt, closedBy: occ.closedBy, closeKind: occ.closeKind, notes: occ.notes,
@@ -110,6 +109,21 @@ function createObligations({ prisma, audit, common, now }) {
         // a period that is already over: next year's copy straight away (otherwise the background job makes it when the period ends)
         if (o.autoNext && R.instants(o, client.timeZone).periodEndAt <= now()) await ensureNext(ob.id, { req: ctx.req });
         return get(ctx, ob.id);
+    }
+    // Several obligations at once (the CA: e.g. the four quarterly VAT returns, each with its own dates typed by hand), with the same
+    // years, reminders and the rest. Every one is checked before any is added, so a mistake in the third adds none.
+    async function createMany(ctx, clientId, b) {
+        const items = Array.isArray(b.items) ? b.items : [];
+        if (!items.length) throw bad('Add at least one obligation.');
+        if (items.length > 24) throw bad('At most 24 obligations at once.');
+        await common.findClient(ctx.tenantId, clientId, { live: true });
+        const all = items.map((it, i) => { try { return { ...b, ...V.cleanObligation({ ...b, ...it }), reminders: b.reminders }; } catch (e) { throw bad(`Obligation ${i + 1}${it && it.name ? ` (${String(it.name).slice(0, 60)})` : ''}: ${e.message}`); } });
+        const names = all.map(o => R.keyOf(o.name));
+        if (new Set(names).size !== names.length) throw bad('Two of the obligations have the same name: give each its own (e.g. VAT Return Q1, VAT Return Q2).');
+        await common.checkTemplates(ctx.tenantId, V.cleanReminders(b.reminders));
+        const out = [];
+        for (const o of all) out.push(await create(ctx, clientId, { ...o, periodStart: o.periodStart, periodEnd: o.periodEnd, dueDate: o.dueDate }));
+        return { obligations: out };
     }
 
     async function update(ctx, id, b) {
@@ -371,7 +385,7 @@ function createObligations({ prisma, audit, common, now }) {
         return [...byName.values()].map(x => ({ ...x, clients: x.clients.size })).sort((a, b) => b.clients - a.clients || a.name.localeCompare(b.name));
     }
 
-    return { sentMap, present, reminderList, get, forClient, ensureNext, create, update, setReminders, next, updateOccurrence, setStage, complete, reopen, setArchived, remove, listOccurrences, suggest };
+    return { sentMap, present, reminderList, get, forClient, ensureNext, create, createMany, update, setReminders, next, updateOccurrence, setStage, complete, reopen, setArchived, remove, listOccurrences, suggest };
 }
 
 module.exports = { createObligations, occData };

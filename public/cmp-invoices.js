@@ -11,7 +11,10 @@ const CMP_RC = { q: '', status: 'VALID', timer: null };
 CMP_RESETS.push(() => Object.assign(CMP_RC, { q: '', status: 'VALID' }));
 const CMP_INV_STATUS = { DRAFT: ['Draft', 'bg-slate-100 text-slate-700'], ISSUED: ['Issued', 'bg-sky-100 text-sky-800'], SENT: ['Sent', 'bg-indigo-100 text-indigo-800'],
   PARTIAL: ['Partially received', 'bg-amber-100 text-amber-800'], RECEIVED: ['Received', 'bg-emerald-100 text-emerald-800'], CANCELLED: ['Cancelled', 'bg-slate-200 text-slate-500 line-through'] };
-const CMP_METHODS = { BANK: 'Bank transfer', CASH: 'Cash', CHEQUE: 'Cheque', CARD: 'Card', ONLINE: 'Online payment', OTHER: 'Other' };
+const CMP_METHODS = { BANK: 'Bank transfer', CASH: 'Cash', CHEQUE: 'Cheque', CARD: 'Card', ONLINE: 'Online payment', OTHER: 'Other', CREDIT: 'Client credit' };
+// a receipt whose invoice was cancelled: the money was refunded, or kept as the client's credit (the CA)
+const cmpSettleChip = r => (r.settlement ? `<span class="px-2 py-0.5 rounded-full text-[11px] font-medium ${r.settlement === 'REFUNDED' ? 'bg-rose-100 text-rose-800' : 'bg-sky-100 text-sky-800'}" title="${esc(r.settlementNote || '')}">${r.settlement === 'REFUNDED' ? 'Refunded' : 'Kept as credit'}</span>` : '');
+const cmpReceiptLive = r => !r.voidedAt && !r.settlement;
 const cmpInvChip = st => { const [t, c] = CMP_INV_STATUS[st] || [st, 'bg-slate-100']; return `<span class="px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${c}">${t}</span>`; };
 const cmpMoney = (n, cur) => `${esc(cur)} ${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: CmpCountries.currencyDecimals(cur), maximumFractionDigits: CmpCountries.currencyDecimals(cur) })}`;
 const cmpPayable = inv => ['ISSUED', 'SENT', 'PARTIAL'].includes(inv.status);
@@ -203,15 +206,21 @@ async function cmpInvoiceDelete(id) {
 /* ---------- the document: an invoice, or a receipt ---------- */
 function cmpInvoiceDoc(inv, s, receipt) {
   const c = inv.client, cur = inv.currency, firm = s.firmName || S.company || '';
-  const head = `${s.invoiceHeader ? `<div style="text-align:center;font-size:12px;color:#334155;white-space:pre-wrap;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-bottom:12px">${esc(s.invoiceHeader)}</div>` : ''}
+  const title = `<div style="text-align:right"><div style="font-size:22px;font-weight:700;letter-spacing:.05em">${receipt ? 'RECEIPT' : 'INVOICE'}</div>
+        <div style="font-size:13px"><b>${esc(receipt ? receipt.number : inv.number || 'DRAFT')}</b></div>
+        <div style="font-size:12px">Date: ${esc(CmpRules.fmtDay(receipt ? receipt.receivedOn : inv.issueDate) || '—')}</div>
+        ${!receipt && inv.dueDate ? `<div style="font-size:12px">Payment due: ${esc(CmpRules.fmtDay(inv.dueDate))}</div>` : ''}${receipt ? `<div style="font-size:12px">For invoice ${esc(inv.number)}</div>` : ''}</div>`;
+  // the top: a full letterhead picture (the CA), or the logo, the header line and the firm's details
+  const top = s.headerStyle === 'LETTERHEAD' && s.letterhead
+    ? `<img src="${esc(s.letterhead)}" alt="" style="display:block;width:100%;max-height:55mm;object-fit:contain;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;gap:24px;align-items:flex-start"><div style="font-size:12px">${s.firmTaxNo ? `Tax registration no.: ${esc(s.firmTaxNo)}` : ''}</div>${title}</div>`
+    : `${s.invoiceHeader ? `<div style="text-align:center;font-size:12px;color:#334155;white-space:pre-wrap;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-bottom:12px">${esc(s.invoiceHeader)}</div>` : ''}
     <div style="display:flex;justify-content:space-between;gap:24px;align-items:flex-start">
       <div style="display:flex;gap:12px;align-items:flex-start">${s.logo ? `<img src="${esc(s.logo)}" alt="" style="max-height:64px;max-width:160px;object-fit:contain">` : ''}
         <div><div style="font-size:20px;font-weight:700">${esc(firm)}</div><div style="white-space:pre-wrap;font-size:12px;color:#334155">${esc(s.firmAddress || '')}</div>
         <div style="font-size:12px;color:#334155">${[s.firmPhone, s.firmEmail].filter(Boolean).map(esc).join(' · ')}</div>${s.firmTaxNo ? `<div style="font-size:12px">Tax registration no.: ${esc(s.firmTaxNo)}</div>` : ''}</div></div>
-      <div style="text-align:right"><div style="font-size:22px;font-weight:700;letter-spacing:.05em">${receipt ? 'RECEIPT' : 'INVOICE'}</div>
-        <div style="font-size:13px"><b>${esc(receipt ? receipt.number : inv.number || 'DRAFT')}</b></div>
-        <div style="font-size:12px">Date: ${esc(CmpRules.fmtDay(receipt ? receipt.receivedOn : inv.issueDate) || '—')}</div>
-        ${!receipt && inv.dueDate ? `<div style="font-size:12px">Payment due: ${esc(CmpRules.fmtDay(inv.dueDate))}</div>` : ''}${receipt ? `<div style="font-size:12px">For invoice ${esc(inv.number)}</div>` : ''}</div></div>
+      ${title}</div>`;
+  const head = `${top}
     <div style="margin:18px 0 12px;font-size:13px"><div style="color:#64748b;font-size:11px;text-transform:uppercase">${receipt ? 'Received from' : 'Bill to'}</div><b>${esc(c.name)}</b>
       <div style="white-space:pre-wrap">${esc(c.address || '')}</div><div>${esc(cmpCountry(c.country).name)}${c.registrationNo ? ` · Registration No. ${esc(c.registrationNo)}` : ''}</div></div>`;
   const td = 'padding:6px 8px;border-bottom:1px solid #e2e8f0', tr = (a, b, bold) => `<tr><td style="${td};text-align:right;${bold ? 'font-weight:700' : ''}">${a}</td><td style="${td};text-align:right;white-space:nowrap;${bold ? 'font-weight:700' : ''}">${b}</td></tr>`;
@@ -249,13 +258,15 @@ function cmpInvoiceViewHtml(inv, inPanel) {
       ${!inPanel && cmpCan('INVOICE') ? cmpBtn('Open in Invoices', `cmpCloseModal(); location.hash = '#/cm-invoices/${encodeURIComponent(inv.number || inv.id)}'`) : ''}
     </div>
     <div id="cmRcpForm"></div>
+    ${(inv.clientCredit || []).length ? `<p class="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded px-3 py-2 mb-3">${esc(inv.client.name)} has credit: <b>${inv.clientCredit.map(c => cmpMoney(c.remaining, c.currency)).join(', ')}</b>. It can pay this invoice: + Receipt → Paid by: Client credit.</p>` : ''}
+    ${inv.status === 'CANCELLED' && inv.cancelSettlement ? `<p class="text-xs text-slate-700 bg-slate-50 border rounded px-3 py-2 mb-3">Money received was <b>${{ VOID: 'voided', REFUND: 'refunded', CREDIT: 'kept as the client\'s credit' }[inv.cancelSettlement]}</b> when it was cancelled.</p>` : ''}
     ${s.firmName ? '' : `<p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-3">The firm's name, logo, address and bank details for invoices are set under Setup → Settings.</p>`}
     <div class="border rounded-lg p-4 overflow-x-auto bg-white" ${inPanel ? 'style="zoom:.8"' : ''}>${cmpInvoiceDoc(inv, s)}</div>
     <h3 class="font-medium mt-4 mb-2">Receipts</h3>
     ${inv.receipts.length ? `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Receipt</th><th>Date</th><th class="text-right">Amount</th><th>Paid by</th><th></th></tr></thead><tbody>
       ${inv.receipts.map(r => `<tr class="border-b last:border-0 ${r.voidedAt ? 'opacity-60' : ''}"><td class="py-1.5 ${r.voidedAt ? 'line-through' : ''}">${esc(r.number)}</td><td class="whitespace-nowrap">${cmpDay(r.receivedOn)}</td><td class="text-right whitespace-nowrap">${cmpMoney(r.amount, inv.currency)}</td>
-        <td>${esc(CMP_METHODS[r.method] || r.method)}${r.reference ? ` · ${esc(r.reference)}` : ''}${r.voidedAt ? `<div class="text-xs text-red-700">void: ${esc(r.voidReason)}</div>` : ''}</td>
-        <td class="text-right"><div class="flex flex-wrap justify-end gap-1">${cmpBtn('Print', `cmpReceiptPrint('${r.id}')`)}${!r.voidedAt && wa ? cmpBtn('WhatsApp', `cmpInvoiceWhatsApp({ receiptId: '${r.id}' })`, 'plain', 'needs-write') : ''}${!r.voidedAt ? cmpBtn('↶ Undo', `cmpReceiptVoid('${r.id}')`, 'danger', 'needs-write') : ''}</div></td></tr>`).join('')}</tbody></table></div>`
+        <td>${esc(CMP_METHODS[r.method] || r.method)}${r.reference ? ` · ${esc(r.reference)}` : ''}${r.voidedAt ? `<div class="text-xs text-red-700">void: ${esc(r.voidReason)}</div>` : ''}${r.settlement ? `<div class="mt-0.5">${cmpSettleChip(r)} <span class="text-xs text-slate-500">${esc(r.settlementNote)}</span></div>` : ''}</td>
+        <td class="text-right"><div class="flex flex-wrap justify-end gap-1">${cmpBtn('Print', `cmpReceiptPrint('${r.id}')`)}${!r.voidedAt && wa ? cmpBtn('WhatsApp', `cmpInvoiceWhatsApp({ receiptId: '${r.id}' })`, 'plain', 'needs-write') : ''}${cmpReceiptLive(r) ? cmpBtn('↶ Undo', `cmpReceiptVoid('${r.id}')`, 'danger', 'needs-write') : ''}</div></td></tr>`).join('')}</tbody></table></div>`
       : `<p class="text-sm text-slate-500">None yet.${payable ? ' Record one with <b>+ Receipt</b>.' : ''}</p>`}
     ${inPanel ? '' : `<div class="flex justify-end mt-4">${cmpBtn('Close', 'cmpCloseModal()')}</div>`}`;
 }
@@ -321,29 +332,58 @@ async function cmpInvoiceAct(what) {
   const o = CMP_INV.open;
   try { await api(`/api/cmp/invoices/${o.inv.id}/${what}`, { method: 'POST' }); toast(what === 'sent' ? 'Marked as sent' : 'Marked as not sent', true); await cmpInvoiceRedraw(); } catch (err) { toast(err.message); }
 }
-// Cancelled at any stage (the CA). Money received: said first, and its receipts are voided with it.
-async function cmpInvoiceCancel() {
-  const o = CMP_INV.open, inv = o.inv, live = inv.receipts.filter(r => !r.voidedAt);
-  const paid = live.length ? `\n\n${cmpMoney(live.reduce((m, r) => m + r.amount, 0), inv.currency)} was received against it (${live.map(r => r.number).join(', ')}): ${live.length === 1 ? 'that receipt is' : 'those receipts are'} voided with it.` : '';
-  const reason = prompt(`Why is invoice ${inv.number} cancelled? It keeps its number and stays in the list as cancelled.${paid}`);
-  if (!reason) return;
-  try { await api(`/api/cmp/invoices/${inv.id}/cancel`, { method: 'POST', body: { reason, voidReceipts: live.length > 0 } }); toast('Invoice cancelled', true); await cmpInvoiceRedraw(); } catch (err) { toast(err.message); }
+// Cancelled at any stage (the CA). Money already received: refunded, kept as the client's credit, or the receipts voided, as chosen.
+function cmpInvoiceCancel() {
+  const o = CMP_INV.open, inv = o.inv, live = inv.receipts.filter(cmpReceiptLive), sum = live.reduce((m, r) => m + r.amount, 0);
+  const opt = (v, title, note, extra = '') => `<label class="flex items-start gap-2 border rounded-lg p-3 cursor-pointer hover:border-emerald-600"><input type="radio" name="cmCxl" value="${v}" class="mt-1" onchange="document.querySelectorAll('.cmCxlMore').forEach(x => x.classList.toggle('hidden', x.dataset.for !== this.value))">
+    <span class="flex-1"><b>${title}</b><span class="block text-xs text-slate-600">${note}</span>${extra}</span></label>`;
+  const today = CmpRules.dayIn(cmpTz());
+  cmpShowModal(`${cmpModalHead(`Cancel invoice ${esc(inv.number)}`, `${esc(inv.client.name)} · ${cmpMoney(inv.total, inv.currency)}. It keeps its number and stays in the list as cancelled.`)}
+    <div class="space-y-3">
+      <label><span>Why is it cancelled? *</span><input id="cmCxlWhy" maxlength="300" placeholder="e.g. issued to the wrong client"></label>
+      ${live.length ? `<div class="rounded-lg bg-amber-50 border border-amber-300 px-3 py-2 text-sm"><b>${cmpMoney(sum, inv.currency)}</b> was received against it (${live.map(r => esc(r.number)).join(', ')}). What becomes of it?</div>
+        ${opt('REFUND', 'Refund it to the client', 'The money was paid back. The receipts stay, marked refunded.', `<span data-for="REFUND" class="cmCxlMore hidden grid sm:grid-cols-3 gap-2 mt-2">
+          <span><span class="text-xs text-slate-600">Paid back on</span><input id="cmRfDate" type="date" value="${today}"></span>
+          <span><span class="text-xs text-slate-600">Paid back by</span><select id="cmRfHow">${Object.entries(CMP_METHODS).filter(([k]) => k !== 'CREDIT').map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></span>
+          <span><span class="text-xs text-slate-600">Reference</span><input id="cmRfRef" maxlength="120" placeholder="cheque or transfer no."></span></span>`)}
+        ${opt('CREDIT', `Keep it as ${esc(inv.client.name)}'s credit`, `It pays the client's next invoices in ${esc(inv.currency)} (Paid by: Client credit). The receipts stay, marked kept as credit.`)}
+        ${opt('VOID', 'Void the receipts', 'The money was never really received (entered by mistake, a bounced cheque). The receipts stay, crossed out.')}` : ''}
+      <div class="flex justify-end gap-2">${cmpBtn('Back', `CMP_INV.open.panel ? cmpCloseModal() : cmpInvoiceOpen('${inv.id}', CMP_INV.open.after)`)}${cmpBtn('Cancel invoice', 'cmpInvoiceCancelGo()', 'danger', 'needs-write')}</div></div>`);
+  CMP_INV.cancelling = { live: live.length > 0 };
+}
+async function cmpInvoiceCancelGo() {
+  const inv = CMP_INV.open.inv, reason = $('#cmCxlWhy').value.trim(), pick = document.querySelector('input[name="cmCxl"]:checked');
+  if (!reason) return toast('Write why it is cancelled.');
+  if (CMP_INV.cancelling.live && !pick) return toast('Choose what becomes of the money received: refund, credit or void.');
+  const body = { reason };
+  if (pick) { body.settle = pick.value; if (pick.value === 'REFUND') body.refund = { date: $('#cmRfDate').value, method: $('#cmRfHow').value, reference: $('#cmRfRef').value }; }
+  try {
+    await api(`/api/cmp/invoices/${inv.id}/cancel`, { method: 'POST', body });
+    if (CMP_INV.open.panel) cmpCloseModal();
+    toast(`Invoice cancelled${pick ? ` (${{ REFUND: 'money refunded', CREDIT: 'money kept as the client\'s credit', VOID: 'receipts voided' }[pick.value]})` : ''}`, true); await cmpInvoiceRedraw();
+  } catch (err) { toast(err.message); }
 }
 // The receipt form, inside the invoice (beside the list or in its window)
 function cmpReceiptForm() {
   const inv = CMP_INV.open.inv, d = CmpCountries.currencyDecimals(inv.currency), box = document.getElementById('cmRcpForm'); if (!box) return;
+  const credit = (inv.clientCredit || []).find(c => c.currency === inv.currency && c.remaining > 0) || null;
   box.innerHTML = `<form id="crForm" onsubmit="event.preventDefault(); cmpReceiptSave()" class="space-y-3 bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-3">
       <div class="font-medium text-sm">Receipt against ${esc(inv.number)} · still owed ${cmpMoney(inv.outstanding, inv.currency)}</div>
       <div class="grid sm:grid-cols-3 gap-3">
         <label><span>Amount (${esc(inv.currency)})</span><input name="amount" required inputmode="decimal" value="${inv.outstanding.toFixed(d)}"></label>
         <label><span>Date received</span><input name="receivedOn" type="date" value="${CmpRules.dayIn(cmpTz())}"></label>
-        <label><span>Paid by</span><select name="method">${Object.entries(CMP_METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+        <label><span>Paid by</span><select name="method" onchange="cmpReceiptMethod(this)">${Object.entries(CMP_METHODS).filter(([k]) => k !== 'CREDIT' || credit).map(([k, v]) => `<option value="${k}">${k === 'CREDIT' ? `${v} (${cmpMoney(credit.remaining, inv.currency)} available)` : v}</option>`).join('')}</select></label>
       </div>
       <div class="grid sm:grid-cols-2 gap-3"><label><span>Reference <span class="text-slate-400">(cheque or transfer no.)</span></span><input name="reference" maxlength="120"></label>
         <label><span>Notes</span><input name="notes" maxlength="500"></label></div>
       <div class="flex justify-end gap-2">${cmpBtn('Cancel', "document.getElementById('cmRcpForm').innerHTML = ''")}<button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save receipt</button></div>
     </form>`;
   box.querySelector('input[name="amount"]').focus();
+}
+// Paid from the client's credit: the amount is at most what is left of it
+function cmpReceiptMethod(sel) {
+  const inv = CMP_INV.open.inv, credit = (inv.clientCredit || []).find(c => c.currency === inv.currency), amt = sel.form.amount, d = CmpCountries.currencyDecimals(inv.currency);
+  if (sel.value === 'CREDIT' && credit) amt.value = Math.min(inv.outstanding, credit.remaining).toFixed(d);
 }
 async function cmpReceiptSave() {
   const o = CMP_INV.open, f = new FormData($('#crForm'));
@@ -390,12 +430,12 @@ async function cmpLoadReceiptsPage() {
   let rows;
   try { rows = await api('/api/cmp/receipts?' + cmpRcQuery()); } catch (err) { $('#cmRcRows').innerHTML = `<tr><td colspan="7">${cmpEmpty(esc(err.message))}</td></tr>`; return; }
   const sums = {};
-  for (const r of rows) if (!r.voidedAt) sums[r.currency] = (sums[r.currency] || 0) + r.amount;
+  for (const r of rows) if (cmpReceiptLive(r)) sums[r.currency] = (sums[r.currency] || 0) + r.amount;
   $('#cmRcTotals').innerHTML = `${esc(cmpRangeText('rc'))} · ${rows.length} receipt${rows.length === 1 ? '' : 's'}` + Object.entries(sums).map(([c, n]) => ` · <b>${cmpMoney(n, c)}</b> received`).join('');
   $('#cmRcRows').innerHTML = rows.map(r => `<tr class="border-b last:border-0 ${r.voidedAt ? 'opacity-60' : ''}"><td class="py-2 font-medium ${r.voidedAt ? 'line-through' : ''}">${esc(r.number)}${r.voidedAt ? `<div class="text-xs text-red-700 font-normal no-underline">void: ${esc(r.voidReason)}</div>` : ''}</td>
     <td class="whitespace-nowrap">${cmpDay(r.receivedOn)}</td><td>${cmpCountry(r.client.country).flag} ${esc(r.client.name)}</td>
-    <td><a href="#/cm-invoices/${encodeURIComponent(r.invoice.number)}" class="text-emerald-700 underline">${esc(r.invoice.number)}</a></td><td class="text-right whitespace-nowrap">${cmpMoney(r.amount, r.currency)}</td><td>${esc(CMP_METHODS[r.method] || r.method)}${r.reference ? ` · ${esc(r.reference)}` : ''}</td>
-    <td><div class="flex flex-wrap gap-1">${cmpBtn('Print', `cmpReceiptPrintFrom('${r.invoice.id}', '${r.id}')`)}${!r.voidedAt && cmpCan('WHATSAPP') ? cmpBtn('WhatsApp', `cmpWhatsApp({ kind: 'RECEIPT', receiptId: '${r.id}' }, cmpLoadReceiptsPage)`, 'plain', 'needs-write') : ''}${!r.voidedAt ? cmpBtn('↶ Undo', `cmpReceiptVoid('${r.id}', cmpLoadReceiptsPage)`, 'danger', 'needs-write') : ''}</div></td></tr>`).join('')
+    <td><a href="#/cm-invoices/${encodeURIComponent(r.invoice.number)}" class="text-emerald-700 underline">${esc(r.invoice.number)}</a></td><td class="text-right whitespace-nowrap">${cmpMoney(r.amount, r.currency)}</td><td>${esc(CMP_METHODS[r.method] || r.method)}${r.reference ? ` · ${esc(r.reference)}` : ''}${r.settlement ? `<div class="mt-0.5">${cmpSettleChip(r)}</div>` : ''}</td>
+    <td><div class="flex flex-wrap gap-1">${cmpBtn('Print', `cmpReceiptPrintFrom('${r.invoice.id}', '${r.id}')`)}${!r.voidedAt && cmpCan('WHATSAPP') ? cmpBtn('WhatsApp', `cmpWhatsApp({ kind: 'RECEIPT', receiptId: '${r.id}' }, cmpLoadReceiptsPage)`, 'plain', 'needs-write') : ''}${cmpReceiptLive(r) ? cmpBtn('↶ Undo', `cmpReceiptVoid('${r.id}', cmpLoadReceiptsPage)`, 'danger', 'needs-write') : ''}</div></td></tr>`).join('')
     || `<tr><td colspan="7">${cmpEmpty(`No receipts for ${esc(cmpRangeText('rc'))}. A receipt is made against an invoice: + New receipt, or + Receipt on an invoice.`)}</td></tr>`;
 }
 async function cmpReceiptPrintFrom(invoiceId, receiptId) {

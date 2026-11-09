@@ -113,16 +113,16 @@ function cleanFieldValue(def, v) {
     return line(v, 500, label);
 }
 
-// SRS 4. frequency: how often it comes back, fixed once added. The CA (9 Nov 2026): no list to choose from, the three dates say it
-// (a one-month period every month, three months every quarter, six months every six months, else every year: R.detectFrequency);
-// "YEARLY" can still be asked for a shorter period that comes back once a year.
+// SRS 4. An obligation comes back every year on the same dates (the CA, 9 Nov 2026: no quarterly or monthly cycle; quarterly returns
+// are four obligations of their own, all typed by hand). Obligations made before with QUARTERLY or MONTHLY keep it: the API still
+// takes a frequency, the screens no longer offer one.
 // yearsTotal ("How many years"): '' / null / 0 = unlimited; otherwise 1 to 100 years in all (the first one included).
 // amberDays and autoNext: set on each obligation (the CA), no longer one setting for the whole firm.
 function cleanObligation(b, { partial = false } = {}) {
     const out = {};
     if (!partial || b.name !== undefined) out.name = line(b.name, 120, 'Obligation name', { required: true });
     if (!partial) {
-        out.frequency = b.frequency ? String(b.frequency).toUpperCase() : R.detectFrequency(b.periodStart, b.periodEnd);
+        out.frequency = b.frequency ? String(b.frequency).toUpperCase() : 'YEARLY';
         if (!R.FREQUENCIES[out.frequency]) throw bad('Choose how often the obligation comes back: every month, every quarter, every six months or every year.');
     }
     if (!partial || b.amberDays !== undefined) out.amberDays = b.amberDays === undefined || b.amberDays === null || b.amberDays === '' ? 7 : int(b.amberDays, 0, 90, 'The number of days before the due date it turns amber');
@@ -204,6 +204,17 @@ function cleanSettings(b) {
         if (l && !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(l)) throw bad('The logo must be a PNG, JPEG or WebP picture.');
         if (l.length > 400000) throw bad('The logo is too large: choose a smaller picture (at most 300 KB).');
         out.logo = l;
+    }
+    if (b.headerStyle !== undefined) {
+        out.headerStyle = String(b.headerStyle || '').toUpperCase();
+        if (!['LOGO', 'LETTERHEAD'].includes(out.headerStyle)) throw bad('Choose the top of the invoices: the logo and header, or a letterhead picture.');
+    }
+    // a full letterhead picture (the CA), wider than a logo: at most about 900 KB once made smaller by the screen
+    if (b.letterhead !== undefined) {
+        const l = String(b.letterhead || '');
+        if (l && !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(l)) throw bad('The letterhead must be a PNG, JPEG or WebP picture.');
+        if (l.length > 1200000) throw bad('The letterhead picture is too large: choose a smaller one.');
+        out.letterhead = l;
     }
     for (const k of ['invoiceFormat', 'receiptFormat']) {
         if (b[k] === undefined) continue;

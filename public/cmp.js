@@ -294,14 +294,35 @@ async function cmpClientMessage(clientId, occurrenceId, kind = 'DATA_COLLECTION'
 /* ---------- reminders, as pills (SRS 6: highlighted, bleak, missed, sent) ---------- */
 function cmpReminderPill(r, item, refresh) {
   const tz = item.client.timeZone, when = cmpClientAt(r.fireAt, tz), label = esc(CmpRules.offsetLabel(r.offsetDays)), noWa = item.client.noWhatsApp;
-  const send = (txt, kind = 'wa') => (noWa ? (kind === 'wa' ? '<span class="ml-2 text-slate-500">· no WhatsApp: remind by phone or email</span>' : '') : cmpCan('WHATSAPP') ? `<button type="button" class="needs-write ml-2 px-2 py-1 rounded-md text-xs font-semibold ${kind === 'wa' ? 'bg-[#25D366] text-white' : 'border border-emerald-600 text-emerald-800'}"
+  // given another way and marked by hand (the CA: clients with no WhatsApp; anyone may also be called instead)
+  const other = noWa => (cmpCan('WHATSAPP', 'COMPLETE') ? `<button type="button" class="needs-write ml-2 ${noWa ? 'px-2 py-1 rounded-md text-xs font-semibold border border-amber-600 bg-white text-amber-900' : 'text-xs underline text-slate-600'}"
+    onclick="cmpRemindedForm('${item.id}', '${r.id}', '${refresh}')">${noWa ? '✓ Reminded by phone / email' : 'or mark done another way'}</button>` : '');
+  const send = (txt, kind = 'wa') => (noWa ? (kind === 'wa' ? other(true) : '') : cmpCan('WHATSAPP') ? `<button type="button" class="needs-write ml-2 px-2 py-1 rounded-md text-xs font-semibold ${kind === 'wa' ? 'bg-[#25D366] text-white' : 'border border-emerald-600 text-emerald-800'}"
     onclick="cmpWhatsApp({ kind: 'REMINDER', occurrenceId: '${item.id}', reminderId: '${r.id}' }, ${refresh})">${txt}</button>` : '');
   const tpl = `<span class="text-slate-500"> · ${esc(r.templateName || 'no template')}</span>`;
-  if (r.state === 'HIGHLIGHTED') return `<div class="flex flex-wrap items-center gap-1 rounded-lg bg-amber-100 border border-amber-300 text-amber-900 px-2.5 py-1.5 text-xs"><b>Send now</b> · ${label}${tpl}<span class="text-amber-800"> · since ${when}</span>${send(`${CMP_WA_ICON} WhatsApp`)}</div>`;
-  if (r.state === 'MISSED') return `<div class="flex flex-wrap items-center gap-1 rounded-lg border border-amber-400 text-amber-900 px-2.5 py-1.5 text-xs"><b>Not sent</b> · ${label}${tpl}<span class="text-slate-500"> · came due ${when}</span>${send(`${CMP_WA_ICON} WhatsApp`)}</div>`;
+  if (r.state === 'HIGHLIGHTED') return `<div class="flex flex-wrap items-center gap-1 rounded-lg bg-amber-100 border border-amber-300 text-amber-900 px-2.5 py-1.5 text-xs"><b>${noWa ? 'Remind now' : 'Send now'}</b> · ${label}${tpl}<span class="text-amber-800"> · since ${when}</span>${send(`${CMP_WA_ICON} WhatsApp`)}${noWa ? '' : other(false)}</div>`;
+  if (r.state === 'MISSED') return `<div class="flex flex-wrap items-center gap-1 rounded-lg border border-amber-400 text-amber-900 px-2.5 py-1.5 text-xs"><b>Not ${noWa ? 'done' : 'sent'}</b> · ${label}${tpl}<span class="text-slate-500"> · came due ${when}</span>${send(`${CMP_WA_ICON} WhatsApp`)}${noWa ? '' : other(false)}</div>`;
   if (r.state === 'SENT') return `<div class="flex flex-wrap items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 px-2.5 py-1.5 text-xs">✓ Sent ${esc(cmpAt(r.sentAt))} · ${label}${tpl}${item.stage === 'COMPLETED' ? '' : send('Send again', 'plain')}</div>`;
   if (r.state === 'CLOSED') return `<div class="rounded-lg bg-slate-50 border text-slate-400 px-2.5 py-1.5 text-xs">${label}${tpl} · closed</div>`;
   return `<div class="rounded-lg bg-slate-50 border border-dashed text-slate-400 px-2.5 py-1.5 text-xs" title="Becomes active when its time comes">${label}${tpl} · activates ${when}</div>`;
+}
+
+// A reminder given by phone, email or another way, marked so it counts as done (the CA)
+function cmpRemindedForm(occurrenceId, reminderId, refreshName) {
+  CMP.reminded = { occurrenceId, reminderId, refreshName, period: CMP_OB && CMP_OB.period && CMP_OB.period.p && CMP_OB.period.p.id === occurrenceId ? CMP_OB.period : null };
+  cmpShowModal(`${cmpModalHead('Reminder given another way', 'It counts as done, and the log keeps how it was given.')}
+    <div class="space-y-3"><div class="flex flex-wrap gap-4 text-sm">${['PHONE', 'EMAIL', 'OTHER'].map((k, i) => `<label class="flex items-center gap-2"><input type="radio" name="cmRemHow" value="${k}" ${i ? '' : 'checked'}> ${esc(CmpRules.CHANNELS[k])}</label>`).join('')}</div>
+      <label><span>Note <span class="text-slate-400">(optional — e.g. spoke to the accountant, will send the data on Monday)</span></span><textarea id="cmRemNote" rows="2" maxlength="1000"></textarea></label>
+      <div class="flex justify-end gap-2">${cmpBtn('Cancel', 'cmpCloseModal()')}${cmpBtn('✓ Mark as reminded', 'cmpRemindedSave()', 'primary', 'needs-write')}</div></div>`);
+}
+async function cmpRemindedSave() {
+  const c = CMP.reminded, channel = document.querySelector('input[name="cmRemHow"]:checked').value;
+  try {
+    await api('/api/cmp/messages/manual', { method: 'POST', body: { occurrenceId: c.occurrenceId, reminderId: c.reminderId, channel, note: $('#cmRemNote').value } });
+    cmpCloseModal(); toast(`Marked as reminded by ${CmpRules.CHANNELS[channel].toLowerCase()}`, true);
+    if (c.period) return cmpOpenPeriod(c.period.ob.id, c.period.p.id, c.period.refresh).then(() => { if (c.period.refresh) c.period.refresh(); });
+    const f = window[c.refreshName]; if (typeof f === 'function') f();
+  } catch (err) { toast(err.message); }
 }
 
 /* ---------- notifications dashboard (SRS 6, 11) ---------- */

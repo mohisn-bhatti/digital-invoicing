@@ -76,11 +76,14 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
         const tz = (await clients.getSettings(ctx)).timeZone, q = req.query;
         const from = q.from ? CmpRules.zoned(V.day(q.from, 'From'), 0, 0, tz) : null, to = q.to ? CmpRules.zoned(CmpRules.addDays(V.day(q.to, 'To'), 1), 0, 0, tz) : null;
         const when = from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {};
-        if (ctx.perms.has('INVOICE')) out.invoices = (await invoices.list(ctx, { clientId: out.client.id, from: q.from, to: q.to })).invoices;
+        if (ctx.perms.has('INVOICE')) {
+            out.invoices = (await invoices.list(ctx, { clientId: out.client.id, from: q.from, to: q.to })).invoices;
+            out.credit = await invoices.creditOf(ctx.tenantId, out.client.id); // money kept for the client when an invoice was cancelled
+        }
         if (ctx.perms.has('LOGS')) {
             out.messages = (await prisma.cmpMessage.findMany({ where: { tenantId: ctx.tenantId, clientId: out.client.id, ...when }, orderBy: { createdAt: 'desc' }, take: 300,
                 include: { occurrence: { select: { seq: true, obligation: { select: { name: true } } } } } }))
-                .map(m => ({ id: m.id, createdAt: m.createdAt, kind: m.kind, templateName: m.templateName, phone: m.phone, body: m.body, userEmail: m.userEmail, voidedAt: m.voidedAt, obligation: m.occurrence ? m.occurrence.obligation.name : '' }));
+                .map(m => ({ id: m.id, createdAt: m.createdAt, kind: m.kind, channel: m.channel, templateName: m.templateName, phone: m.phone, body: m.body, userEmail: m.userEmail, voidedAt: m.voidedAt, obligation: m.occurrence ? m.occurrence.obligation.name : '' }));
             out.activity = await prisma.auditLog.findMany({ where: { tenantId: ctx.tenantId, action: { startsWith: 'cmp.' }, OR: [{ entityId: out.client.id }, { details: { path: ['clientId'], equals: out.client.id } }], ...when },
                 orderBy: { createdAt: 'desc' }, take: 300, select: { id: true, createdAt: true, userEmail: true, action: true, summary: true } });
         }
@@ -97,7 +100,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('put', '/api/cmp/fields/:id', can('SETUP'), (req, ctx) => clients.updateField(ctx, req.params.id, req.body || {}));
 
     // obligations, their years and reminders (SRS 4, 5)
-    route('post', '/api/cmp/clients/:id/obligations', can('OBLIGATION_EDIT'), (req, ctx) => obligations.create(ctx, req.params.id, req.body || {}));
+    // one obligation, or several at once ({ items: [{ name, periodStart, periodEnd, dueDate }], and what they share })
+    route('post', '/api/cmp/clients/:id/obligations', can('OBLIGATION_EDIT'), (req, ctx) => (Array.isArray((req.body || {}).items) ? obligations.createMany(ctx, req.params.id, req.body) : obligations.create(ctx, req.params.id, req.body || {})));
     route('get', '/api/cmp/suggest/obligations', can('VIEW'), (req, ctx) => obligations.suggest(ctx, req.query.country));
     route('get', '/api/cmp/obligations/:id', can('VIEW'), (req, ctx) => obligations.get(ctx, req.params.id));
     route('put', '/api/cmp/obligations/:id', can('OBLIGATION_EDIT'), (req, ctx) => obligations.update(ctx, req.params.id, req.body || {}));
@@ -134,6 +138,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('post', '/api/cmp/messages/prepare', can('WHATSAPP'), (req, ctx) => comms.prepare(ctx, req.body || {}));
     route('post', '/api/cmp/messages', can('WHATSAPP'), (req, ctx) => comms.send(ctx, req.body || {}));
     route('post', '/api/cmp/messages/:id/void', can('WHATSAPP'), (req, ctx) => comms.voidMessage(ctx, req.params.id));
+    // a reminder given by phone, email or another way, marked by hand (the CA: clients with no WhatsApp)
+    route('post', '/api/cmp/messages/manual', can('WHATSAPP', 'COMPLETE'), (req, ctx) => comms.markReminded(ctx, req.body || {}));
     route('get', '/api/cmp/messages', can('LOGS'), (req, ctx, res) => comms.listMessages(ctx, req.query, res));
 
     // notifications (SRS 6, 11): the dashboard for those who report or send; the counts for the bell for everyone
@@ -164,7 +170,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('post', '/api/cmp/invoices/:id/issue', can('INVOICE'), (req, ctx) => invoices.issue(ctx, req.params.id));
     route('post', '/api/cmp/invoices/:id/sent', can('INVOICE'), (req, ctx) => invoices.markSent(ctx, req.params.id));
     route('post', '/api/cmp/invoices/:id/unsent', can('INVOICE'), (req, ctx) => invoices.unmarkSent(ctx, req.params.id));
-    route('post', '/api/cmp/invoices/:id/cancel', can('INVOICE'), (req, ctx) => invoices.cancel(ctx, req.params.id, (req.body || {}).reason, { voidReceipts: (req.body || {}).voidReceipts === true }));
+    // money already received: settle VOID, REFUND (with its date, method and reference) or CREDIT (kept for the client)
+    route('post', '/api/cmp/invoices/:id/cancel', can('INVOICE'), (req, ctx) => { const b = req.body || {}; return invoices.cancel(ctx, req.params.id, b.reason, { voidReceipts: b.voidReceipts === true, settle: b.settle, refund: b.refund }); });
     route('post', '/api/cmp/invoices/:id/receipts', can('INVOICE'), (req, ctx) => invoices.addReceipt(ctx, req.params.id, req.body || {}));
     route('get', '/api/cmp/receipts', can('INVOICE'), (req, ctx) => invoices.listReceipts(ctx, req.query));
     route('post', '/api/cmp/receipts/:id/void', can('INVOICE'), (req, ctx) => invoices.voidReceipt(ctx, req.params.id, (req.body || {}).reason));
