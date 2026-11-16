@@ -59,8 +59,8 @@ test('feedback 3 API: start a server, a firm with the module and its users', { t
     await set(A.manager.email, ['VIEW', 'CLIENT_EDIT', 'OBLIGATION_EDIT', 'WHATSAPP', 'COMPLETE', 'REPORTS']); // no invoices
     W.tpl = (await A.call('/api/cmp/templates', { token: A.owner.token, method: 'POST', body: { name: 'Invoice', purpose: 'INVOICE', body: 'Invoice [Invoice Number]: [Invoice Amount].' } })).json;
     const mk = async (country, name, contactNumber, extra = {}) => (await A.call('/api/cmp/clients', { token: A.owner.token, method: 'POST', body: { country, name, contactNumber, portalUsername: 'u', portalPassword: 'pw-1', ...extra } })).json.client;
-    W.ae = await mk('AE', 'Green Alma Car Rental', '+971501112233', { reference: 'Rashid Ali' });
-    W.ae2 = await mk('AE', 'Blue Sky Trading', '+971501112244', { reference: 'Rashid Ali' });
+    W.ae = await mk('AE', 'Palm Grove Car Rental', '+971501112233', { reference: 'Mr Example' });
+    W.ae2 = await mk('AE', 'Blue Sky Trading', '+971501112244', { reference: 'Mr Example' });
     W.pk = await mk('PK', 'Zeta Traders', '03001112233');
     assert.ok(W.ae && W.ae2 && W.pk, 'clients made');
 });
@@ -89,7 +89,7 @@ run('a custom field: renamed and its type changed with it; the values typed befo
     r = await A.call('/api/cmp/fields/values?country=AE', { token: A.manager.token });
     assert.strictEqual(r.status, 200, r.text);
     assert.deepStrictEqual(r.json.fields[W.fPeriod.id], ['01 January to 31 December']);
-    assert.deepStrictEqual(r.json.reference, ['Rashid Ali']);
+    assert.deepStrictEqual(r.json.reference, ['Mr Example']);
     assert.deepStrictEqual((await A.call('/api/cmp/fields/values?country=PK', { token: A.manager.token })).json.fields, {});
 });
 
@@ -131,7 +131,7 @@ run('a reminder\'s own message is what WhatsApp gets; its sends are counted, and
     const occ = W.q1.occurrences[0], first = W.q1.occurrences[0].view.reminders[0]; // 7 days before the due date: its day was 3 days ago
     assert.deepStrictEqual([first.offsetDays, first.date, first.button, first.sentCount], [-7, day(-3), 'PENDING', 0]);
     let p = (await A.call('/api/cmp/messages/prepare', { token: A.manager.token, method: 'POST', body: { occurrenceId: occ.id, reminderId: first.id } })).json;
-    assert.strictEqual(p.body, `Dear Green Alma Car Rental, Value Added Tax Q1 is due on ${R.fmtDay(day(4))}.`);
+    assert.strictEqual(p.body, `Dear Palm Grove Car Rental, Value Added Tax Q1 is due on ${R.fmtDay(day(4))}.`);
     assert.strictEqual(p.templateName, '1st reminder');
     for (let i = 0; i < 2; i++) assert.strictEqual((await A.call('/api/cmp/messages', { token: A.manager.token, method: 'POST', body: { occurrenceId: occ.id, reminderId: first.id, body: p.body, phone: '+971501112233' } })).status, 200);
     const rowOf = async () => (await A.call('/api/cmp/occurrences?' + new URLSearchParams({ clientId: W.ae.id, status: 'ALL' }), { token: A.owner.token })).json.rows.find(x => x.id === occ.id);
