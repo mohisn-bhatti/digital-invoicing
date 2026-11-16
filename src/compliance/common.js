@@ -39,7 +39,7 @@ function createCommon({ prisma }) {
     }
     // Every template named by these reminders must be one of the firm's own, and still in use
     async function checkTemplates(tenantId, reminders, db = prisma) {
-        const ids = [...new Set(reminders.map(r => r.templateId))];
+        const ids = [...new Set(reminders.map(r => r.templateId).filter(Boolean))]; // (a reminder with its own message names none)
         if (!ids.length) return;
         const found = await db.cmpTemplate.findMany({ where: { tenantId, id: { in: ids }, active: true }, select: { id: true } });
         if (found.length !== ids.length) throw bad('Choose a message template for each reminder (one of your templates that is still in use).');

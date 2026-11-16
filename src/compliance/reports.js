@@ -18,7 +18,7 @@ function createReports({ prisma, audit, common, clients, obligations, comms, inv
     async function dashboard(ctx, q = {}) {
         const days = windowDays(q.days), at = now(), settings = await common.settings(ctx.tenantId), tz = settings.timeZone;
         const [items, open, summary, completedThisMonth, clientCount] = await Promise.all([
-            obligations.listOccurrences(ctx, { status: 'OPEN', to: R.addDays(R.dayIn(tz, at), days), limit: 2000 }),
+            obligations.listOccurrences(ctx, { money: '0', status: 'OPEN', to: R.addDays(R.dayIn(tz, at), days), limit: 2000 }),
             prisma.cmpOccurrence.findMany({ where: { tenantId: ctx.tenantId, stage: { not: 'COMPLETED' }, obligation: live }, select: { dueAt: true, obligation: { select: { client: { select: { country: true } } } } } }),
             comms.alerts(ctx),
             prisma.cmpOccurrence.count({ where: { tenantId: ctx.tenantId, stage: 'COMPLETED', closedAt: { gte: R.zoned(R.dayIn(tz, at).slice(0, 8) + '01', 0, 0, tz) } } }),
@@ -48,22 +48,22 @@ function createReports({ prisma, audit, common, clients, obligations, comms, inv
     async function calendar(ctx, q = {}) {
         const from = V.day(q.from, 'From'), to = V.day(q.to, 'To');
         if (to < from || R.daysBetween(from, to) > 62) throw bad('Choose up to two months.');
-        return obligations.listOccurrences(ctx, { ...q, status: 'ALL', from, to, limit: 3000 });
+        return obligations.listOccurrences(ctx, { money: '0', ...q, status: 'ALL', from, to, limit: 3000 });
     }
 
     // Overdue list, upcoming deadlines (a window of days) and invoice aging (SRS 11)
     async function report(ctx, kind, q = {}) {
         const settings = await common.settings(ctx.tenantId), today = R.dayIn(settings.timeZone, now());
-        if (kind === 'overdue') return { kind, rows: (await obligations.listOccurrences(ctx, { ...q, status: 'OVERDUE', limit: 5000 })).rows };
+        if (kind === 'overdue') return { kind, rows: (await obligations.listOccurrences(ctx, { money: '0', ...q, status: 'OVERDUE', limit: 5000 })).rows };
         if (kind === 'upcoming') {
             const days = windowDays(q.days);
-            const rows = (await obligations.listOccurrences(ctx, { ...q, status: 'OPEN', from: today, to: R.addDays(today, days), limit: 5000 })).rows.filter(r => !r.view.overdue);
+            const rows = (await obligations.listOccurrences(ctx, { money: '0', ...q, status: 'OPEN', from: today, to: R.addDays(today, days), limit: 5000 })).rows.filter(r => !r.view.overdue);
             return { kind, days, rows };
         }
         // the CA: every report here, each for the dates chosen (by default the calendar year)
         const range = () => ({ from: q.from ? V.day(q.from, 'From') : '', to: q.to ? V.day(q.to, 'To') : '' });
         if (kind === 'obligations') {
-            const d = await obligations.listOccurrences(ctx, { ...q, status: q.status || 'ALL', limit: 20000 });
+            const d = await obligations.listOccurrences(ctx, { money: '0', ...q, status: q.status || 'ALL', limit: 20000 });
             const counts = {};
             for (const r of d.rows) counts[r.view.status] = (counts[r.view.status] || 0) + 1;
             return { kind, ...range(), rows: d.rows, counts };
@@ -92,13 +92,13 @@ function createReports({ prisma, audit, common, clients, obligations, comms, inv
             const ids = list.map(c => c.id), at = now();
             const [occs, invs] = ids.length ? await Promise.all([
                 prisma.cmpOccurrence.findMany({ where: { clientId: { in: ids }, obligation: { archivedAt: null }, ...(from || to ? { dueDate: due } : {}) }, select: { clientId: true, stage: true, dueAt: true } }),
-                ctx.perms.has('INVOICE') ? prisma.cmpInvoice.findMany({ where: { clientId: { in: ids }, status: { notIn: ['DRAFT', 'CANCELLED'] }, ...(from || to ? { issueDate: due } : {}) }, select: { clientId: true, currency: true, total: true, received: true } }) : [],
+                ctx.perms.has('INVOICE') ? prisma.cmpInvoice.findMany({ where: { clientId: { in: ids }, status: { notIn: ['DRAFT', 'CANCELLED'] }, ...(from || to ? { issueDate: due } : {}) }, select: { clientId: true, currency: true, total: true, received: true, advanceAdjusted: true } }) : [],
             ]) : [[], []];
             const rows = list.map(c => {
                 const mine = occs.filter(o => o.clientId === c.id), money = new Map();
                 for (const i of invs.filter(x => x.clientId === c.id)) {
                     const m = money.get(i.currency) || { currency: i.currency, invoiced: 0, received: 0, outstanding: 0 };
-                    m.invoiced += Number(i.total); m.received += Number(i.received); m.outstanding += Number(i.total) - Number(i.received);
+                    m.invoiced += Number(i.total); m.received += Number(i.received) + Number(i.advanceAdjusted); m.outstanding += Number(i.total) - Number(i.advanceAdjusted) - Number(i.received); // (an advance taken off counts as received)
                     money.set(i.currency, m);
                 }
                 return { client: { id: c.id, code: c.code, name: c.name, country: c.country }, periods: mine.length, completed: mine.filter(o => o.stage === 'COMPLETED').length,
@@ -139,13 +139,13 @@ function createReports({ prisma, audit, common, clients, obligations, comms, inv
             head = ['Code', 'Client', 'Country', 'Time zone', 'Contact number', 'Email', 'Registration No.', 'Reference', 'Assigned to', 'Open obligations', 'Overdue', 'Missing details', 'Archived'];
             rows = d.clients.map(c => [c.code, c.name, c.country, c.timeZone, c.contactNumber, c.email, c.registrationNo, c.reference, who(c.assignedToId), c.openCount, c.overdueCount, c.missing.join('; '), c.archivedAt ? 'yes' : '']);
         } else if (kind === 'obligations') {
-            head = occHead; rows = (await obligations.listOccurrences(ctx, { ...q, limit: 20000 })).rows.map(occRow);
+            head = occHead; rows = (await obligations.listOccurrences(ctx, { money: '0', ...q, limit: 20000 })).rows.map(occRow);
         } else if (kind === 'overdue' || kind === 'upcoming') {
             head = occHead; rows = (await report(ctx, kind, q)).rows.map(occRow);
         } else if (kind === 'invoices') {
-            head = ['Number', 'Status', 'Client code', 'Client', 'Country', 'For', 'Currency', 'Invoice date', 'Payment due', 'Subtotal', 'Tax', 'Total', 'Received', 'Outstanding', 'Made by'];
+            head = ['Number', 'Status', 'Client code', 'Client', 'Country', 'For', 'Currency', 'Invoice date', 'Payment due', 'Subtotal', 'Tax', 'Total', 'Advance adjusted', 'Received', 'Outstanding', 'Made by'];
             rows = (await invoices.list(ctx, { ...q, limit: 20000 })).invoices.map(i => [i.number || '(draft)', i.status, i.client.code, i.client.name, i.client.country, i.obligation ? `${i.obligation.name} ${R.periodName(i.obligation)}` : '',
-                i.currency, i.issueDate, i.dueDate, cur(i.subtotal, i.currency), cur(i.taxTotal, i.currency), cur(i.total, i.currency), cur(i.received, i.currency), cur(i.outstanding, i.currency), i.createdBy]);
+                i.currency, i.issueDate, i.dueDate, cur(i.subtotal, i.currency), cur(i.taxTotal, i.currency), cur(i.total, i.currency), cur(i.advanceAdjusted, i.currency), cur(i.received, i.currency), cur(i.outstanding, i.currency), i.createdBy]);
         } else if (kind === 'receipts') {
             head = ['Number', 'Date received', 'Client code', 'Client', 'Invoice', 'Currency', 'Amount', 'Paid by', 'Reference', 'Void'];
             rows = (await invoices.listReceipts(ctx, { ...q, limit: 20000 })).map(r => [r.number, r.receivedOn, r.client.code, r.client.name, r.invoice.number, r.currency, cur(r.amount, r.currency), invoices.METHODS[r.method] || r.method, r.reference, r.voidedAt ? `void: ${r.voidReason}` : r.settlementNote || '']);

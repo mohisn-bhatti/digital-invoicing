@@ -275,8 +275,33 @@
     return waUrl(digits, text); // (WhatsApp Business on a computer or an iPhone: the device opens the WhatsApp it has)
   }
 
+  /* ---------- the tracker (the CA, 16 Nov 2026) ---------- */
+  const ordinal = n => `${n}${n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th'}`;
+  // A reminder's button on the tracker: WAIT (its date has not come: the date only), DUE (its day, on the client's clock), PENDING (its day
+  // has passed and it was not sent), SENT (sent once or more: the count shows, and it can be sent again), CLOSED (the task was done first)
+  function reminderButton(r, { tz, now = Date.now(), completed = false } = {}) {
+    if ((r.sentCount || 0) > 0 || r.state === 'SENT') return 'SENT';
+    if (completed || r.state === 'CLOSED') return 'CLOSED';
+    if (+now < +new Date(r.fireAt)) return 'WAIT';
+    return dayIn(tz, now) === dayIn(tz, +new Date(r.fireAt)) ? 'DUE' : 'PENDING';
+  }
+  const sentTimes = n => (n === 1 ? 'Sent' : n === 2 ? 'Sent twice' : `Sent ${n} times`);
+  // The overall status of a period: how many of its actions are done (the CA: "if 2 are done of 7, 2/7"). The actions: each reminder (a
+  // reminder that was not needed because the task was done first does not count), the data collection, the task, and, unless the work
+  // is closed without an invoice, the invoice created, the invoice sent to the client and the money received in full.
+  function progress(p) {
+    const steps = [];
+    for (const r of p.reminders || []) { const sent = (r.sentCount || 0) > 0 || r.state === 'SENT'; if (sent || r.state !== 'CLOSED') steps.push(sent); }
+    steps.push(Boolean(p.dataCollectedOn), p.stage === 'COMPLETED');
+    if (p.closeKind !== 'FREE') {
+      const inv = p.invoice && p.invoice.status !== 'CANCELLED' ? p.invoice : null;
+      steps.push(Boolean(inv && inv.number), Boolean(inv && (inv.sentAt || inv.sentCount > 0 || ['PARTIAL', 'RECEIVED'].includes(inv.status))), Boolean(inv && inv.status === 'RECEIVED'));
+    }
+    return { done: steps.filter(Boolean).length, total: steps.length };
+  }
+
   // How a message or reminder went: on WhatsApp, or another way and marked by hand (the CA: clients with no WhatsApp)
-  const CHANNELS = { WHATSAPP: 'WhatsApp', PHONE: 'Phone call', EMAIL: 'Email', OTHER: 'Another way' };
+  const CHANNELS ={ WHATSAPP: 'WhatsApp', PHONE: 'Phone call', EMAIL: 'Email', OTHER: 'Another way' };
   const TEMPLATE_PURPOSES = { REMINDER: 'Reminder', DATA_COLLECTION: 'Data collection', COMPLETION: 'Obligation completed', INVOICE: 'Invoice', RECEIPT: 'Receipt', OTHER: 'Other' };
   const MESSAGE_KINDS = TEMPLATE_PURPOSES;
 
@@ -285,5 +310,6 @@
     STAGES, MANUAL, STATUS, instants, fireAt, reminderStates, occurrenceView,
     FREQUENCIES, freqOf, shiftMonths, shiftYears, periodDates, yearDates, projectPeriods, periodsAllowed, periodName, datesProblem, offsetLabel, yearsLabel, repeatsLabel, yearsShort,
     keyOf, PLACEHOLDER_GROUPS, PLACEHOLDERS, RESERVED, render, waPhone, toE164, waUrl, SENDER_OPEN, waLink, CHANNELS, TEMPLATE_PURPOSES, MESSAGE_KINDS,
+    ordinal, reminderButton, sentTimes, progress,
   };
 });

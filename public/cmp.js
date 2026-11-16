@@ -113,16 +113,42 @@ function cmpEnsureModal() {
   document.body.insertAdjacentHTML('beforeend', `
     <div id="cmpModal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-start justify-center overflow-y-auto p-2 sm:p-4" onclick="if (event.target === this) cmpCloseModal()">
       <div id="cmpModalBody" role="dialog" aria-modal="true" class="bg-white rounded-xl shadow-xl w-full max-w-3xl mt-2 sm:mt-6 p-4 sm:p-5"></div></div>`);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') cmpCloseModal(); });
+  document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (cmpSubOpen()) cmpCloseSub(); else cmpCloseModal(); });
 }
-function cmpShowModal(html, { wide = false } = {}) {
+function cmpShowModal(html, { wide = false, xl = false } = {}) {
   cmpEnsureModal();
   const body = document.getElementById('cmpModalBody');
-  body.classList.toggle('max-w-5xl', wide); body.classList.toggle('max-w-3xl', !wide);
+  body.classList.toggle('max-w-[min(100rem,98vw)]', xl); body.classList.toggle('max-w-5xl', wide && !xl); body.classList.toggle('max-w-3xl', !wide && !xl);
   body.innerHTML = html;
   document.getElementById('cmpModal').classList.remove('hidden');
 }
 function cmpCloseModal() { const m = document.getElementById('cmpModal'); if (m) m.classList.add('hidden'); }
+// A second, smaller window over the first (or over the page): a message, a date, a question — what is typed in the first stays
+function cmpShowSub(html, { wide = false } = {}) {
+  let box = document.getElementById('cmpSub');
+  if (!box) {
+    document.body.insertAdjacentHTML('beforeend', `<div id="cmpSub" class="hidden fixed inset-0 z-[60] bg-black/40 flex items-start justify-center overflow-y-auto p-2 sm:p-6" onclick="if (event.target === this) cmpCloseSub()">
+      <div id="cmpSubBody" role="dialog" aria-modal="true" class="bg-white rounded-xl shadow-2xl w-full mt-4 sm:mt-10 p-4 sm:p-5"></div></div>`);
+    box = document.getElementById('cmpSub');
+  }
+  const body = document.getElementById('cmpSubBody');
+  body.classList.toggle('max-w-5xl', wide); body.classList.toggle('max-w-md', !wide);
+  body.innerHTML = html;
+  box.classList.remove('hidden');
+  const first = body.querySelector('input:not([type=hidden]):not([disabled]), textarea, select'); if (first) setTimeout(() => first.focus(), 0);
+}
+function cmpCloseSub() { const m = document.getElementById('cmpSub'); if (m) m.classList.add('hidden'); }
+const cmpSubOpen = () => { const m = document.getElementById('cmpSub'); return Boolean(m && !m.classList.contains('hidden')); };
+const cmpSubHead = (title, sub = '') => `<div class="flex items-start justify-between gap-3 mb-3"><div><h2 class="text-base font-semibold">${title}</h2>${sub ? `<div class="text-sm text-slate-500">${sub}</div>` : ''}</div>
+  <button type="button" onclick="cmpCloseSub()" class="text-slate-400 hover:text-slate-700 text-2xl leading-none px-2" aria-label="Close">×</button></div>`;
+// Asks for a day (the tracker: data collected on, task done on, ...): ok(ymd) runs when it is confirmed
+function cmpAskDate(title, note, { value, max, okLabel = 'Save' } = {}, ok) {
+  CMP.askDate = ok;
+  cmpShowSub(`${cmpSubHead(title, note)}
+    <form onsubmit="event.preventDefault(); const v = this.d.value; if (!v) return toast('Choose the date.'); cmpCloseSub(); CMP.askDate(v)" class="space-y-3">
+      <label><span>Date</span><input name="d" type="date" required value="${esc(value || CmpRules.dayIn(cmpTz()))}" ${max ? `max="${esc(max)}"` : ''}></label>
+      <div class="flex justify-end gap-2">${cmpBtn('Cancel', 'cmpCloseSub()')}<button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">${esc(okLabel)}</button></div></form>`);
+}
 const cmpModalHead = (title, sub = '') => `<div class="flex items-start justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold">${title}</h2>${sub ? `<div class="text-sm text-slate-500">${sub}</div>` : ''}</div>
   <button type="button" onclick="cmpCloseModal()" class="text-slate-400 hover:text-slate-700 text-2xl leading-none px-2" aria-label="Close">×</button></div>`;
 

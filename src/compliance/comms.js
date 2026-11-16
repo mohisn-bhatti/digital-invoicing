@@ -90,10 +90,14 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
             if (state.state === 'CLOSED') throw new CmpError(409, 'This period is completed: its reminders are closed.');
         }
         let template = null;
-        const templateId = b.templateId || (reminder && reminder.templateId);
+        const templateId = b.templateId || (reminder && !reminder.body && reminder.templateId);
         if (templateId) {
             template = await prisma.cmpTemplate.findFirst({ where: { id: String(templateId), tenantId: ctx.tenantId } });
             if (!template) throw bad('Template not found.');
+        } else if (reminder && reminder.body) {
+            // the reminder's own message (the CA: each obligation has its own), named after its place: "2nd reminder"
+            const n = [...occ.obligation.reminders].sort((x, y) => x.offsetDays - y.offsetDays).findIndex(r => r.id === reminder.id) + 1;
+            template = { id: null, name: `${R.ordinal(n)} reminder`, body: reminder.body };
         }
         return { kind, occ, client, reminder, template, money };
     }
@@ -132,8 +136,8 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         const reminder = occ.obligation.reminders.find(r => r.id === b.reminderId);
         if (!reminder) throw bad('That reminder is not one of this obligation\'s.');
         const note = V.multiline(b.note, 1000, 'Note'), client = occ.obligation.client, how = R.CHANNELS[channel].toLowerCase();
-        const m = await prisma.cmpMessage.create({ data: { tenantId: ctx.tenantId, clientId: client.id, occurrenceId: occ.id, reminderId: reminder.id, templateId: reminder.templateId,
-            templateName: reminder.template ? reminder.template.name : '', kind: 'REMINDER', channel, phone: '', body: note || `Reminded by ${how}`, userId: ctx.userId || null, userEmail: ctx.email } });
+        const m = await prisma.cmpMessage.create({ data: { tenantId: ctx.tenantId, clientId: client.id, occurrenceId: occ.id, reminderId: reminder.id, templateId: reminder.templateId || null,
+            templateName: reminder.template ? reminder.template.name : reminder.body ? 'Own message' : '', kind: 'REMINDER', channel, phone: '', body: note || `Reminded by ${how}`, userId: ctx.userId || null, userEmail: ctx.email } });
         await log(ctx, 'cmp.message.manual', 'CmpMessage', m.id, `${occ.obligation.name} ${R.fmtDay(occ.periodStart)} – ${R.fmtDay(occ.periodEnd)} for ${common.clientLabel(client)}: reminder (${R.offsetLabel(reminder.offsetDays).toLowerCase()}) given by ${how}${note ? `: ${note}` : ''}`, { clientId: client.id, obligationId: occ.obligationId });
         return { ok: true, message: { id: m.id, createdAt: m.createdAt } };
     }
@@ -144,6 +148,25 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         await prisma.cmpMessage.update({ where: { id: m.id }, data: { voidedAt: now(), voidedBy: ctx.email } });
         await log(ctx, 'cmp.message.void', 'CmpMessage', m.id, `WhatsApp message to ${common.clientLabel(m.client)} of ${m.createdAt.toISOString().slice(0, 10)} marked as not sent`, { clientId: m.clientId });
         return { ok: true };
+    }
+
+    // The last message of a reminder, an invoice or a receipt marked "not sent" (the CA: the count of sends is adjusted by hand, because a
+    // message handed to WhatsApp sometimes does not go): what = { occurrenceId, reminderId } | { invoiceId } | { receiptId }
+    async function voidLast(ctx, b = {}) {
+        const where = { tenantId: ctx.tenantId, voidedAt: null };
+        if (b.reminderId) Object.assign(where, { occurrenceId: String(b.occurrenceId || ''), reminderId: String(b.reminderId) });
+        else if (b.receiptId) where.receiptId = String(b.receiptId);
+        else if (b.invoiceId) Object.assign(where, { invoiceId: String(b.invoiceId), kind: 'INVOICE' });
+        else throw bad('Say which reminder, invoice or receipt.');
+        const m = await prisma.cmpMessage.findFirst({ where, orderBy: { createdAt: 'desc' }, select: { id: true } });
+        if (!m) throw new CmpError(409, 'Nothing was sent for it yet.');
+        const out = await voidMessage(ctx, m.id);
+        // an invoice none of whose messages count any more is "not sent" again (unless it was marked sent by hand without a message)
+        if (b.invoiceId && !(await prisma.cmpMessage.count({ where: { tenantId: ctx.tenantId, invoiceId: String(b.invoiceId), kind: 'INVOICE', voidedAt: null } }))) {
+            const inv = await prisma.cmpInvoice.findFirst({ where: { id: String(b.invoiceId), tenantId: ctx.tenantId }, select: { id: true, sentAt: true, status: true } });
+            if (inv && inv.sentAt && inv.status !== 'CANCELLED') await invoices.unmarkSent(ctx, inv.id);
+        }
+        return out;
     }
 
     /* ---------- the log ---------- */
@@ -250,7 +273,7 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
             periods: obligationsList.map(o => ({ id: o.id, name: o.obligation.name, period: R.periodName(o), dueDate: R.ymdOf(o.dueDate) })) };
     }
 
-    return { listTemplates, createTemplate, updateTemplate, deleteTemplate, prepare, send, markReminded, voidMessage, listMessages, notifications, alerts, templateContext };
+    return { listTemplates, createTemplate, updateTemplate, deleteTemplate, prepare, send, markReminded, voidMessage, voidLast, listMessages, notifications, alerts, templateContext };
 }
 
 module.exports = { createComms };

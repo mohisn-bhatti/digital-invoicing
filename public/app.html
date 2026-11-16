@@ -203,7 +203,7 @@
     s.classList.add('slow');
   }, 10000);
 </script>
-<div id="toast" class="hidden fixed top-4 right-4 z-50 max-w-md px-4 py-3 rounded shadow-lg text-sm"></div>
+<div id="toast" class="hidden fixed top-4 right-4 z-[100] max-w-md px-4 py-3 rounded shadow-lg text-sm"></div>
 
 <!-- Login -->
 <section id="loginView" class="hidden min-h-screen flex items-center justify-center px-4">
@@ -1211,7 +1211,7 @@ const r2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 function toast(msg, ok = false) {
   const t = $('#toast');
   t.textContent = msg;
-  t.className = `fixed top-4 right-4 z-50 max-w-md px-4 py-3 rounded shadow-lg text-sm ${ok ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`;
+  t.className = `fixed top-4 right-4 z-[100] max-w-md px-4 py-3 rounded shadow-lg text-sm ${ok ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`;
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.add('hidden'), ok ? 3000 : 8000);
 }
 
@@ -1299,8 +1299,10 @@ const NAV = {
     { id: 'cm-clients', label: 'Clients', icon: 'users', crumb: 'Work', perms: ['VIEW'] },
     { id: 'cm-client', label: 'Client', crumb: 'Clients', parent: 'cm-clients', perms: ['VIEW'] },
     { id: 'cm-calendar', label: 'Calendar', icon: 'clock', crumb: 'Work', perms: ['VIEW'] },
-    { id: 'cm-invoices', label: 'Invoices', icon: 'book', crumb: 'Billing', perms: ['INVOICE'] },
-    { id: 'cm-receipts', label: 'Receipts', icon: 'draft', crumb: 'Billing', perms: ['INVOICE'] },
+    // (the CA, 16 Nov 2026: Invoices Created — made, not yet sent; Invoices Issued — sent to the client; Receipts Booked)
+    { id: 'cm-invoices', label: 'Invoices Created', icon: 'book', crumb: 'Billing', perms: ['INVOICE'] },
+    { id: 'cm-invoices-issued', label: 'Invoices Issued', icon: 'upload', crumb: 'Billing', perms: ['INVOICE'] },
+    { id: 'cm-receipts', label: 'Receipts Booked', icon: 'draft', crumb: 'Billing', perms: ['INVOICE'] },
     { id: 'cm-reports', label: 'Reports', icon: 'chart', crumb: 'Reports', perms: ['REPORTS'] },
     { id: 'cm-messages', label: 'WhatsApp Log', icon: 'chat', crumb: 'Logs', group: 'cmlogs', perms: ['LOGS'] },
     { id: 'cm-activity', label: 'Activity Log', icon: 'clock', crumb: 'Logs', group: 'cmlogs', perms: ['LOGS'] },

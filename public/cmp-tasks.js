@@ -48,8 +48,7 @@ function cmpOccBar() {
   const clients = new Set([...CMP_SEL.occ.keys()].map(k => CMP_SEL.occClient.get(k))).size;
   bar.innerHTML = `<span class="text-sm font-medium">${n} selected</span>
     ${cmpBtn(clients === 1 ? 'Only this client' : `Only these ${clients} clients`, 'cmpOccOnlyClients()', 'primary')}
-    ${cmpCan('OBLIGATION_EDIT') ? cmpBtn('Next period', 'cmpBulkNext()', 'plain', 'needs-write') : ''}
-    ${cmpCan('COMPLETE') ? `<select class="!w-auto !text-sm needs-write" onchange="if (this.value) cmpBulkStage(this.value); this.value = ''"><option value="">Set step…</option>${[['OPEN', 'Open'], ['DATA_COLLECTED', 'Data collected'], ['FILED', 'Filed'], ['PAID', 'Paid']].map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>` : ''}
+    ${cmpCan('COMPLETE') ? `<select class="!w-auto !text-sm needs-write" onchange="if (this.value) cmpBulkStage(this.value); this.value = ''"><option value="">Data collection…</option>${[['DATA_COLLECTED', 'Collected (today)'], ['OPEN', 'Pending (not collected)']].map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>` : ''}
     ${cmpCan('OBLIGATION_EDIT') ? `<select class="!w-auto !text-sm needs-write" onchange="if (this.value !== '-') cmpBulkAssign('obligationIds', this.value); this.value = '-'"><option value="-">Assign to…</option>${cmpTeamOptions('-', 'Nobody')}</select>` : ''}
     ${cmpCan('ARCHIVE') ? cmpBtn('Archive', "cmpBulkArchive('obligationIds')", 'danger', 'needs-write') : ''}
     <button type="button" class="text-sm underline text-slate-600" onclick="CMP_SEL.occ.clear(); CMP_SEL.occClient.clear(); cmpLoadObligations()">Clear</button>`;
@@ -66,7 +65,7 @@ async function cmpBulkNext() {
   try { const r = await api('/api/cmp/bulk/next-period', { method: 'POST', body: { obligationIds: ids } }); CMP_SEL.occ.clear(); cmpLoadObligations(); cmpBulkReport('Next period', r); } catch (err) { toast(err.message); }
 }
 async function cmpBulkStage(stage) {
-  try { const r = await api('/api/cmp/bulk/stage', { method: 'POST', body: { occurrenceIds: [...CMP_SEL.occ.keys()], stage } }); CMP_SEL.occ.clear(); cmpLoadObligations(); cmpBulkReport('Step', r); } catch (err) { toast(err.message); }
+  try { const r = await api('/api/cmp/bulk/stage', { method: 'POST', body: { occurrenceIds: [...CMP_SEL.occ.keys()], stage } }); CMP_SEL.occ.clear(); cmpLoadObligations(); cmpBulkReport('Data collection', r); } catch (err) { toast(err.message); }
 }
 async function cmpBulkAssign(kind, userId) {
   const ids = kind === 'clientIds' ? [...CMP_SEL.cl] : [...new Set(CMP_SEL.occ.values())];

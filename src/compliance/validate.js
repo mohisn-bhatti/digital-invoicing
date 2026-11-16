@@ -113,6 +113,27 @@ function cleanFieldValue(def, v) {
     return line(v, 500, label);
 }
 
+// A value kept under one type, read as another (the CA: renaming a field must be able to change its type too, e.g. a date field that
+// should have been text). A date becomes "1 Jun 2023" as text; text becomes a date when it reads as one (2023-06-01, 1 Jun 2023,
+// 01/06/2023 day first); a number keeps its digits. Returns null when it cannot be read as the new type.
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+function convertFieldValue(fromType, toType, v) {
+    const s = String(v || '').trim();
+    if (!s || fromType === toType) return s;
+    if (toType === 'MULTILINE') return fromType === 'DATE' ? R.fmtDay(s) : s;
+    if (toType === 'TEXT') return (fromType === 'DATE' ? R.fmtDay(s) : s).replace(/\s*\n\s*/g, ', ');
+    if (toType === 'NUMBER') { const n = s.replace(/[,\s]/g, ''); return /^-?\d+(\.\d+)?$/.test(n) ? n : null; }
+    if (toType === 'DATE') {
+        const p2 = n => String(n).padStart(2, '0');
+        let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        let out = m ? `${m[1]}-${p2(m[2])}-${p2(m[3])}` : null;
+        if (!out && (m = s.match(/^(\d{1,2})[\s-]+([A-Za-z]{3})[A-Za-z]*\.?[\s,-]+(\d{4})$/)) && MONTHS[m[2].toLowerCase()]) out = `${m[3]}-${p2(MONTHS[m[2].toLowerCase()])}-${p2(m[1])}`;
+        if (!out && (m = s.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/))) out = `${m[3]}-${p2(m[2])}-${p2(m[1])}`;
+        return out && R.ymdOk(out) ? out : null;
+    }
+    return null;
+}
+
 // SRS 4. An obligation comes back every year on the same dates (the CA, 9 Nov 2026: no quarterly or monthly cycle; quarterly returns
 // are four obligations of their own, all typed by hand). Obligations made before with QUARTERLY or MONTHLY keep it: the API still
 // takes a frequency, the screens no longer offer one.
@@ -153,9 +174,11 @@ function cleanReminders(list) {
         const offsetDays = int(r && r.offsetDays, -366, 366, 'A reminder\'s number of days');
         if (seen.has(offsetDays)) throw bad(`Two reminders fall on the same day (${R.offsetLabel(offsetDays).toLowerCase()}). Keep one.`);
         seen.add(offsetDays);
-        const templateId = line(r && r.templateId, 64, 'Template');
-        if (!templateId) throw bad('Choose a message template for each reminder.');
-        return { offsetDays, templateId };
+        // its own message (the CA, 16 Nov 2026: each obligation has its own message for each reminder), or a saved template
+        const body = multiline(r && r.body, 4000, `The message of the reminder ${R.offsetLabel(offsetDays).toLowerCase()}`);
+        const templateId = body ? null : line(r && r.templateId, 64, 'Template');
+        if (!body && !templateId) throw bad(`Write the message of the reminder ${R.offsetLabel(offsetDays).toLowerCase()} (or choose a saved template).`);
+        return { offsetDays, templateId, body: body || null };
     }).sort((a, b) => a.offsetDays - b.offsetDays);
 }
 function cleanTemplate(b, { partial = false } = {}) {
@@ -225,4 +248,4 @@ function cleanSettings(b) {
     return out;
 }
 
-module.exports = { line, multiline, secret, email, day, int, country, zone, idOf, cleanClient, FIELD_TYPES, cleanFieldDef, cleanFieldValue, cleanObligation, cleanDates, cleanReminders, cleanTemplate, cleanSettings };
+module.exports = { line, multiline, secret, email, day, int, country, zone, idOf, cleanClient, FIELD_TYPES, cleanFieldDef, cleanFieldValue, convertFieldValue, cleanObligation, cleanDates, cleanReminders, cleanTemplate, cleanSettings };

@@ -145,10 +145,11 @@ run('obligations: dates checked; reminders bleak until their time; suggestions s
     W.y1 = y1;
     assert.deepStrictEqual([y1.seq, y1.view.status, y1.view.colour, y1.view.daysLeft], [1, 'PERIOD_CLOSED', 'amber', 30]);
     assert.deepStrictEqual(y1.view.reminders.map(x => [x.offsetDays, x.state]), [[-40, 'HIGHLIGHTED'], [-5, 'BLEAK']]);
-    // suggestions: the UAE name for UAE clients, nothing for Pakistan
+    // suggestions: the UAE name with its dates and reminders for UAE clients; for Pakistan only the name (the CA, 16 Nov 2026: what was
+    // typed before is suggested), never another country's dates
     const sug = (await A.call('/api/cmp/suggest/obligations?country=AE', { token: A.cashier.token })).json;
     assert.deepStrictEqual(sug.map(s => [s.name, s.dueDate, s.reminders.length]), [['VAT Return Q3', day(30), 2]]);
-    assert.deepStrictEqual((await A.call('/api/cmp/suggest/obligations?country=PK', { token: A.cashier.token })).json, []);
+    assert.deepStrictEqual((await A.call('/api/cmp/suggest/obligations?country=PK', { token: A.cashier.token })).json, [{ name: 'VAT Return Q3', otherCountry: true, reminders: [], clients: 0 }]);
 });
 
 run('WhatsApp: a bleak reminder cannot be sent; an active one is filled in, logged and shows as sent', async () => {
@@ -238,6 +239,8 @@ run('steps, completion and recurrence: next year is a copy to confirm; the numbe
     assert.strictEqual(r.json.occurrences[2].dueDate, R.yearDates(moved, 2).dueDate);
     // a one-year obligation: completing it makes no next year, and the button says why
     const one = W.overdueOb.occurrences[0];
+    assert.strictEqual((await A.call(`/api/cmp/occurrences/${one.id}/complete`, { token: A.manager.token, method: 'POST' })).status, 409); // the data first (the CA)
+    assert.strictEqual((await A.call(`/api/cmp/occurrences/${one.id}/data`, { token: A.manager.token, method: 'POST', body: { on: day(0) } })).status, 200);
     r = await A.call(`/api/cmp/occurrences/${one.id}/complete`, { token: A.manager.token, method: 'POST' });
     assert.deepStrictEqual(r.json.occurrences.map(o => o.view.status), ['COMPLETED']);
     r = await A.call(`/api/cmp/obligations/${W.overdueOb.id}/next`, { token: A.manager.token, method: 'POST' });
@@ -247,6 +250,7 @@ run('steps, completion and recurrence: next year is a copy to confirm; the numbe
     // reopen
     r = await A.call(`/api/cmp/occurrences/${one.id}/reopen`, { token: A.manager.token, method: 'POST' });
     assert.strictEqual(r.json.occurrences[0].view.status, 'OVERDUE');
+    assert.deepStrictEqual([r.json.occurrences[0].stage, r.json.occurrences[0].dataCollectedOn, r.json.occurrences[0].completedOn], ['DATA_COLLECTED', day(0), null]); // (the data stays collected)
     // reminders changed: logged with before and after
     r = await A.call(`/api/cmp/obligations/${W.ob.id}/reminders`, { token: A.manager.token, method: 'PUT', body: { reminders: [{ offsetDays: -10, templateId: W.tFirst.id }, { offsetDays: 0, templateId: W.tLast.id }] } });
     assert.strictEqual(r.status, 200, r.text);

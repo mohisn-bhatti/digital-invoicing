@@ -129,6 +129,8 @@ model Tenant {
   cmpInvoices         CmpInvoice[]
   cmpItems            CmpItem[]
   cmpCredits          CmpCredit[]
+  cmpAdvances         CmpAdvance[]
+  cmpInvoiceTypes     CmpInvoiceType[]
 }
 
 model Invoice {
@@ -999,6 +1001,7 @@ model CmpClient {
   messages          CmpMessage[]
   invoices          CmpInvoice[]
   credits           CmpCredit[]
+  advances          CmpAdvance[]
 
   @@unique([tenantId, code])
   @@index([tenantId, country])
@@ -1074,29 +1077,34 @@ model CmpObligation {
 // One period of an obligation. Its dates are typed by a person (a copied period waits for "confirm"); the two instants are the client's
 // midnights after the period end and after the due date, so "overdue" is one comparison in any time zone.
 model CmpOccurrence {
-  id             String        @id @default(uuid())
-  tenantId       String
-  clientId       String
-  obligationId   String
-  obligation     CmpObligation @relation(fields: [obligationId], references: [id])
-  seq            Int // 1 = the first period
-  periodStart    DateTime      @db.Date
-  periodEnd      DateTime      @db.Date
-  dueDate        DateTime      @db.Date
-  periodEndAt    DateTime
-  dueAt          DateTime
-  datesConfirmed Boolean       @default(true) // false = copied from the year before, for a person to check
-  overridden     Boolean       @default(false) // this year's dates were changed on their own
-  stage          CmpStage      @default(OPEN)
-  closeKind      String? // how it was closed: INVOICE (an invoice was made) or FREE (closed without one: family, friends, goodwill)
-  closedAt       DateTime?
-  closedBy       String?
-  overdueNotedAt DateTime? // when the activity log noted it overdue (once)
-  notes          String        @default("")
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  messages       CmpMessage[]
-  invoices       CmpInvoice[]
+  id              String        @id @default(uuid())
+  tenantId        String
+  clientId        String
+  obligationId    String
+  obligation      CmpObligation @relation(fields: [obligationId], references: [id])
+  seq             Int // 1 = the first period
+  periodStart     DateTime      @db.Date
+  periodEnd       DateTime      @db.Date
+  dueDate         DateTime      @db.Date
+  periodEndAt     DateTime
+  dueAt           DateTime
+  datesConfirmed  Boolean       @default(true) // false = copied from the year before, for a person to check
+  overridden      Boolean       @default(false) // this year's dates were changed on their own
+  stage           CmpStage      @default(OPEN)
+  closeKind       String? // how it was closed: INVOICE (an invoice was made) or FREE (closed without one: family, friends, goodwill)
+  closedAt        DateTime?
+  closedBy        String?
+  // the CA's tracker (16 Nov 2026): the day the data was collected, and the day the task was done (it needs the data first)
+  dataCollectedOn DateTime?     @db.Date
+  dataCollectedBy String?
+  completedOn     DateTime?     @db.Date
+  overdueNotedAt  DateTime? // when the activity log noted it overdue (once)
+  notes           String        @default("")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  messages        CmpMessage[]
+  invoices        CmpInvoice[]
+  advances        CmpAdvance[]
 
   @@unique([obligationId, seq])
   @@index([tenantId, stage, dueAt])
@@ -1111,8 +1119,10 @@ model CmpReminder {
   obligationId String
   obligation   CmpObligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
   offsetDays   Int
-  templateId   String
-  template     CmpTemplate   @relation(fields: [templateId], references: [id])
+  // a saved template, or the reminder's own message (the CA, 16 Nov 2026: each obligation has its own message for each reminder)
+  templateId   String?
+  template     CmpTemplate?  @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  body         String?
   createdAt    DateTime      @default(now())
   messages     CmpMessage[]
 
@@ -1209,7 +1219,68 @@ model CmpItem {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  prices CmpItemPrice[]
+
   @@unique([tenantId, key, currency])
+}
+
+// Every price an item or service (or an obligation) was billed at, with its dates (the CA: "VAT Amendment 200" and "VAT Amendment 250"
+// are both kept and offered when searching)
+model CmpItemPrice {
+  id        String   @id @default(uuid())
+  tenantId  String
+  itemId    String
+  item      CmpItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  amount    Decimal  @db.Decimal(14, 3)
+  firstOn   DateTime @db.Date
+  lastOn    DateTime @db.Date
+  uses      Int      @default(1)
+  createdBy String   @default("")
+
+  @@unique([itemId, amount])
+}
+
+// Money received before the invoice (the CA's tracker: Advance Payment): taken off an invoice later (Gross − Advance = Net)
+model CmpAdvance {
+  id           String         @id @default(uuid())
+  tenantId     String
+  tenant       Tenant         @relation(fields: [tenantId], references: [id])
+  clientId     String
+  client       CmpClient      @relation(fields: [clientId], references: [id])
+  occurrenceId String?
+  occurrence   CmpOccurrence? @relation(fields: [occurrenceId], references: [id], onDelete: SetNull)
+  receivedOn   DateTime       @db.Date
+  description  String
+  currency     String
+  amount       Decimal        @db.Decimal(14, 3)
+  used         Decimal        @default(0) @db.Decimal(14, 3)
+  createdBy    String         @default("")
+  createdAt    DateTime       @default(now())
+  voidedAt     DateTime?
+  voidedBy     String?
+  voidReason   String         @default("")
+
+  @@index([tenantId, clientId])
+  @@index([occurrenceId])
+}
+
+// An invoice format for one country (the CA: several per country, e.g. "UAE - Dubai" and "UAE - Sharjah", chosen when the invoice is
+// made). layout: what the invoice and the receipt say (titles, the firm's lines for that type) and the extra blocks placed by drag and drop.
+model CmpInvoiceType {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  name      String
+  country   String
+  isDefault Boolean  @default(false)
+  layout    Json     @default("{}")
+  active    Boolean  @default(true)
+  createdBy String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId, country])
 }
 
 // A client's credit (the CA): money received against an invoice that was then cancelled, kept to pay the client's next invoices in the
@@ -1262,6 +1333,12 @@ model CmpInvoice {
   // what became of money already received when it was cancelled (the CA): VOID (the receipts voided), REFUND (paid back) or CREDIT
   // (kept as the client's credit, to pay its next invoices)
   cancelSettlement String           @default("")
+  // advance payments taken off this invoice (the CA: Gross amount, Advance payment adjustment, Net amount): [{ advanceId, amount }]
+  advanceAdjusted  Decimal          @default(0) @db.Decimal(14, 3)
+  advanceUse       Json             @default("[]")
+  // the invoice type it is printed with (the CA: country sensitive, e.g. UAE - Dubai, UAE - Sharjah); frozen when issued
+  typeId           String?
+  typeSnapshot     Json?
   createdBy        String           @default("")
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
@@ -1277,12 +1354,18 @@ model CmpInvoice {
 }
 
 model CmpInvoiceLine {
-  id          String     @id @default(uuid())
-  invoiceId   String
-  invoice     CmpInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  description String
-  amount      Decimal    @db.Decimal(14, 3)
-  sortOrder   Int        @default(0)
+  id           String     @id @default(uuid())
+  invoiceId    String
+  invoice      CmpInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description  String
+  amount       Decimal    @db.Decimal(14, 3)
+  sortOrder    Int        @default(0)
+  // the completed obligation period this line bills, if any (the CA: several completed obligations on one invoice)
+  occurrenceId String?
+  // the name its price is kept under in the price bank (an item or service, or the obligation's name)
+  bankName     String     @default("")
+
+  @@index([occurrenceId])
 }
 
 // A tax on an invoice: its name and rate as they were when the invoice was made, and its amount on the subtotal
