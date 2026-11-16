@@ -96,6 +96,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
 
     // extra fields (SRS 3.3)
     route('get', '/api/cmp/fields', can('VIEW'), (req, ctx) => clients.listFields(ctx, req.query));
+    // the values typed before for each field of a country, suggested again (the CA)
+    route('get', '/api/cmp/fields/values', can('VIEW'), (req, ctx) => clients.fieldValues(ctx, req.query.country));
     route('post', '/api/cmp/fields', can('SETUP'), (req, ctx) => clients.createField(ctx, req.body || {}));
     route('put', '/api/cmp/fields/:id', can('SETUP'), (req, ctx) => clients.updateField(ctx, req.params.id, req.body || {}));
 
@@ -106,6 +108,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('get', '/api/cmp/obligations/:id', can('VIEW'), (req, ctx) => obligations.get(ctx, req.params.id));
     route('put', '/api/cmp/obligations/:id', can('OBLIGATION_EDIT'), (req, ctx) => obligations.update(ctx, req.params.id, req.body || {}));
     route('put', '/api/cmp/obligations/:id/reminders', can('OBLIGATION_EDIT'), (req, ctx) => obligations.setReminders(ctx, req.params.id, (req.body || {}).reminders));
+    // the dates of a period still to come (Planned): the pattern from that period on
+    route('put', '/api/cmp/obligations/:id/pattern', can('OBLIGATION_EDIT'), (req, ctx) => obligations.setPattern(ctx, req.params.id, req.body || {}));
     route('post', '/api/cmp/obligations/:id/next', can('OBLIGATION_EDIT'), (req, ctx) => obligations.next(ctx, req.params.id));
     route('post', '/api/cmp/obligations/:id/archive', can('ARCHIVE'), (req, ctx) => obligations.setArchived(ctx, req.params.id, true));
     route('post', '/api/cmp/obligations/:id/restore', can('ARCHIVE'), (req, ctx) => obligations.setArchived(ctx, req.params.id, false));
@@ -114,17 +118,22 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('get', '/api/cmp/occurrences', can('VIEW'), (req, ctx) => obligations.listOccurrences(ctx, req.query));
     route('put', '/api/cmp/occurrences/:id', can('OBLIGATION_EDIT'), (req, ctx) => obligations.updateOccurrence(ctx, req.params.id, req.body || {}));
     route('post', '/api/cmp/occurrences/:id/stage', can('COMPLETE'), (req, ctx) => obligations.setStage(ctx, req.params.id, String((req.body || {}).stage || '')));
-    // SRS 9: completed with "Generate invoice" (also needs the invoice permission: a draft is made for the period) or "Close without invoice"
+    // the tracker's Data Collection: { on: 'YYYY-MM-DD' } (or null: pending again)
+    route('post', '/api/cmp/occurrences/:id/data', can('COMPLETE'), (req, ctx) => obligations.setDataCollected(ctx, req.params.id, (req.body || {}).on ?? null));
+    // the task done (once the data is collected) on { on }: mode TASK (the invoice comes next), or SRS 9's "Generate invoice" (also needs the
+    // invoice permission: a draft is made for the period) or "Close without invoice" (FREE)
     route('post', '/api/cmp/occurrences/:id/complete', can('COMPLETE'), async (req, ctx) => {
-        const mode = String((req.body || {}).mode || 'FREE').toUpperCase();
+        const mode = String((req.body || {}).mode || 'TASK').toUpperCase();
         if (mode === 'INVOICE' && !ctx.perms.has('INVOICE')) throw new HttpError(403, `You do not have permission to ${NO_PERM.INVOICE}. Close it without an invoice, or ask the ETAX administrator.`);
         // the same transaction makes the draft (or finds the invoice already made for this period, e.g. after a reopen)
-        return obligations.complete(ctx, req.params.id, mode, { makeInvoice: async tx => {
+        return obligations.complete(ctx, req.params.id, mode, { on: (req.body || {}).on, makeInvoice: async tx => {
             const existing = await tx.cmpInvoice.findFirst({ where: { tenantId: ctx.tenantId, occurrenceId: req.params.id, status: { not: 'CANCELLED' } }, select: { id: true } });
             return existing ? existing.id : (await invoices.draftFor(ctx, { occurrenceId: req.params.id }, tx)).id;
         } });
     });
     route('post', '/api/cmp/occurrences/:id/reopen', can('COMPLETE'), (req, ctx) => obligations.reopen(ctx, req.params.id));
+    // a completed task with no invoice (FREE), or an invoice to come again ('')
+    route('post', '/api/cmp/occurrences/:id/billing', can('COMPLETE', 'INVOICE'), (req, ctx) => obligations.setBilling(ctx, req.params.id, (req.body || {}).mode));
 
     // templates (SRS 7)
     route('get', '/api/cmp/templates', can('VIEW'), (req, ctx) => comms.listTemplates(ctx, req.query));
@@ -138,6 +147,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('post', '/api/cmp/messages/prepare', can('WHATSAPP'), (req, ctx) => comms.prepare(ctx, req.body || {}));
     route('post', '/api/cmp/messages', can('WHATSAPP'), (req, ctx) => comms.send(ctx, req.body || {}));
     route('post', '/api/cmp/messages/:id/void', can('WHATSAPP'), (req, ctx) => comms.voidMessage(ctx, req.params.id));
+    // the last send of a reminder, an invoice or a receipt marked "not sent" (the CA: the number of sends is adjusted by hand)
+    route('post', '/api/cmp/messages/void-last', can('WHATSAPP'), (req, ctx) => comms.voidLast(ctx, req.body || {}));
     // a reminder given by phone, email or another way, marked by hand (the CA: clients with no WhatsApp)
     route('post', '/api/cmp/messages/manual', can('WHATSAPP', 'COMPLETE'), (req, ctx) => comms.markReminded(ctx, req.body || {}));
     route('get', '/api/cmp/messages', can('LOGS'), (req, ctx, res) => comms.listMessages(ctx, req.query, res));
@@ -182,6 +193,17 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('get', '/api/cmp/items', can('INVOICE', 'SETUP'), (req, ctx) => invoices.listItems(ctx, req.query));
     route('post', '/api/cmp/items', can('INVOICE', 'SETUP'), (req, ctx) => invoices.createItem(ctx, req.body || {}));
     route('put', '/api/cmp/items/:id', can('INVOICE', 'SETUP'), (req, ctx) => invoices.updateItem(ctx, req.params.id, req.body || {}));
+    // advance payments (the CA's tracker), taken off an invoice later (Gross − Advance = Net)
+    route('get', '/api/cmp/advances', can('INVOICE'), (req, ctx) => invoices.listAdvances(ctx, req.query));
+    route('get', '/api/cmp/advances/descriptions', can('INVOICE'), (req, ctx) => invoices.advanceDescriptions(ctx));
+    route('post', '/api/cmp/advances', can('INVOICE'), (req, ctx) => invoices.addAdvance(ctx, req.body || {}));
+    route('post', '/api/cmp/advances/:id/void', can('INVOICE'), (req, ctx) => invoices.voidAdvance(ctx, req.params.id, (req.body || {}).reason));
+    // a client's completed obligations not billed yet, with their prices from the bank (the draft's first box)
+    route('get', '/api/cmp/clients/:id/billable', can('INVOICE'), (req, ctx) => invoices.billable(ctx, req.params.id, req.query));
+    // invoice types per country (the CA): everyone sees them, the firm's settings change them
+    route('get', '/api/cmp/invoice-types', can('VIEW'), (req, ctx) => invoices.listTypes(ctx, req.query));
+    route('post', '/api/cmp/invoice-types', can('FULL'), (req, ctx) => invoices.saveType(ctx, null, req.body || {}));
+    route('put', '/api/cmp/invoice-types/:id', can('FULL'), (req, ctx) => invoices.saveType(ctx, req.params.id, req.body || {}));
 
     // dashboard, calendar, reports and downloads (SRS 11, 13)
     route('get', '/api/cmp/dashboard', can('REPORTS'), (req, ctx) => reports.dashboard(ctx, req.query));

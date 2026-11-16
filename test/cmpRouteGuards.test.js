@@ -11,6 +11,11 @@ const PERMS = {
     'GET /api/cmp/clients/:id': ['VIEW'], 'PUT /api/cmp/clients/:id': ['CLIENT_EDIT'], 'GET /api/cmp/clients/:id/secrets': ['SECRETS'],
     'POST /api/cmp/clients/:id/archive': ['ARCHIVE'], 'POST /api/cmp/clients/:id/restore': ['ARCHIVE'],
     'GET /api/cmp/fields': ['VIEW'], 'POST /api/cmp/fields': ['SETUP'], 'PUT /api/cmp/fields/:id': ['SETUP'],
+    // the CA's feedback of 16 November 2026
+    'GET /api/cmp/fields/values': ['VIEW'], 'PUT /api/cmp/obligations/:id/pattern': ['OBLIGATION_EDIT'], 'POST /api/cmp/occurrences/:id/data': ['COMPLETE'],
+    'POST /api/cmp/occurrences/:id/billing': ['COMPLETE', 'INVOICE'], 'POST /api/cmp/messages/void-last': ['WHATSAPP'],
+    'GET /api/cmp/advances': ['INVOICE'], 'GET /api/cmp/advances/descriptions': ['INVOICE'], 'POST /api/cmp/advances': ['INVOICE'], 'POST /api/cmp/advances/:id/void': ['INVOICE'],
+    'GET /api/cmp/clients/:id/billable': ['INVOICE'], 'GET /api/cmp/invoice-types': ['VIEW'], 'POST /api/cmp/invoice-types': ['FULL'], 'PUT /api/cmp/invoice-types/:id': ['FULL'],
     'POST /api/cmp/clients/:id/obligations': ['OBLIGATION_EDIT'], 'GET /api/cmp/suggest/obligations': ['VIEW'],
     'GET /api/cmp/obligations/:id': ['VIEW'], 'PUT /api/cmp/obligations/:id': ['OBLIGATION_EDIT'], 'PUT /api/cmp/obligations/:id/reminders': ['OBLIGATION_EDIT'],
     'POST /api/cmp/obligations/:id/next': ['OBLIGATION_EDIT'], 'POST /api/cmp/obligations/:id/archive': ['ARCHIVE'], 'POST /api/cmp/obligations/:id/restore': ['ARCHIVE'], 'POST /api/cmp/obligations/:id/delete': ['ARCHIVE'],

@@ -148,7 +148,9 @@ recurrence, monthly periods, archive, activity log, the administrator's screen, 
 receipts, numbering under concurrency, assignment, bulk, dashboard, calendar, reports, downloads, WhatsApp numbers),
 `test/cmpFeedback.test.js` (the CA's feedback: the cycle from the dates, years, amber and "by itself" per obligation, planned periods,
 sorting and client filters, no WhatsApp, the templates page's client values, deleting with a note, items with prices, undo "sent",
-cancelling with receipts, logo and header, the reports by dates).
+cancelling with receipts, logo and header, the reports by dates), `test/cmpFeedback3.test.js` (the tracker: reminder buttons and
+counts, data before the task, overall status; no obligation twice; own reminder messages; field type changes; advances; the price
+bank; billing completed periods; invoice formats; created and issued lists).
 
 ## 9. The CA's feedback of 9 November 2026
 
@@ -162,7 +164,43 @@ Twenty items from the CA's "Deadline Tracker" sheet, then the CA's six answers; 
 - a full letterhead picture for invoices and receipts (`CmpSettings.headerStyle` LETTERHEAD, `letterhead`; `/api/cmp/settings` takes
   bodies up to 3 MB for the pictures).
 
-## 10. Not built / later
+## 10. The CA's "Deadline Tracker - 1" (16 November 2026)
+
+Thirteen items; what was done for each is in [COMPLIANCE_CA_FEEDBACK.md](COMPLIANCE_CA_FEEDBACK.md) (round 3). Migration `0053`
+(additions only, with a backfill), tests `test/cmpFeedback3.test.js`.
+- **The tracker** (`public/cmp-obligations.js cmpTrackerRow`): My Obligations and the client's page show the same table, the CA's 19
+  columns, every action in its cell. `GET /api/cmp/occurrences` rows now carry each reminder's `date`, `sentCount` and `button` (WAIT,
+  DUE on its day, PENDING after it, SENT, CLOSED: `R.reminderButton`), `dataCollectedOn`, `completedOn`, the period's invoice (made for
+  it or with a line for it) with its WhatsApp sends and receipts, its advances, and `progress` ("2/7": `R.progress`). The money is only
+  given to users with the invoice permission.
+- **Data collection, then the task** (`CmpOccurrence.dataCollectedOn/By`, `completedOn`): `POST /api/cmp/occurrences/:id/data { on }`;
+  completing (`/complete { mode: TASK, on }`) is refused until the data is collected and never before that day. A step past Open sets
+  the data collection too. `POST /occurrences/:id/billing { mode: FREE | '' }`: no invoice for a completed task, or one to come.
+- **Reminders with their own message** (`CmpReminder.body`, `templateId` now optional): each obligation's 1st, 2nd and 3rd reminder
+  (a day, kept as days from the due date) with its own text; WhatsApp gets it, named "1st reminder" etc. The sends are counted;
+  `POST /api/cmp/messages/void-last` marks the last send of a reminder, an invoice or a receipt "not sent" (the CA: adjusted by hand).
+- **No obligation twice**: the same name (case aside) for one client is refused while another of that name is not archived, checked
+  in turn (an advisory lock per client) so two clicks cannot both add it. Several at once: `items[].reminders` per obligation.
+- **Custom fields**: the type changes with the name (`V.convertFieldValue`: a date becomes "1 Jun 2023" as text; text becomes a date
+  or a number only where it reads as one, else refused naming the clients). `GET /api/cmp/fields/values?country=` suggests the values
+  typed before (and the references). Obligation names: every name the firm used (same-country ones with their dates and reminders).
+- **Planned periods** open the edit window; `PUT /api/cmp/obligations/:id/pattern { fromSeq, dates }` makes new dates the pattern
+  from a period still to come.
+- **Advance payments** (`CmpAdvance`): `GET/POST /api/cmp/advances`, `/advances/descriptions`, `/advances/:id/void` (only while none
+  of it is used). A draft takes some off (`CmpInvoice.advanceUse`, `advanceAdjusted`): Gross − Advance = Net; outstanding and status
+  count the advance as paid; it is used when the invoice is issued (in turn, never more than is left) and given back when cancelled.
+- **Price bank** (`CmpItemPrice`): every price an item (or an obligation, under its name) was billed at, with its first and last day.
+  Invoice lines bill completed periods (`CmpInvoiceLine.occurrenceId`, `bankName`); `GET /api/cmp/clients/:id/billable` lists the
+  client's completed periods not on another invoice, with their last prices; a period is refused on a second live invoice.
+- **Invoice formats** (`CmpInvoiceType`, per country, one default): titles, the top of the page, the firm's details for the format,
+  a receipt note, and extra blocks (text with placeholders at x/y/width in % of the A4 page less the print margins, size, bold,
+  alignment, box). `GET /api/cmp/invoice-types` (anyone), `POST/PUT` (full access). A draft takes the country's default; the format
+  is frozen on the invoice when issued (`typeSnapshot`). Setup → Settings shows the invoice beside the settings, with the blocks
+  dragged on it.
+- **Menu**: Invoices Created (`?stage=created`: not yet given to the client) and Invoices Issued (`?stage=issued`: sent or paid),
+  Receipts Booked.
+
+## 11. Not built / later
 
 - Automatic WhatsApp sending (WhatsApp Business Platform): needs Meta set-up; links are used now.
 - Exchange rates between currencies in reports (aging is per currency).

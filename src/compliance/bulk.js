@@ -54,7 +54,11 @@ function createBulk({ prisma, audit, common, obligations, now }) {
             const who = `${o.obligation.client.name} — ${o.obligation.name} ${R.periodName(o)}`;
             if (o.obligation.archivedAt || o.obligation.client.archivedAt) skipped.push({ id: o.id, name: who, reason: 'archived' });
             else if (o.stage === 'COMPLETED') skipped.push({ id: o.id, name: who, reason: 'already completed' });
-            else if (o.stage !== to) { await prisma.cmpOccurrence.update({ where: { id: o.id }, data: { stage: to } }); done.push({ id: o.id, name: who, from: o.stage }); }
+            else if (o.stage !== to) {
+                // (a step past "Open" means the data was collected: the tracker's Data Collection)
+                const data = { stage: to, ...(to === 'OPEN' ? { dataCollectedOn: null, dataCollectedBy: null } : o.dataCollectedOn ? {} : { dataCollectedOn: new Date(R.dayIn(o.obligation.client.timeZone) + 'T00:00:00Z'), dataCollectedBy: ctx.email }) };
+                await prisma.cmpOccurrence.update({ where: { id: o.id }, data }); done.push({ id: o.id, name: who, from: o.stage });
+            }
         }
         await log(ctx, 'cmp.bulk.stage', `${done.length} period(s) set to ${R.STATUS[to] || 'Open'}${skipped.length ? `, ${skipped.length} skipped` : ''}`, { done, skipped, to });
         return { done, skipped };

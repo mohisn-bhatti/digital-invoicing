@@ -38,6 +38,9 @@ test('billing API: start a server, a firm with the module and its users', { time
 
 run('completing: "generate invoice" needs the invoice permission and makes a draft in the client\'s currency; "close without" makes none', async () => {
     const y1 = W.ob1.occurrences[0];
+    // (the task is completed only once the data is collected: the CA, 16 Nov 2026; the day is the earliest of the clients' clocks)
+    const dataDay = [R.dayIn('Asia/Dubai'), R.dayIn('Asia/Kuwait')].sort()[0];
+    for (const o of [y1, W.obKw.occurrences[0], W.ob2.occurrences[0]]) assert.strictEqual((await A.call(`/api/cmp/occurrences/${o.id}/data`, { token: A.manager.token, method: 'POST', body: { on: dataDay } })).status, 200);
     let r = await A.call(`/api/cmp/occurrences/${y1.id}/complete`, { token: A.manager.token, method: 'POST', body: { mode: 'INVOICE' } });
     assert.strictEqual(r.status, 403);
     r = await A.call(`/api/cmp/occurrences/${y1.id}/complete`, { token: A.owner.token, method: 'POST', body: { mode: 'INVOICE' } });

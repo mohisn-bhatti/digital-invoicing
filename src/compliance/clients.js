@@ -44,19 +44,50 @@ function createClients({ prisma, audit, encrypt, decrypt, common, now }) {
         const def = await prisma.cmpFieldDef.findFirst({ where: { id: String(id || ''), tenantId: ctx.tenantId }, include: { _count: { select: { values: true } } } });
         if (!def) throw new CmpError(404, 'Field not found.');
         const data = {};
+        let converted = [];
         if (b.name !== undefined || b.type !== undefined || b.allCountries !== undefined || b.countries !== undefined) {
             const d = V.cleanFieldDef({ name: b.name ?? def.name, type: b.type ?? def.type, allCountries: b.allCountries ?? def.allCountries, countries: b.countries ?? def.countries }, { keepKey: def.key });
-            if (d.type !== def.type && def._count.values) throw bad(`"${def.name}" already has values for ${def._count.values} client(s): its type cannot change. Add a new field instead.`);
+            // a new type (the CA: the rename box changes the type too): every value already typed is read as the new type, or the change is
+            // refused saying which clients' values do not fit
+            if (d.type !== def.type && def._count.values) {
+                const vals = await prisma.cmpFieldValue.findMany({ where: { fieldId: def.id }, include: { client: { select: { name: true, code: true } } } });
+                const wrong = [];
+                converted = vals.map(v => { const nv = V.convertFieldValue(def.type, d.type, v.value); if (nv === null) wrong.push(v); return { id: v.id, value: nv }; });
+                if (wrong.length) throw bad(`${wrong.length} client${wrong.length === 1 ? ' has a value' : 's have values'} that ${wrong.length === 1 ? 'is' : 'are'} not ${d.type === 'DATE' ? 'a date' : 'a number'}: ${wrong.slice(0, 3).map(v => `"${v.value}" (${v.client.name})`).join(', ')}${wrong.length > 3 ? '…' : ''}. Change ${wrong.length === 1 ? 'it' : 'them'} first, or choose Text.`);
+                converted = converted.filter((c, i) => c.value !== vals[i].value);
+            }
             Object.assign(data, d);
         }
         if (b.active !== undefined) data.active = b.active === true;
         let upd;
-        try { upd = await prisma.cmpFieldDef.update({ where: { id: def.id }, data }); } catch (e) { if (e.code === 'P2002') throw new CmpError(409, 'There is already a field with that name.'); throw e; }
-        const what = [data.name && data.name !== def.name && `renamed "${def.name}" → "${data.name}"`, data.type && data.type !== def.type && `type → ${V.FIELD_TYPES[data.type].toLowerCase()}`,
+        try {
+            upd = await prisma.$transaction(async tx => {
+                for (const c of converted) await tx.cmpFieldValue.update({ where: { id: c.id }, data: { value: c.value, updatedBy: ctx.email } });
+                return tx.cmpFieldDef.update({ where: { id: def.id }, data });
+            });
+        } catch (e) { if (e.code === 'P2002') throw new CmpError(409, 'There is already a field with that name.'); throw e; }
+        const what = [data.name && data.name !== def.name && `renamed "${def.name}" → "${data.name}"`, data.type && data.type !== def.type && `type ${V.FIELD_TYPES[def.type].toLowerCase()} → ${V.FIELD_TYPES[data.type].toLowerCase()}${def._count.values ? ` (${def._count.values} value${def._count.values === 1 ? '' : 's'} kept${converted.length ? `, ${converted.length} rewritten` : ''})` : ''}`,
             (data.allCountries !== undefined && (data.allCountries !== def.allCountries || data.countries.join() !== def.countries.join())) && `for ${scopeText(upd)}`].filter(Boolean);
         if (what.length) await audit(ctx.req, { tenantId: ctx.tenantId, action: 'cmp.field.update', entityType: 'CmpFieldDef', entityId: def.id, summary: `Field "${upd.name}": ${what.join(', ')}` });
         if (data.active !== undefined && data.active !== def.active) await audit(ctx.req, { tenantId: ctx.tenantId, action: data.active ? 'cmp.field.restore' : 'cmp.field.retire', entityType: 'CmpFieldDef', entityId: def.id, summary: `Field "${upd.name}" ${data.active ? 'back in use' : 'retired (its values are kept, hidden)'}` });
         return upd;
+    }
+
+    // What was typed before, to suggest it again (the CA: every field suggests the values already added; choose one or type another):
+    // for each field of the country, its values most used first; and the basic details that repeat (reference, address)
+    async function fieldValues(ctx, countryCode) {
+        const country = V.country(countryCode).code;
+        const defs = (await prisma.cmpFieldDef.findMany({ where: { tenantId: ctx.tenantId, active: true } })).filter(d => applies(d, country) && d.type !== 'MULTILINE');
+        const out = { fields: {}, reference: [], address: [] };
+        if (defs.length) {
+            const rows = await prisma.cmpFieldValue.groupBy({ by: ['fieldId', 'value'], where: { tenantId: ctx.tenantId, fieldId: { in: defs.map(d => d.id) } }, _count: { value: true }, orderBy: { _count: { value: 'desc' } }, take: 3000 });
+            for (const r of rows) { const l = out.fields[r.fieldId] || (out.fields[r.fieldId] = []); if (l.length < 40) l.push(r.value); }
+        }
+        for (const k of ['reference', 'address']) {
+            const rows = await prisma.cmpClient.groupBy({ by: [k], where: { tenantId: ctx.tenantId, [k]: { not: '' } }, _count: { [k]: true }, orderBy: { _count: { [k]: 'desc' } }, take: 40 });
+            out[k] = rows.map(r => r[k]);
+        }
+        return out;
     }
 
     /* ---------- clients ---------- */
@@ -197,7 +228,7 @@ function createClients({ prisma, audit, encrypt, decrypt, common, now }) {
         return get(ctx, c.id);
     }
 
-    return { getSettings, putSettings, listFields, createField, updateField, list, get, fieldsOf, create, update, secrets, setArchived, applies };
+    return { getSettings, putSettings, listFields, createField, updateField, fieldValues, list, get, fieldsOf, create, update, secrets, setArchived, applies };
 }
 
 module.exports = { createClients, applies };
