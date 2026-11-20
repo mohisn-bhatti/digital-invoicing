@@ -141,12 +141,13 @@ function cmpCloseSub() { const m = document.getElementById('cmpSub'); if (m) m.c
 const cmpSubOpen = () => { const m = document.getElementById('cmpSub'); return Boolean(m && !m.classList.contains('hidden')); };
 const cmpSubHead = (title, sub = '') => `<div class="flex items-start justify-between gap-3 mb-3"><div><h2 class="text-base font-semibold">${title}</h2>${sub ? `<div class="text-sm text-slate-500">${sub}</div>` : ''}</div>
   <button type="button" onclick="cmpCloseSub()" class="text-slate-400 hover:text-slate-700 text-2xl leading-none px-2" aria-label="Close">×</button></div>`;
-// Asks for a day (the tracker: data collected on, task done on, ...): ok(ymd) runs when it is confirmed
-function cmpAskDate(title, note, { value, max, okLabel = 'Save' } = {}, ok) {
+// Asks for a day (the tracker: data collected on, task done on, ...), and a note if wanted (the CA): ok(ymd, note) runs when confirmed
+function cmpAskDate(title, note, { value, max, okLabel = 'Save', withNote = false, noteValue = '' } = {}, ok) {
   CMP.askDate = ok;
   cmpShowSub(`${cmpSubHead(title, note)}
-    <form onsubmit="event.preventDefault(); const v = this.d.value; if (!v) return toast('Choose the date.'); cmpCloseSub(); CMP.askDate(v)" class="space-y-3">
+    <form onsubmit="event.preventDefault(); const v = this.d.value; if (!v) return toast('Choose the date.'); const n = this.n ? this.n.value : undefined; cmpCloseSub(); CMP.askDate(v, n)" class="space-y-3">
       <label><span>Date</span><input name="d" type="date" required value="${esc(value || CmpRules.dayIn(cmpTz()))}" ${max ? `max="${esc(max)}"` : ''}></label>
+      ${withNote ? `<label><span>Note <span class="text-slate-400">(optional)</span></span><textarea name="n" rows="2" maxlength="1000" placeholder="e.g. bank statements still to come">${esc(noteValue)}</textarea></label>` : ''}
       <div class="flex justify-end gap-2">${cmpBtn('Cancel', 'cmpCloseSub()')}<button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">${esc(okLabel)}</button></div></form>`);
 }
 const cmpModalHead = (title, sub = '') => `<div class="flex items-start justify-between gap-3 mb-4"><div><h2 class="text-lg font-semibold">${title}</h2>${sub ? `<div class="text-sm text-slate-500">${sub}</div>` : ''}</div>
@@ -277,7 +278,7 @@ async function cmpWhatsAppTemplate(id) {
 const cmpSenders = () => ((CMP.settings && CMP.settings.waSenders) || []);
 function cmpSenderPicker() {
   const list = cmpSenders();
-  if (!list.length) return `<p class="text-xs text-slate-500">It goes from the WhatsApp account open on this computer or phone.${cmpCan('FULL') ? ' To choose your business number, add it under Setup → Settings → Your WhatsApp numbers.' : ''}</p>`;
+  if (!list.length) return `<p class="text-xs text-slate-500">It goes from the WhatsApp account open on this computer or phone.${cmpCan('FULL') ? ' To choose your business number, add it under Settings → Your WhatsApp numbers.' : ''}</p>`;
   let last = null; try { last = localStorage.getItem('cmpSender:' + S.company); } catch { /* the default then */ }
   const pick = list.find(x => x.id === last) || list.find(x => x.isDefault) || list[0];
   return `<div><label><span>Send from</span><select id="cmWaFrom" onchange="cmpSenderNote()">${list.map(x => `<option value="${esc(x.id)}" ${x.id === pick.id ? 'selected' : ''}>${esc(x.label)} · ${esc(x.phone)}</option>`).join('')}</select></label>
@@ -407,7 +408,7 @@ function cmpNotifyCard(x) {
       ${x.obligation.portalUrl ? `<a href="${esc(x.obligation.portalUrl)}" target="_blank" rel="noopener noreferrer" class="px-3 min-h-[2.5rem] inline-flex items-center rounded-lg text-sm border bg-white hover:border-emerald-600">Portal ↗</a>` : ''}
     </div></div>`;
 }
-const cmpOpenClient = id => { CMP.clientId = id; go('cm-client'); };
+const cmpOpenClient = id => { if (CMP.clientId !== id) Object.assign(CMP, { clTrackQ: '', clTrackS: 'ALL', clTrackOff: 0 }); CMP.clientId = id; go('cm-client'); };
 const cmpOpenObligations = status => { if (typeof cmpObligationsFilter === 'function') cmpObligationsFilter({ status }); go('cm-obligations'); };
 
 /* ---------- the administrator: what a user may do here (Manage → Users) ---------- */

@@ -1,6 +1,6 @@
 # Compliance & Deadlines — User Manual
 
-_ETAX · November 2026 (updated 16 November 2026 with the CA's "Deadline Tracker - 1")_
+_ETAX · November 2026 (updated 20 November 2026 with the CA's "Deadline Tracker - 1", items 14–27)_
 
 Compliance & Deadlines keeps your firm's clients anywhere in the world in one place, along with their statutory deadlines every year, the reminders you send them on WhatsApp, and the fee invoices for the work. It is part of ETAX (etaxcloud.net), next to FBR Digital Invoicing and the Point of Sale.
 
@@ -26,16 +26,19 @@ Compliance & Deadlines keeps your firm's clients anywhere in the world in one pl
 
 | Page | What it is for |
 |---|---|
-| Dashboard | Overdue items, items due in the next 7, 30 or 60 days, and fees not yet paid |
-| My Obligations | The tracker: every period of the year for every client, with every action in its own column |
+| Dashboard | Overdue items, items due in the next 7, 30 or 60 days, fees not yet paid, and the **calendar** (every due date of a month) |
 | Clients | Your clients and their 360° page (with the same tracker for that client) |
-| Calendar | Every due date of a month, including the periods still to come |
+| My Obligations | The tracker: every period of the year for every client, with every action in its own column |
 | Invoices Created | Invoices made but not yet given to the client (drafts, and issued ones not sent yet) |
 | Invoices Issued | Invoices sent to the client (or already paid) |
 | Receipts Booked | Every receipt; a new receipt is always made against an invoice |
+| Items and Taxes | The items and services you bill (every price with its date) and the taxes (every rate) |
+| Additional Information | The extra client details (custom fields) of each country |
+| Message Templates | The messages you send |
+| Invoice and Receipt Format | The standard format, and the invoice and receipt formats of each country |
 | Reports | Every report: obligations, overdue, upcoming, invoices, receipts, a summary per client, invoice aging |
+| Settings | Your firm's time zone, the reminder hour and your WhatsApp numbers |
 | Logs | The WhatsApp log and the activity log |
-| Setup | Message templates, custom fields, invoice taxes and items, settings and invoice formats |
 
 **Notifications** open from the **bell at the top right** of the window. Its number shows how many obligations are overdue or have a reminder ready to send.
 
@@ -47,7 +50,7 @@ You see only the pages your permissions allow. For safety, you are signed out af
 
 ## 2. First-time setup (do this once)
 
-Open **Setup → Settings**. Only a user with full access can change these.
+Open **Settings**. Only a user with full access can change these.
 
 - **Your firm's time zone.** The times shown in the logs and lists use it.
 - **Reminders come due at.** The hour at which a reminder becomes active, on each client's own clock. The default is 09:00.
@@ -57,24 +60,26 @@ Open **Setup → Settings**. Only a user with full access can change these.
   - **WhatsApp app**, or **Let the device choose**.
 
   Tick one number as the **Default**.
-- **On your invoices and receipts:**
-  - your **logo** (a PNG or JPEG picture: it is made small automatically) and a **header** line or two across the top, e.g. "Chartered Accountants · Tax Advisors";
-  - your firm's name, address, phone, email, tax registration number (if registered), bank details and a footer line;
-  - the number formats. For example, `INV-{YYYY}-{NNNN}` gives INV-2027-0001. Numbers are taken when an invoice is issued and never reused.
-- **Top of invoices and receipts:** either **the logo, the header line and the firm's details**, or **a full letterhead picture** across the top (choose the picture: it is made smaller automatically; your letterhead already shows the firm's name and address).
-- **How it looks:** the invoice (or, with **Receipt**, the receipt) is drawn on the right **as you type**, with a sample client.
 
-**Invoice formats by country** (under the settings). Add one or more for each country, for example **UAE - Dubai** and **UAE - Sharjah**, and tick one as the country's **default**. An invoice of a client of that country offers them, its default first. Each format has:
-- the **invoice title** (e.g. TAX INVOICE), the **receipt title** and a **note on the receipts**;
-- the **top of the page** (as in the settings, the logo and details, the letterhead picture, or only the title for printed letterhead paper);
-- the firm's name, address, **tax number** (and what it is called, e.g. TRN) and bank details **for this format** (empty = as in the settings);
-- **extra information**: as many pieces as you like (e.g. "Trade License No. 778899", "Stamp and signature"). **Drag** each one anywhere on the preview, or place it exactly: **top left, top centre, top right, centre, bottom right …**, or its distance from the left and the top in %. Choose its size, bold, alignment and a box, and whether it is on the invoice or the receipt. It prints exactly where it shows. Placeholders such as [Client Name] or [Invoice Number] are filled in.
+Open **Invoice and Receipt Format**. The invoice (or, with **Receipt**, the receipt) is drawn on the right **as you type**, with a sample client.
 
-When an invoice is issued, its format is kept with it: a later change to the format does not change invoices already issued.
+**The standard format** (every invoice and receipt, unless a format of its country says otherwise):
+- your **logo** (a PNG or JPEG picture: it is made small automatically) and a **header** line or two across the top, e.g. "Chartered Accountants · Tax Advisors";
+- the **top of invoices and receipts:** either **the logo, the header line and the firm's details**, or **a full letterhead picture** across the top;
+- your firm's name, address, phone, email, tax registration number (if registered), bank details and a footer line;
+- the number formats. For example, `INV-{YYYY}-{NNNN}` gives INV-2027-0001. Numbers are taken when an invoice is issued and never reused.
+
+**Formats by country:** **+ Add Invoice Format** or **+ Add Receipt Format**, as many as you like for each country (e.g. **UAE - Dubai** and **UAE - Sharjah**), one of them the country's **default**. Type in the **search** box to find one (name, country, title, invoice or receipt). An invoice (or receipt) of a client of that country offers them, its default first. Each format has:
+- its **title** (e.g. TAX INVOICE, RECEIPT VOUCHER) and, for a receipt, a **note on the receipts**;
+- the **top of the page** (as in the standard format, the logo and details, the letterhead picture, or only the title for printed letterhead paper);
+- the firm's name, address, **tax number** (and what it is called, e.g. TRN) and, for an invoice, bank details **for this format** (empty = as in the standard format);
+- **extra information**: as many pieces as you like (e.g. "Trade License No. 778899", "Stamp and signature"). **Drag** each one anywhere on the preview, or place it exactly: **top left, top centre, top right, centre, bottom right …**, or its distance from the left and the top in %. Choose its size, bold, alignment and a box. It prints exactly where it shows. Placeholders such as [Client Name] or [Invoice Number] are filled in.
+
+When an invoice is issued (or a receipt made), its format is kept with it: a later change to the format does not change it.
 
 When an obligation turns amber, and whether its next period is prepared by itself, are set **on each obligation** (section 4), not here.
 
-**Setup → Message Templates.** Write the messages you send. Words in square brackets are replaced with the real details when you send:
+**Message Templates.** Write the messages you send. Words in square brackets are replaced with the real details when you send:
 
 > Dear [Client Name], your [Obligation] for the period [Period Start] to [Period End] is due on [Due Date]. Kindly share the required documents.
 
@@ -94,11 +99,11 @@ When an obligation turns amber, and whether its next period is prepared by itsel
 
 Passwords and PINs are never put in messages.
 
-**Setup → Custom Fields.** Add extra client details, such as a Trade License Number, UDIN or License Expiry Date. Choose a type (text, number, date or multi-line text) and the countries the field is for: one country, several, or all. The field then shows on every client of those countries. It is marked **Missing** until filled in, and it never shows on clients of other countries.
+**Additional Information.** Add extra client details, such as a Trade License Number, UDIN or License Expiry Date. Choose a type (text, number, date or multi-line text) and the countries the field is for: one country, several, or all. The field then shows on every client of those countries. It is marked **Missing** until filled in, and it never shows on clients of other countries.
 
 The **type can be changed later**, also when clients have values: a date becomes text like "1 Jun 2023"; text becomes a date or a number only where it reads as one (if some do not, you are told which clients' values to change first).
 
-**Setup → Invoice Taxes** has two lists:
+**Items and Taxes** has two lists (an item can have many prices and a tax many rates: a new one is kept beside the earlier ones, after a warning):
 - **Taxes** you add to fee invoices, such as VAT 5% for the UAE. Each tax is suggested on the invoices of clients of its countries. The same name can have different rates in different countries, for example VAT 5% in the UAE and 15% in Saudi Arabia.
 - **Items and services** you bill, with their price, suggested on the invoices of clients of their countries.
 
@@ -126,7 +131,7 @@ Every text and number box **suggests the values typed before** for other clients
 
 **The client's 360° page** (click a client) shows everything in one place, for the dates chosen under **Show** (this calendar year by default):
 - details and additional information (missing items marked);
-- its obligations as the **tracker** (the same columns as My Obligations, section 5), for those dates, with the **planned** periods still to come; archived obligations are listed under it, to restore or delete;
+- its obligations as the **tracker** (the same columns as My Obligations, section 5, without Edit), for those dates, with the **planned** periods still to come; **✎ Edit obligations** above it opens all of them (section 4); **Search the obligations** and **Status** (next to Show) narrow it: every word must match (e.g. "VAT Q3"), and the words overdue, completed, upcoming, pending, planned and locked choose those periods; archived obligations are listed under it, to restore or delete;
 - invoices and receipts;
 - every WhatsApp message;
 - the client's **history**, closed until you click it.
@@ -137,18 +142,18 @@ Every text and number box **suggests the values typed before** for other clients
 
 ## 4. Obligations and periods
 
-**Add an obligation:** on the client's page, click **+ Obligation**. Each obligation is one row:
+**The client's obligations window.** **+ Obligation** (on the client's page), **✎ Edit obligations** (above its table), **Edit** on any row of My Obligations, or a click on any obligation (a done, current or future period) all open one window: **Obligations of [client]**, with **every obligation of the client on its own row**. Change any of them, add new ones, delete one (✕), then **Save** once. Each row shows one period (the one you clicked, else the next one to do); new dates apply from that period on (and to the periods after it, while **New dates also apply to the periods after the one shown** is ticked). A planned period's new dates become the pattern from it on.
 
-1. **Obligation:** e.g. Income Tax Return, VAT Return Q1. Names used before are suggested. If other clients of the same country already have it, a blue box offers their dates and reminders: click **Use these dates and reminders**, then check the dates. If **this client already has it**, the window says so in red: a client cannot have the same obligation twice (open the existing one with **Edit** instead).
-2. **Period start, period end and due date:** you type them, nothing is calculated. For example, a Pakistan income tax return: period 1 Jul 2026 – 30 Jun 2027, due 30 Sep 2027. It comes back **every year on the same dates**.
-3. **1st reminder, 2nd reminder, 3rd reminder** (optional): choose the **day** of each, then click **✉ Message** under it. A window opens with the message (it starts from your reminder template), the placeholders **in groups** (Client details, Additional information, Obligation, Your firm; each shows this client's real value when you point at it) and, on the right, **how it looks** for this client with this obligation's dates. You can start from a saved template, use the message for the same reminder of every obligation in the window, or keep it as a new template. Each obligation has its own messages. Every year the reminder comes the same number of days before the due date.
-4. **Several at once:** click **+ Add another obligation** for each one more. For quarterly VAT, add four obligations, Q1 to Q4: after Q1, it proposes **Q2** with the next quarter's dates, reminder days and messages, to check. If one of them has a mistake, none is added until it is put right.
-5. **How many years:** type a number, or tick **Unlimited**.
-6. **Turn amber this many days before the due date** (7 by default) and **Prepare the next period by itself when this one ends** (ticked by default), for these obligations only.
-7. **Portal link** (optional; the links used before are suggested). **Assigned to** (optional): otherwise the client's person.
-8. **Add obligations.** If a due date has **already passed**, you are asked first: **Yes, add for the past date** (it shows as overdue until completed), **Move to the next year ahead** (the dates and reminders move on a year, for you to check and save), or **Go back**.
+Each row, from left to right:
 
-**Edit an obligation:** click **✎ Edit** on its row in the tracker (or its name). The same window opens, for that period: its name, dates and three reminders. New dates apply to that period, and to the ones after it if **Also use these dates for the periods after this one** is ticked. A **planned** period (still to come) opens the same window: new dates become the pattern from that period on.
+1. **Obligation:** e.g. Income Tax Return, VAT Return Q1. Names used before are suggested. For a new one, if other clients of the same country already have it, a blue box offers their dates and reminders: click **Use these dates and reminders**, then check. A name can only be once in the window (a client cannot have the same obligation twice).
+2. **Period start, period end and due date:** you type them, nothing is calculated. For example, a Pakistan income tax return: period 1 Jul 2026 – 30 Jun 2027, due 30 Sep 2027. It comes back **every year on the same dates**. Moving the due date moves the reminders with it.
+3. **1st reminder, 2nd reminder, 3rd reminder** (optional): choose the **day** of each, then click **✉ Message** under it. A window opens with the message (it starts from your reminder template), the placeholders **in groups** (Client details, Additional information, Obligation, Your firm; each shows this client's real value when you point at it) and, on the right, **how it looks** for this client with this obligation's dates. You can start from a saved template, use the message for the same reminder of every obligation in the window, or keep it as a new template. Every year the reminder comes the same number of days before the due date.
+4. **How many years** (empty = unlimited), **Amber days** (it turns amber this many days before the due date; 7 by default), **By itself** (prepare the next period by itself when this one ends), **Portal link** (the links used before are suggested), **Assigned to** (else the client's person) and **Notes** (📝).
+5. **Lock** (🔒): once everything about an obligation is entered, lock it. A locked obligation cannot be changed, archived or deleted by mistake until you unlock it (click 🔒 again). The tracker shows 🔒 next to its name; its reminders, data collection, task and invoice go on as usual.
+6. **✕** deletes it (with all its periods, past and future) when you save; ↶ keeps it. If a WhatsApp message was sent or an invoice issued for it, you are asked why (the note goes in the activity log).
+
+**+ Add another obligation** adds a row. For quarterly VAT, add four obligations, Q1 to Q4: after Q1, it proposes **Q2** with the next quarter's dates, reminder days, messages and settings, to check. On **Save**, if the due date of a new obligation has **already passed**, you are asked first: **Yes, add for the past date** (it shows as overdue until completed), **Move to the next year ahead** (the dates and reminders move on a year, for you to check and save), or **Go back**.
 
 **Periods and their dates.** Each repetition is a period. The next period is proposed with the same dates one year later, and shows **dates to confirm** until you check it (click **dates to confirm ✓** on its row when they are right). Periods further ahead show as **Planned** (dashed).
 
@@ -182,13 +187,13 @@ The due date is the client's own calendar day. A UAE obligation becomes overdue 
 | Portal | Opens the e-filing portal |
 | Overall status | How many of the period's actions are done, e.g. **2/7**, with a bar and the status (Upcoming, Overdue …) |
 | 1st, 2nd, 3rd reminder | The reminder's date and its WhatsApp button: **Due** on its day, **Pending** after it until sent, then **Sent**, **Sent twice** … **Send again** sends it once more; **↶** takes one send off the count when WhatsApp did not really send it. "not needed" when the task was done first |
-| Data collection | **Pending** until you click it and choose the day the data came in (↶ undo) |
-| Task | **Pending** until you click it and choose the day the work was done. It can only be done once the data is collected (↶ reopen) |
+| Data collection | **Pending** until you click it and choose the day the data came in, with a note if there is any (it shows under the date; ✎ note changes it; ↶ undo) |
+| Task | **Pending** until you click it and choose the day the work was done, with a note if there is any. It can only be done once the data is collected (↶ reopen) |
 | Advance payment | **+ Add**: the date, a description (the ones typed before are suggested) and the amount. Shows the total, and how much was adjusted on an invoice |
 | Invoice created | **Pending · Create** once the task is done (or **no invoice** for free work); **Draft** while it is being written; then its **number** |
 | Invoice issued | **Pending** with a WhatsApp button to send the invoice, or **mark sent**; then **Sent**, **Sent twice** …, **Send again**, **↶** |
 | Receipt | **Pending** once the invoice is sent: **+ Receipt** records the money; then the receipt's WhatsApp button (Sent, Sent twice …) |
-| Edit · Archive · Delete | The obligation's window, archive (or restore), delete |
+| Edit · Archive · Delete | All the client's obligations in one window (section 4), archive (or restore), delete (not while it is locked: 🔒) |
 | Remarks | Notes on this period for the team: click to write |
 
 **The overall status counts:** each reminder (one no longer needed because the task was done first is not counted), the data collection, the task, and (unless closed without an invoice) the invoice created, sent and paid.
@@ -197,7 +202,9 @@ The due date is the client's own calendar day. A UAE obligation becomes overdue 
 
 **Ticking a row: two ways.** Tick **Ticking a row shows only that client** (above the list) and a tick shows that client's periods at once. Leave it unticked and ticks select rows for the actions on several rows (section 8). The choice is remembered on this computer.
 
-Filters: **Show** (dates), **Status**, **Client**, **Country**, **Search**, **Assigned to**, and **Archived**. The table scrolls sideways for the columns on the right.
+Filters: **Show** (dates), **Status**, **Client**, **Country**, **Search** (every word must match; overdue, completed, upcoming, pending, planned and locked choose those periods), **Assigned to**, and **Archived**.
+
+**Many rows:** the table shows **25** at a time (choose 50, 75, 100 or All above it; the choice is remembered on this computer) with ‹ › for the pages. The table is in a box as tall as the screen: its sideways bar is always at the bottom of the box, the headings stay on top, and **Due date, Client name and Obligation stay on the left** while you move across the other columns (with the bar, Shift + mouse wheel, or **◀ ▶**). The invoice, sending and receipt columns show their **amounts**.
 
 ---
 
@@ -246,11 +253,11 @@ If you did not actually send a message after WhatsApp opened (or marked a remind
 - **Currency:** the client's country's currency (e.g. AED for the UAE). You can change it to any other.
 - **Invoice type:** the formats of the client's country (e.g. UAE - Dubai, UAE - Sharjah), its default first (section 2).
 - **Completed obligations:** the client's completed tasks not billed yet. Click **+ Add** on each one to bill (as many as you like); it comes with the price billed before for that obligation. Once on an invoice, a period is not offered again.
-- **Other items and services:** type to **search** what you billed before: every price shows with its date (e.g. "VAT Amendment · AED 250 · 10 Nov 2026" and "VAT Amendment · AED 200 · 12 Mar 2026"); pick one, or type a new item and its amount. **Keep** saves a new item or a new price **beside the old ones, with its date** (the price bank, also under Setup → Invoice Taxes).
+- **Other items and services:** type to **search** what you billed before: every price shows with its date (e.g. "VAT Amendment · AED 250 · 10 Nov 2026" and "VAT Amendment · AED 200 · 12 Mar 2026"); pick one, or type a new item and its amount. **Keep** saves a new item or a new price **beside the old ones, with its date** (the price bank, also under Items and Taxes).
 - **Taxes:** pick a saved tax, or click **+ New tax** and type its name and rate (e.g. VAT, 5%). Each is worked out on the subtotal. Tick **Keep for [country] clients** to have it suggested next time.
-- **Advance payments:** the client's advances in this currency, with what is left of each. Tick one and type how much to take off (or **+ Record an advance**). The invoice then shows **Gross amount**, **Advance received**, **Advance payment adjustment** and **Net amount**, and the advance kept for later.
+- **Advance payments:** the client's advances in this currency, with what is left of each. Tick one and type how much to take off (or **+ Record an advance**: it belongs to the obligation billed, so the tracker shows it on that period). **✎ change** corrects an advance's date, description or amount (never below what is already taken off an invoice). The invoice then shows **Gross amount**, **Advance received**, **Advance payment adjustment** and **Net amount**, and the advance kept for later.
 - Optionally set the **invoice date** (empty = the day you issue it), the **payment due** date and notes.
-- **Save draft** to finish later, or **Save and issue**. Issuing gives the invoice its number, and it can no longer be changed. The advance is taken off then (never more than is left); if the invoice is cancelled later, the advance can be used again. An invoice fully paid by advance is **Received** at once.
+- **Create Invoice** to keep it (it has no number yet), or **Create and Issue Invoice**. If an item or a tax is already saved at another price or rate, you are warned first; then both are kept, each with its date. Issuing gives the invoice its number, and it can no longer be changed. The advance is taken off then (never more than is left); if the invoice is cancelled later, the advance can be used again. An invoice fully paid by advance is **Received** at once.
 
 **Invoices Created and Invoices Issued.** **Invoices Created** lists the invoices not yet given to the client (drafts, and issued ones not sent yet); once sent on WhatsApp or marked sent (or paid), an invoice moves to **Invoices Issued**. Click an invoice in either list: it shows **beside the list**, with everything that can be done to it:
 - **Print / PDF:** an A4 invoice with your logo, header, firm details and bank details. Choose "Save as PDF" in the print window. The print's footer shows the invoice's **own web address** (e.g. etaxcloud.net/app#/cm-invoices/INV-2026-0001); opening that address shows that invoice.
@@ -263,6 +270,8 @@ If you did not actually send a message after WhatsApp opened (or marked a remind
   - **Void the receipts:** the money was never really received (entered by mistake, a bounced cheque). The receipts stay, crossed out.
 
 The list itself also has **+ Receipt**, **Mark sent** and **↶ Not sent** on each row.
+
+A receipt takes the **receipt format** of the client's country (its default, or the one chosen on the receipt form).
 
 **Receipts Booked** lists every receipt for the dates chosen. **+ New receipt** asks which invoice was paid (a receipt is always made against an invoice). Each receipt can be printed, sent on WhatsApp, or **↶ Undone** (voided) with a reason, e.g. "Entered by mistake" or a bounced cheque. An undone receipt stays in the list crossed out, and the money is owed again. A receipt marked **Refunded** or **Kept as credit** stays as it is, and is not counted in the totals (credit is counted when it pays an invoice). A receipt paid from credit gives the credit back if it is undone.
 
@@ -288,7 +297,7 @@ The list itself also has **+ Receipt**, **Mark sent** and **↶ Not sent** on ea
 ## 9. Dashboard, calendar, reports and downloads
 
 - **Dashboard:** overdue items, due in the next **7, 30 or 60 days**, reminders to send, dates to confirm, completed this month, open and overdue items by country, and fees not yet paid per currency. Click any number to see the list behind it.
-- **Calendar:** every due date of a month, coloured by status, and the **planned** periods still to come (dashed), for as long as each obligation repeats. Choose the **Month** directly, use ‹ ›, or **Go to a date** to jump there (the day is marked). Filter by country or team member, and click an item to open it.
+- **Calendar** (on the Dashboard, under the summary): every due date of a month, coloured by status, and the **planned** periods still to come (dashed), for as long as each obligation repeats. Choose the **Month** directly, use ‹ ›, or **Go to a date** to jump there (the day is marked). Filter by country or team member, and click an item to open it.
 - **Reports** (choose the dates under **Show**):
   - **Obligations:** every period of those dates, with a count per status (filter by status);
   - **Overdue**;

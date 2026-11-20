@@ -200,7 +200,28 @@ Thirteen items; what was done for each is in [COMPLIANCE_CA_FEEDBACK.md](COMPLIA
 - **Menu**: Invoices Created (`?stage=created`: not yet given to the client) and Invoices Issued (`?stage=issued`: sent or paid),
   Receipts Booked.
 
-## 11. Not built / later
+## 11. Items 14–27 of the same sheet (20 November 2026)
+
+Migration `0054` (additions only), tests `test/cmpFeedback4.test.js`; answers in [COMPLIANCE_CA_FEEDBACK.md](COMPLIANCE_CA_FEEDBACK.md) (round 4).
+- **One window per client** (`cmpObligationForm`): every live obligation of the client as a row (the period clicked, else the next one
+  to do), with its own settings after the 3rd reminder (years, amber, by itself, portal, person, notes) and a lock; Save sends only
+  what changed: deletes, then each changed obligation (unlock, dates of its period or the pattern of a planned one, reminders,
+  settings and lock), then the new ones in one `items` request (each item may carry its own settings and `locked`; up to 50).
+- **Lock** (`CmpObligation.locked`): a locked obligation refuses changes, reminders, dates, pattern, archive and delete (409) until
+  `PUT /obligations/:id { locked: false }` (which may carry other changes); the tracker shows 🔒.
+- **Notes** with the data collection and the task (`CmpOccurrence.dataNote`, `taskNote`): `POST /occurrences/:id/data { on, note }`,
+  `/complete { on, note }`, changed with `PUT /occurrences/:id`.
+- **The tracker** in pages (`GET /api/cmp/occurrences?offset=&limit=`; the money only for the page's rows) and a smart search (`q`:
+  every word matches the obligation, client or code; overdue, completed, upcoming, pending, planned, locked choose periods). The box
+  keeps its sideways bar on screen; the first three columns stay on the left.
+- **Advances** shown on the period whose invoice takes them off; `PUT /api/cmp/advances/:id` (never below what is used).
+- **Prices and rates kept**: `POST /api/cmp/items { addPrice: true }` adds a price to a known item; `PUT /api/cmp/taxes/:id { keepOld:
+  true }` with a new rate adds the rate beside the old one. The screens warn first.
+- **Receipt formats** (`CmpInvoiceType.kind` RECEIPT): one default per country and kind; a receipt takes the country's default (or
+  `typeId`) and keeps it (`CmpReceipt.typeSnapshot`). Page **Invoice and Receipt Format** (the standard format and the formats);
+  Settings keeps the clock, the reminder hour and the WhatsApp numbers. The calendar is on the Dashboard; the menu follows the CA's order.
+
+## 12. Not built / later
 
 - Automatic WhatsApp sending (WhatsApp Business Platform): needs Meta set-up; links are used now.
 - Exchange rates between currencies in reports (aging is per currency).

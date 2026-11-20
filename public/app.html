@@ -1291,25 +1291,26 @@ const NAV = {
   // Compliance & Deadlines: its own product (public/cmp*.js). perms: shown to a user with any of these (User.cmpPerms, set by the administrator)
   cmp: [
     { id: 'cm-none', label: 'No access yet', icon: 'home', crumb: 'Compliance', none: true },
-    { id: 'cm-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview', perms: ['REPORTS'] },
+    // The CA's order (20 Nov 2026): the calendar is on the Dashboard; the setup pages are in the menu itself; the logs last
+    { id: 'cm-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview', perms: ['VIEW'] },
     // (the CA: Notifications open from the bell at the top right, My Tasks is My Obligations: neither is in the menu)
     { id: 'cm-notify', label: 'Notifications', icon: 'bell', crumb: 'Overview', perms: ['REPORTS', 'WHATSAPP'], nomenu: true },
     { id: 'cm-tasks', label: 'My Tasks', icon: 'draft', crumb: 'Work', perms: ['VIEW'], nomenu: true },
-    { id: 'cm-obligations', label: 'My Obligations', icon: 'list', crumb: 'Work', perms: ['VIEW'] },
+    { id: 'cm-calendar', label: 'Calendar', icon: 'clock', crumb: 'Overview', perms: ['VIEW'], nomenu: true },
     { id: 'cm-clients', label: 'Clients', icon: 'users', crumb: 'Work', perms: ['VIEW'] },
     { id: 'cm-client', label: 'Client', crumb: 'Clients', parent: 'cm-clients', perms: ['VIEW'] },
-    { id: 'cm-calendar', label: 'Calendar', icon: 'clock', crumb: 'Work', perms: ['VIEW'] },
-    // (the CA, 16 Nov 2026: Invoices Created — made, not yet sent; Invoices Issued — sent to the client; Receipts Booked)
+    { id: 'cm-obligations', label: 'My Obligations', icon: 'list', crumb: 'Work', perms: ['VIEW'] },
     { id: 'cm-invoices', label: 'Invoices Created', icon: 'book', crumb: 'Billing', perms: ['INVOICE'] },
     { id: 'cm-invoices-issued', label: 'Invoices Issued', icon: 'upload', crumb: 'Billing', perms: ['INVOICE'] },
     { id: 'cm-receipts', label: 'Receipts Booked', icon: 'draft', crumb: 'Billing', perms: ['INVOICE'] },
+    { id: 'cm-taxes', label: 'Items and Taxes', icon: 'chart', crumb: 'Billing', perms: ['INVOICE', 'SETUP'] },
+    { id: 'cm-fields', label: 'Additional Information', icon: 'layers', crumb: 'Setup', perms: ['VIEW'] },
+    { id: 'cm-templates', label: 'Message Templates', icon: 'mail', crumb: 'Setup', perms: ['VIEW'] },
+    { id: 'cm-formats', label: 'Invoice and Receipt Format', icon: 'draft', crumb: 'Setup', perms: ['VIEW'] },
     { id: 'cm-reports', label: 'Reports', icon: 'chart', crumb: 'Reports', perms: ['REPORTS'] },
+    { id: 'cm-settings', label: 'Settings', icon: 'cog', crumb: 'Setup', perms: ['VIEW'] },
     { id: 'cm-messages', label: 'WhatsApp Log', icon: 'chat', crumb: 'Logs', group: 'cmlogs', perms: ['LOGS'] },
     { id: 'cm-activity', label: 'Activity Log', icon: 'clock', crumb: 'Logs', group: 'cmlogs', perms: ['LOGS'] },
-    { id: 'cm-templates', label: 'Message Templates', icon: 'mail', crumb: 'Setup', group: 'cmsetup', perms: ['VIEW'] },
-    { id: 'cm-fields', label: 'Custom Fields', icon: 'layers', crumb: 'Setup', group: 'cmsetup', perms: ['VIEW'] },
-    { id: 'cm-taxes', label: 'Invoice Taxes', icon: 'chart', crumb: 'Setup', group: 'cmsetup', perms: ['INVOICE', 'SETUP'] },
-    { id: 'cm-settings', label: 'Settings', icon: 'cog', crumb: 'Setup', group: 'cmsetup', perms: ['VIEW'] },
   ],
   admin: [
     { id: 'a-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview' },

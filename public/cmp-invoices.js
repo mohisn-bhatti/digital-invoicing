@@ -129,11 +129,11 @@ async function cmpInvoiceEdit(id, after) {
   cmpShowModal(`${cmpModalHead('Draft invoice', `${country.flag} ${esc(inv.client.name)} · ${esc(inv.client.code)}`)}
     <div class="grid xl:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)] gap-5 items-start">
     <div id="ciEditor" class="space-y-4 min-w-0" oninput="cmpInvoicePreviewSoon()" onchange="cmpInvoicePreviewSoon()">
-      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <label><span>Currency <span class="text-slate-400">(${esc(country.currency)})</span></span><select id="ciCur" onchange="cmpInvoiceCurrency()">${CmpCountries.currencies.map(c => `<option value="${c.code}" ${c.code === inv.currency ? 'selected' : ''}>${c.code} · ${esc(c.name)}</option>`).join('')}</select></label>
-        <label><span>Invoice date <span class="text-slate-400">(empty = when issued)</span></span><input id="ciDate" type="date" value="${inv.issueDate}"></label>
-        <label><span>Payment due</span><input id="ciDue" type="date" value="${inv.dueDate}"></label>
-        <label><span>Invoice type <span class="text-slate-400">(${esc(country.name)})</span></span><select id="ciType"><option value="">Standard (Setup → Settings)</option>${types.map(t => `<option value="${t.id}" ${t.id === inv.typeId ? 'selected' : ''}>${esc(t.name)}${t.isDefault ? ' · default' : ''}</option>`).join('')}</select></label>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+        <label><span class="whitespace-nowrap">Currency <span class="text-slate-400">(${esc(country.currency)})</span></span><select id="ciCur" onchange="cmpInvoiceCurrency()">${CmpCountries.currencies.map(c => `<option value="${c.code}" ${c.code === inv.currency ? 'selected' : ''}>${c.code} · ${esc(c.name)}</option>`).join('')}</select></label>
+        <label title="Empty: the day it is issued"><span class="whitespace-nowrap">Invoice date</span><input id="ciDate" type="date" value="${inv.issueDate}"></label>
+        <label><span class="whitespace-nowrap">Payment due</span><input id="ciDue" type="date" value="${inv.dueDate}"></label>
+        <label title="The invoice formats of ${esc(country.name)}"><span class="whitespace-nowrap">Invoice format</span><select id="ciType"><option value="">Standard</option>${types.map(t => `<option value="${t.id}" ${t.id === inv.typeId ? 'selected' : ''}>${esc(t.name)}${t.isDefault ? ' · default' : ''}</option>`).join('')}</select></label>
       </div>
       <section class="border rounded-lg p-3"><h3 class="text-sm font-semibold">Completed obligations <span class="font-normal text-slate-500">— of ${esc(inv.client.name)}, not billed yet; add as many as you like</span></h3>
         <div id="ciObLines" class="space-y-2 mt-2"></div><div id="ciObFree" class="mt-2"></div></section>
@@ -145,12 +145,12 @@ async function cmpInvoiceEdit(id, after) {
           <button type="button" class="text-sm text-emerald-700 underline whitespace-nowrap" onclick="cmpInvoiceTax()">+ New tax</button></div></div>
         <div id="ciTaxes" class="space-y-2"></div></div>
       <section class="border rounded-lg p-3"><div class="flex items-center justify-between gap-2"><h3 class="text-sm font-semibold">Advance payments <span class="font-normal text-slate-500">— taken off this invoice</span></h3>
-        <button type="button" class="text-sm text-emerald-700 underline whitespace-nowrap" onclick="cmpAdvanceForm({ clientId: '${inv.client.id}', country: '${inv.client.country}' }, cmpInvoiceAdvAdded)">+ Record an advance</button></div>
+        <button type="button" class="text-sm text-emerald-700 underline whitespace-nowrap" onclick="cmpAdvanceForm({ clientId: '${inv.client.id}', country: '${inv.client.country}', occurrenceId: ((document.querySelector('#ciObLines .ciObLine') || {}).dataset || {}).occ }, cmpInvoiceAdvAdded)">+ Record an advance</button></div>
         <div id="ciAdv" class="mt-2 space-y-1.5"></div></section>
       <div id="ciTotals" class="ml-auto max-w-sm text-sm space-y-1"></div>
       <label><span>Notes on the invoice</span><textarea id="ciNotes" rows="2" maxlength="1000">${esc(inv.notes)}</textarea></label>
       <div class="flex flex-wrap justify-between gap-2">${cmpBtn('Delete draft', `cmpInvoiceDelete('${inv.id}')`, 'danger', 'needs-write')}
-        <div class="flex gap-2">${cmpBtn('Save draft', 'cmpInvoiceSave(false)', 'plain', 'needs-write')}${cmpBtn('Save and issue', 'cmpInvoiceSave(true)', 'primary', 'needs-write')}</div></div>
+        <div class="flex gap-2">${cmpBtn('Create Invoice', 'cmpInvoiceSave(false)', 'plain', 'needs-write')}${cmpBtn('Create and Issue Invoice', 'cmpInvoiceSave(true)', 'primary', 'needs-write')}</div></div>
     </div>
     <aside class="min-w-0 xl:sticky xl:top-2"><div class="text-xs text-slate-500 mb-1">How it looks (as you type)</div>
       <div class="border rounded-lg bg-white overflow-auto max-h-[78vh] p-2"><div id="ciPreview" class="cmpDocFit"></div></div></aside>
@@ -273,6 +273,7 @@ function cmpInvoiceAdvList() {
     const p = prev.get(a.id), on = p ? p.on : mine.has(a.id), amt = p ? p.amt : mine.has(a.id) ? cmpFix(mine.get(a.id), cur) : '';
     return `<div class="ciAdvRow flex flex-wrap items-center gap-2 text-sm" data-id="${a.id}" data-left="${a.available}" data-total="${a.amount}" data-on="${esc(a.receivedOn)}" data-desc="${esc(a.description)}">
       <label class="flex items-center gap-2 flex-1 min-w-[14rem]"><input type="checkbox" class="ciAdvOn" ${on ? 'checked' : ''} onchange="cmpInvoiceAdvToggle(this)"> <span>${esc(cmpDay(a.receivedOn))} · ${esc(a.description)} · <b>${cmpMoney(a.amount, a.currency)}</b> <span class="text-xs text-slate-500">(${cmpMoney(a.available, a.currency)} left)</span></span></label>
+      <button type="button" class="needs-write text-xs underline text-slate-600 hover:text-emerald-700" onclick="cmpAdvanceEdit('${a.id}', cmpInvoiceAdvAdded)">✎ change</button>
       <label class="w-32"><span class="sr-only">Taken off</span><input class="ciAdvAmt text-right" inputmode="decimal" placeholder="0.00" value="${esc(amt)}" ${on ? '' : 'disabled'} oninput="cmpInvoiceTotals()"></label></div>`;
   }).join('') : `<div class="text-xs text-slate-500">No advance payment in ${esc(cur)} to take off. Record one with "+ Record an advance" (or from the tracker).</div>`;
 }
@@ -314,7 +315,25 @@ function cmpInvoiceDraftNow() {
 }
 function cmpInvoicePreview() { const box = document.getElementById('ciPreview'); if (box && CMP_INV.edit) { box.innerHTML = cmpInvoiceDoc(cmpInvoiceDraftNow(), CMP.settings || {}); cmpFitDocs(box.parentElement); } }
 function cmpInvoicePreviewSoon() { clearTimeout(CMP_INV.prevTimer); CMP_INV.prevTimer = setTimeout(() => { cmpInvoiceTotals(); cmpInvoicePreview(); }, 120); }
+// Items and taxes billed before at another price or rate (the CA: warned, then both are kept, each with its date)
+function cmpInvoiceChanges() {
+  const out = [], cur = $('#ciCur').value;
+  for (const r of document.querySelectorAll('#ciLines .ciLine, #ciObLines .ciLine')) {
+    const name = r.dataset.bank || r.querySelector('.ciDesc').value.trim(), amt = cmpAmt(r.querySelector('.ciAmt').value), save = r.querySelector('.ciSave');
+    const it = CMP_INV.edit.items.find(x => x.currency === cur && CmpRules.keyOf(x.name) === CmpRules.keyOf(name));
+    const prices = it ? (it.prices && it.prices.length ? it.prices.map(p => p.amount) : [it.amount]) : [];
+    if (it && amt > 0 && save && save.checked && !prices.some(p => Math.abs(p - amt) < 1e-9)) out.push(`${it.name}: ${cmpMoney(amt, cur)} (billed before at ${prices.map(p => cmpMoney(p, cur)).join(', ')})`);
+  }
+  for (const r of document.querySelectorAll('#ciTaxes .ciTax')) {
+    const name = r.querySelector('.ciTaxName').value.trim(), rate = Number(r.querySelector('.ciTaxRate').value), keep = r.querySelector('.ciTaxSave');
+    const same = CMP_INV.edit.rates.filter(x => x.name.toLowerCase() === name.toLowerCase());
+    if (keep && keep.checked && same.length && !same.some(x => x.rate === rate)) out.push(`${name}: ${rate}% (saved before at ${same.map(x => `${x.rate}%`).join(', ')})`);
+  }
+  return out;
+}
 async function cmpInvoiceSave(issue) {
+  const changes = cmpInvoiceChanges();
+  if (changes.length && !confirm(`These are already saved at another price or rate:\n\n${changes.join('\n')}\n\nThe new ones are kept too, each with its date (the earlier ones stay). Continue?`)) return;
   const e = CMP_INV.edit, line = r => ({ description: r.querySelector('.ciDesc').value, amount: r.querySelector('.ciAmt').value || '0', save: Boolean(r.querySelector('.ciSave') && r.querySelector('.ciSave').checked && !(r.querySelector('.ciSaveWrap') || { classList: { contains: () => false } }).classList.contains('invisible')),
     occurrenceId: r.dataset.occ || undefined, bankName: r.dataset.bank && (r.dataset.occ || CmpRules.keyOf(r.dataset.bank) === CmpRules.keyOf(r.querySelector('.ciDesc').value)) ? r.dataset.bank : undefined });
   const body = { currency: $('#ciCur').value, issueDate: $('#ciDate').value, dueDate: $('#ciDue').value, notes: $('#ciNotes').value, typeId: $('#ciType').value || null,
@@ -324,7 +343,7 @@ async function cmpInvoiceSave(issue) {
   try {
     await api(`/api/cmp/invoices/${e.inv.id}`, { method: 'PUT', body });
     if (issue) { if (!confirm('Issue this invoice? It gets its number and can no longer be changed (only cancelled).')) return; await api(`/api/cmp/invoices/${e.inv.id}/issue`, { method: 'POST' }); toast('Invoice issued', true); }
-    else toast('Draft saved', true);
+    else toast('Invoice created (not issued yet: it has no number until it is issued)', true);
     if (e.after) e.after();
     if (issue && ['cm-invoices', 'cm-invoices-issued'].includes(S.page)) { cmpCloseModal(); cmpInvoiceShow(e.inv.id); } else if (issue) cmpInvoiceOpen(e.inv.id, e.after); else cmpCloseModal();
   } catch (err) { toast(err.message); }
@@ -342,7 +361,9 @@ function cmpFitDocs(root = document) {
   root.querySelectorAll('.cmpDocFit').forEach(el => { const w = el.parentElement.clientWidth - 18; if (w > 0) el.style.zoom = String(Math.min(1, Math.max(0.3, w / (CMP_PAGE.w * 96 / 25.4)))); });
 }
 window.addEventListener('resize', () => cmpFitDocs());
-function cmpDocLayout(inv) {
+// The layout a document is printed with: a receipt's own receipt format (frozen when it was made), else the invoice's format
+function cmpDocLayout(inv, receipt) {
+  if (receipt && receipt.typeSnapshot && receipt.typeSnapshot.layout) return receipt.typeSnapshot.layout;
   if (inv.typeSnapshot && inv.typeSnapshot.layout) return inv.typeSnapshot.layout;
   const t = inv.typeId && (CMP_INV.types || []).find(x => x.id === inv.typeId);
   return t ? t.layout : null;
@@ -358,7 +379,7 @@ function cmpDocBlocks(L, inv, s, receipt, { edit = false } = {}) {
   return (L.blocks || []).filter(b => (b.doc || 'INVOICE') === (receipt ? 'RECEIPT' : 'INVOICE')).map(b => `<div data-block="${esc(b.id)}" style="position:absolute;left:${(CMP_PAGE.w * b.x / 100).toFixed(1)}mm;top:${(CMP_PAGE.h * b.y / 100).toFixed(1)}mm;width:${(CMP_PAGE.w * b.w / 100).toFixed(1)}mm;font-size:${b.size}px;font-weight:${b.bold ? 700 : 400};text-align:${b.align};white-space:pre-wrap;line-height:1.35;${b.border ? 'border:1px solid #94a3b8;padding:1.5mm;' : ''}${edit ? 'cursor:move;outline:1px dashed #10b981;background:rgba(236,253,245,.55);touch-action:none;' : ''}">${esc(cmpDocText(b.text, inv, s, receipt))}</div>`).join('');
 }
 function cmpInvoiceDoc(inv, s, receipt, { layout, edit = false } = {}) {
-  const L = layout || cmpDocLayout(inv) || {}, c = inv.client || {}, cur = inv.currency;
+  const L = layout || cmpDocLayout(inv, receipt) || {}, c = inv.client || {}, cur = inv.currency;
   const firm = L.firmName || s.firmName || S.company || '', addr = L.firmAddress || s.firmAddress || '';
   const taxNo = L.taxNo || s.firmTaxNo || '', taxLine = taxNo ? `${esc(L.taxLabel || 'Tax registration no.')}: ${esc(taxNo)}` : '';
   const bank = L.showBank === false ? '' : (L.bankDetails || s.bankDetails || ''), footer = L.footer || s.invoiceFooter || '';
@@ -423,7 +444,7 @@ function cmpInvoiceViewHtml(inv, inPanel) {
     <div id="cmRcpForm"></div>
     ${(inv.clientCredit || []).length ? `<p class="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded px-3 py-2 mb-3">${esc(inv.client.name)} has credit: <b>${inv.clientCredit.map(c => cmpMoney(c.remaining, c.currency)).join(', ')}</b>. It can pay this invoice: + Receipt → Paid by: Client credit.</p>` : ''}
     ${inv.status === 'CANCELLED' && inv.cancelSettlement ? `<p class="text-xs text-slate-700 bg-slate-50 border rounded px-3 py-2 mb-3">Money received was <b>${{ VOID: 'voided', REFUND: 'refunded', CREDIT: 'kept as the client\'s credit' }[inv.cancelSettlement]}</b> when it was cancelled.</p>` : ''}
-    ${s.firmName ? '' : `<p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-3">The firm's name, logo, address and bank details for invoices are set under Setup → Settings.</p>`}
+    ${s.firmName ? '' : `<p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-3">The firm's name, logo, address and bank details for invoices are set under Invoice and Receipt Format.</p>`}
     <div class="border rounded-lg p-3 bg-white overflow-hidden"><div class="cmpDocFit">${cmpInvoiceDoc(inv, s)}</div></div>
     <h3 class="font-medium mt-4 mb-2">Receipts</h3>
     ${inv.receipts.length ? `<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Receipt</th><th>Date</th><th class="text-right">Amount</th><th>Paid by</th><th></th></tr></thead><tbody>
@@ -537,11 +558,19 @@ function cmpReceiptForm() {
         <label><span>Date received</span><input name="receivedOn" type="date" value="${CmpRules.dayIn(cmpTz())}"></label>
         <label><span>Paid by</span><select name="method" onchange="cmpReceiptMethod(this)">${Object.entries(CMP_METHODS).filter(([k]) => k !== 'CREDIT' || credit).map(([k, v]) => `<option value="${k}">${k === 'CREDIT' ? `${v} (${cmpMoney(credit.remaining, inv.currency)} available)` : v}</option>`).join('')}</select></label>
       </div>
-      <div class="grid sm:grid-cols-2 gap-3"><label><span>Reference <span class="text-slate-400">(cheque or transfer no.)</span></span><input name="reference" maxlength="120"></label>
-        <label><span>Notes</span><input name="notes" maxlength="500"></label></div>
+      <div class="grid sm:grid-cols-3 gap-3"><label><span>Reference <span class="text-slate-400">(cheque or transfer no.)</span></span><input name="reference" maxlength="120"></label>
+        <label><span>Notes</span><input name="notes" maxlength="500"></label>
+        <label><span>Receipt format</span><select name="typeId" id="crType"><option value="">Standard</option></select></label></div>
       <div class="flex justify-end gap-2">${cmpBtn('Cancel', "document.getElementById('cmRcpForm').innerHTML = ''")}<button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save receipt</button></div>
     </form>`;
   box.querySelector('input[name="amount"]').focus();
+  // the receipt formats of the client's country, its default first (the CA)
+  cmpInvoiceTypes(null).then(all => {
+    const sel = document.getElementById('crType'); if (!sel) return;
+    const list = all.filter(t => t.active && t.kind === 'RECEIPT' && t.country === inv.client.country).sort((a, b) => b.isDefault - a.isDefault || a.name.localeCompare(b.name));
+    sel.innerHTML = '<option value="">Standard</option>' + list.map(t => `<option value="${t.id}">${esc(t.name)}${t.isDefault ? ' · default' : ''}</option>`).join('');
+    if (list[0] && list[0].isDefault) sel.value = list[0].id;
+  });
 }
 // Paid from the client's credit: the amount is at most what is left of it
 function cmpReceiptMethod(sel) {
@@ -619,12 +648,12 @@ CMP_PAGES.push({
   id: 'cm-taxes',
   html: () => `<div class="space-y-4"><div class="bg-white rounded-xl shadow p-4">
     <div class="flex flex-wrap items-start justify-between gap-3 mb-3"><div><h2 class="font-semibold">Taxes on fee invoices</h2>
-      <p class="text-xs text-slate-500 max-w-2xl">Each tax is suggested on the invoices of clients of its countries. A new tax added on an invoice with "Keep for … clients" ticked appears here too. The same name can have different rates in different countries (e.g. VAT 5% in the UAE, 15% in Saudi Arabia).</p></div>
+      <p class="text-xs text-slate-500 max-w-2xl">Each tax is suggested on the invoices of clients of its countries. A new tax added on an invoice with "Keep for … clients" ticked appears here too. A tax can have several rates (e.g. VAT 5% in the UAE, 15% in Saudi Arabia): a new rate is kept beside the earlier ones (you are warned first).</p></div>
       <div class="flex items-center gap-3"><label class="flex items-center gap-2 text-xs"><input type="checkbox" id="cmTaxAll" onchange="cmpLoadTaxes()"> Show retired</label>${cmpBtn('+ Add tax', 'cmpTaxForm()', 'primary', 'needs-write')}</div></div>
     <table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Tax</th><th class="text-right">Rate</th><th>Countries</th><th></th></tr></thead><tbody id="cmTaxRows"></tbody></table></div>
     <div class="bg-white rounded-xl shadow p-4">
     <div class="flex flex-wrap items-start justify-between gap-3 mb-3"><div><h2 class="font-semibold">Items and services</h2>
-      <p class="text-xs text-slate-500 max-w-2xl">What you bill, with its price, suggested on the invoices of clients of its countries. A line typed on an invoice with "Keep for … clients" ticked appears here too, and a new price typed there replaces the saved one.</p></div>
+      <p class="text-xs text-slate-500 max-w-2xl">What you bill, with every price it was billed at (each with its date), suggested on the invoices of clients of its countries. A line typed on an invoice with "Keep" ticked appears here too; a new price is kept beside the earlier ones (you are warned first).</p></div>
       <div class="flex items-center gap-3"><label class="flex items-center gap-2 text-xs"><input type="checkbox" id="cmItemAll" onchange="cmpLoadItems()"> Show retired</label>${cmpBtn('+ Add item', 'cmpItemForm()', 'primary', 'needs-write')}</div></div>
     <table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-2">Item or service</th><th class="text-right">Price</th><th>Countries</th><th></th></tr></thead><tbody id="cmItemRows"></tbody></table></div></div>`,
   enter: () => { cmpLoadTaxes(); cmpLoadItems(); },
@@ -653,6 +682,13 @@ function cmpTaxForm(id) {
 async function cmpTaxSave() {
   const f = $('#ctForm'), id = CMP_INV.taxEdit;
   const body = { name: f.name.value, rate: f.rate.value, allCountries: f.allCountries.checked, countries: [...$('#ctCountries').selectedOptions].map(o => o.value) };
+  // another rate of a tax (the CA: warned, then both rates are kept)
+  const same = CMP_INV.rates.filter(x => x.name.toLowerCase() === body.name.trim().toLowerCase() && x.id !== id);
+  const old = id && CMP_INV.rates.find(x => x.id === id);
+  if (old && Number(body.rate) !== old.rate) {
+    if (!confirm(`${old.name} is ${old.rate}%. Keep ${body.rate}% as another rate beside it? (Both are then offered on the invoices.)`)) return;
+    body.keepOld = true;
+  } else if (!id && same.length && !same.some(x => x.rate === Number(body.rate)) && !confirm(`${body.name} is already there at ${same.map(x => `${x.rate}%`).join(', ')}. Keep ${body.rate}% as another rate?`)) return;
   try { await api(id ? `/api/cmp/taxes/${id}` : '/api/cmp/taxes', { method: id ? 'PUT' : 'POST', body }); cmpCloseModal(); toast('Tax saved', true); cmpLoadTaxes(); } catch (err) { toast(err.message); }
 }
 async function cmpTaxActive(id, active) {
@@ -660,7 +696,7 @@ async function cmpTaxActive(id, active) {
 }
 async function cmpLoadItems() {
   try { CMP_INV.items = await api('/api/cmp/items' + ($('#cmItemAll').checked ? '?all=1' : '')); } catch (err) { return toast(err.message); }
-  $('#cmItemRows').innerHTML = CMP_INV.items.map(r => `<tr class="border-b last:border-0 ${r.active ? '' : 'opacity-60'}"><td class="py-2 font-medium">${esc(r.name)}${r.active ? '' : ' <span class="text-xs text-slate-500">(retired)</span>'}</td><td class="text-right whitespace-nowrap">${cmpMoney(r.amount, r.currency)}</td>
+  $('#cmItemRows').innerHTML = CMP_INV.items.map(r => `<tr class="border-b last:border-0 ${r.active ? '' : 'opacity-60'}"><td class="py-2 font-medium">${esc(r.name)}${r.active ? '' : ' <span class="text-xs text-slate-500">(retired)</span>'}</td><td class="text-right whitespace-nowrap">${(r.prices && r.prices.length ? r.prices : [{ amount: r.amount, lastOn: '' }]).map(p => `<div>${cmpMoney(p.amount, r.currency)}${p.lastOn ? ` <span class="text-xs text-slate-500">${esc(cmpDay(p.lastOn))}</span>` : ''}</div>`).join('')}</td>
     <td>${r.allCountries ? 'All countries' : r.countries.map(c => `${cmpCountry(c).flag} ${esc(c)}`).join(' ')}</td>
     <td class="text-right whitespace-nowrap"><button class="needs-write text-emerald-700 underline mr-2" onclick="cmpItemForm('${r.id}')">Edit</button><button class="needs-write ${r.active ? 'text-red-600' : 'text-emerald-700'} underline" onclick="cmpItemActive('${r.id}', ${!r.active})">${r.active ? 'Retire' : 'Use again'}</button></td></tr>`).join('')
     || `<tr><td colspan="4">${cmpEmpty('No items yet. Add one here, or keep a line typed on an invoice.')}</td></tr>`;
@@ -682,6 +718,13 @@ function cmpItemForm(id) {
 async function cmpItemSave() {
   const f = $('#cmItForm'), id = CMP_INV.itemEdit;
   const body = { name: f.name.value, currency: f.currency.value, amount: f.amount.value, allCountries: f.allCountries.checked, countries: [...$('#citCountries').selectedOptions].map(o => o.value) };
+  // the same item in that currency (the CA: warned, then its new price is kept beside the earlier ones, each with its date)
+  const known = !id && CMP_INV.items.find(x => x.currency === body.currency && CmpRules.keyOf(x.name) === CmpRules.keyOf(body.name));
+  if (known) {
+    if (!confirm(`"${known.name}" is already there at ${(known.prices && known.prices.length ? known.prices : [{ amount: known.amount }]).map(p => cmpMoney(p.amount, known.currency)).join(', ')}.\n\nKeep ${cmpMoney(Number(body.amount) || 0, body.currency)} as another price? (The earlier prices stay, each with its date.)`)) return;
+    body.addPrice = true;
+  }
+  if (id) { const r = CMP_INV.items.find(x => x.id === id); if (r && Number(body.amount) !== r.amount && !confirm(`${r.name} changes from ${cmpMoney(r.amount, r.currency)} to ${cmpMoney(Number(body.amount) || 0, body.currency)}.\n\nThe earlier price stays in its list of prices, with its date. Continue?`)) return; }
   try { await api(id ? `/api/cmp/items/${id}` : '/api/cmp/items', { method: id ? 'PUT' : 'POST', body }); cmpCloseModal(); toast('Item saved', true); cmpLoadItems(); } catch (err) { toast(err.message); }
 }
 async function cmpItemActive(id, active) {
