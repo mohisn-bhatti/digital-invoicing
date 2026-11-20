@@ -1060,6 +1060,8 @@ model CmpObligation {
   // Set on each obligation (the CA: not one setting for the whole firm): when it turns amber, and whether the next period is prepared by itself
   amberDays       Int             @default(7)
   autoNext        Boolean         @default(true)
+  // locked by the user once everything about it is entered (the CA, 20 Nov 2026): no change, archive or delete until unlocked
+  locked          Boolean         @default(false)
   notes           String          @default("")
   assignedToId    String? // who does this obligation; if nobody, the client's person (SRS 10)
   archivedAt      DateTime?
@@ -1098,6 +1100,8 @@ model CmpOccurrence {
   dataCollectedOn DateTime?     @db.Date
   dataCollectedBy String?
   completedOn     DateTime?     @db.Date
+  dataNote        String        @default("") // a note with the data collection (the CA: if there is any)
+  taskNote        String        @default("") // a note with the task done
   overdueNotedAt  DateTime? // when the activity log noted it overdue (once)
   notes           String        @default("")
   createdAt       DateTime      @default(now())
@@ -1271,6 +1275,7 @@ model CmpInvoiceType {
   tenantId  String
   tenant    Tenant   @relation(fields: [tenantId], references: [id])
   name      String
+  kind      String   @default("INVOICE") // INVOICE or RECEIPT (the CA: invoice formats and receipt formats, each per country)
   country   String
   isDefault Boolean  @default(false)
   layout    Json     @default("{}")
@@ -1405,6 +1410,9 @@ model CmpReceipt {
   settlementNote String       @default("")
   // paid from the client's credit: [{ creditId, amount }] (given back if the receipt is voided)
   creditUsed     Json         @default("[]")
+  // the receipt format it is printed with (the CA: country sensitive), frozen when it is made
+  typeId         String?
+  typeSnapshot   Json?
   messages       CmpMessage[]
 
   @@unique([tenantId, number])

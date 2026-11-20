@@ -124,7 +124,7 @@ async function cmpTemplateDelete(id) {
 CMP_PAGES.push({
   id: 'cm-fields',
   html: () => `<div class="bg-white rounded-xl shadow p-4">
-    <div class="flex flex-wrap items-start justify-between gap-3 mb-3"><div><h2 class="font-semibold">Custom fields</h2>
+    <div class="flex flex-wrap items-start justify-between gap-3 mb-3"><div><h2 class="font-semibold">Additional information</h2>
       <p class="text-xs text-slate-500 max-w-2xl">Extra client details, each for the countries you choose. A field shows on every client of those countries (as "missing" until filled in) and never on clients of other countries. Its name can be used in templates in [brackets].</p></div>
       <label class="flex items-center gap-2 text-xs"><input type="checkbox" id="cmFldAll" onchange="cmpLoadFields()"> Show retired</label></div>
     <div id="cmFldNew"></div>
@@ -174,11 +174,40 @@ async function cmpFieldActive(id, active) {
   try { await api(`/api/cmp/fields/${id}`, { method: 'PUT', body: { active } }); cmpLoadFields(); } catch (err) { toast(err.message); }
 }
 
-/* ---------- settings, with the invoice beside them as it will look (the CA, 16 Nov 2026), and the invoice formats of each country ---------- */
+/* ---------- settings: the firm's clock, the reminder hour and its WhatsApp numbers (what is about invoices and receipts has its own page) ---------- */
 CMP_PAGES.push({
   id: 'cm-settings',
+  html: () => '<div id="cmSettings" class="bg-white rounded-xl shadow p-4 max-w-3xl"></div>',
+  enter: async () => {
+    let s;
+    try { s = await api('/api/cmp/settings'); } catch (err) { return toast(err.message); }
+    let zones = [];
+    try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = [s.timeZone]; }
+    if (!zones.includes(s.timeZone)) zones.unshift(s.timeZone);
+    const can = cmpCan('FULL');
+    $('#cmSettings').innerHTML = `<h2 class="font-semibold mb-3">Settings</h2>
+      <form id="cmGenForm" onsubmit="event.preventDefault(); cmpSettingsSave()" class="space-y-4">
+        <label><span>Your firm's time zone <span class="text-slate-400">— the times in the logs and lists</span></span><select name="timeZone" ${can ? '' : 'disabled'}>${zones.map(z => `<option value="${esc(z)}" ${z === s.timeZone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>
+        <label><span>Reminders come due at <span class="text-slate-400">— on each client's own clock</span></span><select name="reminderHour" ${can ? '' : 'disabled'}>${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === s.reminderHour ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select></label>
+        <p class="text-xs text-slate-500">When an obligation turns amber, and whether its next period is prepared by itself, is set on each obligation (its row in the obligations window). What your invoices and receipts look like is under <a href="#/cm-formats" class="underline text-emerald-700">Invoice and Receipt Format</a>.</p>
+        <h3 class="font-semibold pt-3 border-t">Your WhatsApp numbers <span class="text-slate-500 font-normal text-sm">— that messages go from</span></h3>
+        <p class="text-xs text-slate-500">WhatsApp always sends from the account that is open where the message opens. Add your business number and say how it is opened here:
+          with <b>WhatsApp Web</b>, log in to web.whatsapp.com with that number in this browser; with the <b>WhatsApp Business app</b> (on an Android phone it opens that app directly).
+          The send window then lets you pick the number, reminds you which account must be open, and the log keeps the number used.</p>
+        <div id="cmSenders" class="space-y-2"></div>
+        ${can ? '<button type="button" class="text-sm text-emerald-700 underline" onclick="cmpSenderRow()">+ Add a WhatsApp number</button>' : ''}
+        ${can ? '<div class="flex justify-end"><button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save settings</button></div>' : '<p class="text-xs text-slate-500">Only a user with full access changes these.</p>'}
+      </form>`;
+    (s.waSenders || []).forEach(x => cmpSenderRow(x, can));
+  },
+});
+
+/* ---------- Invoice and Receipt Format (the CA, 20 Nov 2026): the standard format, and the invoice formats and receipt formats of each
+   country (any number, one the default; extra information dragged anywhere on the page), with the document beside them as it is typed ---------- */
+CMP_PAGES.push({
+  id: 'cm-formats',
   html: () => `<div class="grid xl:grid-cols-[minmax(0,44rem)_minmax(0,1fr)] gap-4 items-start">
-    <div class="min-w-0 space-y-4"><div id="cmSettings" class="bg-white rounded-xl shadow p-4"></div><div id="cmTypes" class="bg-white rounded-xl shadow p-4"></div></div>
+    <div class="min-w-0 space-y-4"><div id="cmTypes" class="bg-white rounded-xl shadow p-4"></div><div id="cmFmtStd" class="bg-white rounded-xl shadow p-4"></div></div>
     <aside class="min-w-0 bg-white rounded-xl shadow p-4 xl:sticky xl:top-20">
       <div class="flex flex-wrap items-center justify-between gap-2 mb-2"><h2 class="font-semibold">How it looks <span id="cmSetPrevFor" class="text-sm font-normal text-slate-500"></span></h2>
         <div class="flex rounded-lg border overflow-hidden text-sm">${['INVOICE', 'RECEIPT'].map(k => `<button type="button" data-doc="${k}" class="cmSetDocBtn px-3 py-1.5" onclick="CMP_SET.doc = '${k}'; cmpSetPreview()">${k === 'INVOICE' ? 'Invoice' : 'Receipt'}</button>`).join('')}</div></div>
@@ -187,23 +216,10 @@ CMP_PAGES.push({
   enter: async () => {
     let s;
     try { [s] = await Promise.all([api('/api/cmp/settings'), cmpInvoiceTypes(null, true)]); } catch (err) { return toast(err.message); }
-    let zones = [];
-    try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = [s.timeZone]; }
-    if (!zones.includes(s.timeZone)) zones.unshift(s.timeZone);
     const can = cmpCan('FULL');
     CMP_SET.saved = s; CMP_SET.type = null; CMP_SET.doc = CMP_SET.doc || 'INVOICE';
-    $('#cmSettings').innerHTML = `<h2 class="font-semibold mb-3">Settings</h2>
-      <form id="cmSetForm" onsubmit="event.preventDefault(); cmpSettingsSave()" oninput="cmpSetPreviewSoon()" onchange="cmpSetPreviewSoon()" class="space-y-4">
-        <label><span>Your firm's time zone <span class="text-slate-400">— the times in the logs and lists</span></span><select name="timeZone" ${can ? '' : 'disabled'}>${zones.map(z => `<option value="${esc(z)}" ${z === s.timeZone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>
-        <label><span>Reminders come due at <span class="text-slate-400">— on each client's own clock</span></span><select name="reminderHour" ${can ? '' : 'disabled'}>${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === s.reminderHour ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select></label>
-        <p class="text-xs text-slate-500">When an obligation turns amber, and whether its next period is prepared by itself, is set on each obligation (Edit obligation).</p>
-        <h3 class="font-semibold pt-3 border-t">Your WhatsApp numbers <span class="text-slate-500 font-normal text-sm">— that messages go from</span></h3>
-        <p class="text-xs text-slate-500">WhatsApp always sends from the account that is open where the message opens. Add your business number and say how it is opened here:
-          with <b>WhatsApp Web</b>, log in to web.whatsapp.com with that number in this browser; with the <b>WhatsApp Business app</b> (on an Android phone it opens that app directly).
-          The send window then lets you pick the number, reminds you which account must be open, and the log keeps the number used.</p>
-        <div id="cmSenders" class="space-y-2"></div>
-        ${can ? '<button type="button" class="text-sm text-emerald-700 underline" onclick="cmpSenderRow()">+ Add a WhatsApp number</button>' : ''}
-        <h3 class="font-semibold pt-3 border-t">On your invoices and receipts <span class="text-slate-500 font-normal text-sm">— the standard format; see it on the right as you type</span></h3>
+    $('#cmFmtStd').innerHTML = `<h2 class="font-semibold">The standard format <span class="text-slate-500 font-normal text-sm">— every invoice and receipt, unless a format of its country says otherwise</span></h2>
+      <form id="cmSetForm" onsubmit="event.preventDefault(); cmpFmtStdSave()" oninput="cmpSetPreviewSoon()" onchange="cmpSetPreviewSoon()" class="space-y-4 mt-3">
         <div class="grid sm:grid-cols-2 gap-3">
           <div class="sm:col-span-2"><span class="block text-sm font-medium text-slate-700 mb-1">Logo <span class="text-slate-400 font-normal">(PNG or JPEG; shown at the top left)</span></span>
             <div class="flex flex-wrap items-center gap-3"><div id="cmLogoBox" class="h-16 min-w-[4rem] border rounded-lg bg-slate-50 flex items-center justify-center p-1">${s.logo ? `<img src="${esc(s.logo)}" alt="Logo" class="max-h-14 max-w-[12rem]">` : '<span class="text-xs text-slate-400 px-2">No logo</span>'}</div>
@@ -211,7 +227,7 @@ CMP_PAGES.push({
                 <button type="button" class="text-sm text-red-600 underline" onclick="CMP_SET.logo = ''; $('#cmLogoBox').innerHTML = '<span class=&quot;text-xs text-slate-400 px-2&quot;>No logo</span>'; cmpSetPreview()">Remove</button>` : ''}</div></div>
           <label class="sm:col-span-2"><span>Header <span class="text-slate-400">(a line or two across the top, e.g. "Chartered Accountants · Tax Advisors")</span></span><textarea name="invoiceHeader" rows="2" maxlength="300" ${can ? '' : 'disabled'}>${esc(s.invoiceHeader || '')}</textarea></label>
           <div class="sm:col-span-2 border rounded-lg p-3 space-y-2"><span class="block text-sm font-medium text-slate-700">Top of invoices and receipts</span>
-            <label class="flex items-center gap-2 text-sm"><input type="radio" name="headerStyle" value="LOGO" ${s.headerStyle !== 'LETTERHEAD' ? 'checked' : ''} ${can ? '' : 'disabled'}> The logo, the header line and the firm's details (above)</label>
+            <label class="flex items-center gap-2 text-sm"><input type="radio" name="headerStyle" value="LOGO" ${s.headerStyle !== 'LETTERHEAD' ? 'checked' : ''} ${can ? '' : 'disabled'}> The logo, the header line and the firm's details (below)</label>
             <label class="flex items-center gap-2 text-sm"><input type="radio" name="headerStyle" value="LETTERHEAD" ${s.headerStyle === 'LETTERHEAD' ? 'checked' : ''} ${can ? '' : 'disabled'}> A full letterhead picture across the top (your letterhead already shows the firm's name and address)</label>
             <div class="flex flex-wrap items-center gap-3"><div id="cmLhBox" class="min-h-[3rem] w-full max-w-md border rounded-lg bg-slate-50 flex items-center justify-center p-1">${s.letterhead ? `<img src="${esc(s.letterhead)}" alt="Letterhead" class="max-h-24 w-full object-contain">` : '<span class="text-xs text-slate-400 px-2">No letterhead picture</span>'}</div>
               ${can ? `<label class="px-3 min-h-[2.5rem] inline-flex items-center rounded-lg text-sm border bg-white hover:border-emerald-600 cursor-pointer">Choose the letterhead…<input type="file" accept="image/png,image/jpeg,image/webp" class="hidden" onchange="cmpLetterheadPick(this)"></label>
@@ -228,15 +244,14 @@ CMP_PAGES.push({
           <label><span>Receipt numbers</span><input name="receiptFormat" maxlength="40" value="${esc(s.receiptFormat)}" ${can ? '' : 'disabled'}></label>
         </div>
         <p class="text-xs text-slate-500">In the number formats, {NNNN} is the running number and {YYYY}, {YY}, {MM} the date, e.g. INV-{YYYY}-{NNNN} → INV-2027-0042. Numbers are taken when an invoice is issued and never reused.</p>
-        ${can ? '<div class="flex justify-end"><button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save settings</button></div>' : '<p class="text-xs text-slate-500">Only a user with full access changes these.</p>'}
+        ${can ? '<div class="flex justify-end"><button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save the standard format</button></div>' : '<p class="text-xs text-slate-500">Only a user with full access changes these.</p>'}
       </form>`;
-    (s.waSenders || []).forEach(x => cmpSenderRow(x, can));
     CMP_SET.logo = s.logo || ''; CMP_SET.letterhead = s.letterhead || '';
     cmpTypesList();
     cmpSetPreview();
   },
 });
-// The settings as they are typed (the preview follows them before they are saved)
+// The standard format as it is typed (the preview follows it before it is saved)
 function cmpSetNow() {
   const f = document.getElementById('cmSetForm'); if (!f) return CMP.settings || {};
   const style = (f.querySelector('input[name="headerStyle"]:checked') || {}).value || 'LOGO';
@@ -254,58 +269,68 @@ function cmpSampleInvoice(country) {
 function cmpSetPreviewSoon() { clearTimeout(CMP_SET.prevTimer); CMP_SET.prevTimer = setTimeout(cmpSetPreview, 150); }
 function cmpSetPreview() {
   const box = document.getElementById('cmSetPrev'); if (!box) return;
-  const t = CMP_SET.type, country = t ? t.country : ((CMP_INV.types || [])[0] || {}).country || 'AE', inv = cmpSampleInvoice(country), receipt = CMP_SET.doc === 'RECEIPT';
-  const rc = { number: 'RCT-2026-0007', receivedOn: inv.issueDate, amount: 2020, method: 'BANK', reference: 'TT-1234' };
+  const t = CMP_SET.type, country = t ? t.country : ((CMP_INV.types || [])[0] || {}).country || 'AE', inv = cmpSampleInvoice(country);
+  if (t) CMP_SET.doc = t.kind === 'RECEIPT' ? 'RECEIPT' : 'INVOICE'; // (a receipt format shows a receipt)
+  const receipt = CMP_SET.doc === 'RECEIPT', rc = { number: 'RCT-2026-0007', receivedOn: inv.issueDate, amount: 2020, method: 'BANK', reference: 'TT-1234' };
   box.innerHTML = cmpInvoiceDoc(receipt ? { ...inv, received: 2020, outstanding: 0 } : inv, cmpSetNow(), receipt ? rc : null, { layout: t ? t.layout : {}, edit: Boolean(t) });
   cmpFitDocs(box.parentElement.parentElement);
   document.querySelectorAll('.cmSetDocBtn').forEach(b => { const on = b.dataset.doc === CMP_SET.doc; b.classList.toggle('bg-emerald-700', on); b.classList.toggle('text-white', on); });
-  $('#cmSetPrevFor').textContent = t ? `— ${t.name || 'new format'} (${cmpCountry(t.country).name})` : '— the standard format';
-  $('#cmSetPrevNote').textContent = t ? 'Drag the extra information (dashed boxes) to place it anywhere; set it exactly with the position and the numbers on the left. A sample client and sums are shown.' : 'A sample client and sums are shown. Choose an invoice format below to see it, or add one for a country.';
+  $('#cmSetPrevFor').textContent = t ? `— ${t.name || `new ${t.kind === 'RECEIPT' ? 'receipt' : 'invoice'} format`} (${cmpCountry(t.country).name})` : '— the standard format';
+  $('#cmSetPrevNote').textContent = t ? 'Drag the extra information (dashed boxes) to place it anywhere; set it exactly with the place and the numbers on the left. A sample client and sums are shown.' : 'A sample client and sums are shown. Choose a format on the left to see it, or add one for a country.';
   if (t) cmpDragBind(box);
 }
 
-/* ---------- invoice formats (the CA): country sensitive, several per country, chosen when the invoice is made ---------- */
+/* ---------- the formats of each country: invoice formats and receipt formats, searched as you type ---------- */
 function cmpTypesList() {
   const box = document.getElementById('cmTypes'); if (!box) return;
-  const can = cmpCan('FULL'), list = CMP_INV.types || [], by = new Map();
-  for (const t of list) { if (!by.has(t.country)) by.set(t.country, []); by.get(t.country).push(t); }
-  box.innerHTML = `<div class="flex flex-wrap items-start justify-between gap-2 mb-2"><div><h2 class="font-semibold">Invoice formats by country</h2>
-      <p class="text-xs text-slate-500 max-w-xl">One or more for each country, e.g. "UAE - Dubai" and "UAE - Sharjah". An invoice of a client of that country offers them (its default first). Each has its titles, the firm's details for it, and as much extra information as you like, placed anywhere on the page.</p></div>
-      ${can ? cmpBtn('+ Add an invoice format', 'cmpTypeEdit()', 'primary', 'needs-write') : ''}</div>
-    ${by.size ? [...by.entries()].map(([cc, ts]) => `<div class="mt-2"><div class="text-xs font-semibold text-slate-600 mb-1">${cmpFlagName(cc)}</div>${ts.map(t => `<div class="flex flex-wrap items-center justify-between gap-2 border rounded-lg px-3 py-2 mb-1 ${t.active ? '' : 'opacity-60'} ${CMP_SET.type && CMP_SET.type.id === t.id ? 'ring-2 ring-emerald-300' : ''}">
-      <span class="text-sm"><b>${esc(t.name)}</b>${t.isDefault ? ' <span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">default</span>' : ''}${t.active ? '' : ' <span class="text-xs text-slate-500">(retired)</span>'} <span class="text-xs text-slate-500">· ${esc(t.layout.invoiceTitle || 'INVOICE')} · ${(t.layout.blocks || []).length} extra</span></span>
+  const can = cmpCan('FULL'), q = CmpRules.keyOf(CMP_SET.typeQ || '');
+  const hit = t => !q || [t.name, cmpCountry(t.country).name, t.country, t.layout.invoiceTitle, t.layout.receiptTitle, t.kind === 'RECEIPT' ? 'receipt' : 'invoice'].some(x => CmpRules.keyOf(x).includes(q));
+  const group = kind => {
+    const list = (CMP_INV.types || []).filter(t => (t.kind || 'INVOICE') === kind && hit(t)), by = new Map();
+    for (const t of list) { if (!by.has(t.country)) by.set(t.country, []); by.get(t.country).push(t); }
+    return by.size ? [...by.entries()].map(([cc, ts]) => `<div class="mt-2"><div class="text-xs font-semibold text-slate-600 mb-1">${cmpFlagName(cc)}</div>${ts.map(t => `<div class="flex flex-wrap items-center justify-between gap-2 border rounded-lg px-3 py-2 mb-1 ${t.active ? '' : 'opacity-60'} ${CMP_SET.type && CMP_SET.type.id === t.id ? 'ring-2 ring-emerald-300' : ''}">
+      <span class="text-sm"><b>${esc(t.name)}</b>${t.isDefault ? ' <span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">default</span>' : ''}${t.active ? '' : ' <span class="text-xs text-slate-500">(retired)</span>'} <span class="text-xs text-slate-500">· ${esc((kind === 'RECEIPT' ? t.layout.receiptTitle : t.layout.invoiceTitle) || kind)} · ${(t.layout.blocks || []).length} extra</span></span>
       <span class="flex gap-2">${cmpBtn(can ? 'Edit' : 'See', `cmpTypeEdit('${t.id}')`)}${can ? cmpBtn(t.active ? 'Retire' : 'Use again', `cmpTypeActive('${t.id}', ${!t.active})`, t.active ? 'danger' : 'plain', 'needs-write') : ''}</span></div>`).join('')}</div>`).join('')
-      : cmpEmpty('No formats yet: every invoice uses the standard one (the settings above).')}
+      : `<p class="text-xs text-slate-500 mt-1">${q ? 'None matches.' : `None yet: every ${kind === 'RECEIPT' ? 'receipt' : 'invoice'} uses the standard format (below).`}</p>`;
+  };
+  box.innerHTML = `<div class="flex flex-wrap items-start justify-between gap-2"><div><h2 class="font-semibold">Invoice and receipt formats by country</h2>
+      <p class="text-xs text-slate-500 max-w-xl">Any number for each country, e.g. "UAE - Dubai" and "UAE - Sharjah", one of them the default. An invoice (or a receipt) of a client of that country offers them, its default first. Each has its title, the firm's details for it, and as much extra information as you like, placed anywhere on the page.</p></div>
+      ${can ? `<div class="flex flex-wrap gap-2">${cmpBtn('+ Add Invoice Format', "cmpTypeEdit(null, 'INVOICE')", 'primary', 'needs-write')}${cmpBtn('+ Add Receipt Format', "cmpTypeEdit(null, 'RECEIPT')", 'primary', 'needs-write')}</div>` : ''}</div>
+    <label class="block mt-3"><span class="sr-only">Search</span><input type="search" placeholder="Search: name, country, title, invoice or receipt" value="${esc(CMP_SET.typeQ || '')}" oninput="CMP_SET.typeQ = this.value; clearTimeout(CMP_SET.typeT); CMP_SET.typeT = setTimeout(() => { cmpTypesList(); const i = document.querySelector('#cmTypes input[type=search]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250)"></label>
+    <h3 class="text-sm font-semibold mt-4">Invoice formats</h3>${group('INVOICE')}
+    <h3 class="text-sm font-semibold mt-4">Receipt formats</h3>${group('RECEIPT')}
     <div id="cmTypeEdit" class="mt-3"></div>`;
 }
 const CMP_POS = [['tl', 'Top left'], ['tc', 'Top centre'], ['tr', 'Top right'], ['ml', 'Middle left'], ['mc', 'Centre'], ['mr', 'Middle right'], ['bl', 'Bottom left'], ['bc', 'Bottom centre'], ['br', 'Bottom right']];
-function cmpTypeEdit(id) {
+function cmpTypeEdit(id, kind = 'INVOICE') {
   const t = id ? (CMP_INV.types || []).find(x => x.id === id) : null, s = CMP_SET.saved || {};
-  CMP_SET.type = t ? JSON.parse(JSON.stringify(t)) : { id: null, name: '', country: ((CMP_INV.types || [])[0] || {}).country || 'AE', isDefault: !(CMP_INV.types || []).length, active: true,
+  kind = t ? t.kind || 'INVOICE' : kind;
+  const first = !(CMP_INV.types || []).some(x => (x.kind || 'INVOICE') === kind);
+  CMP_SET.type = t ? JSON.parse(JSON.stringify(t)) : { id: null, name: '', kind, country: ((CMP_INV.types || [])[0] || {}).country || 'AE', isDefault: first, active: true,
     layout: { invoiceTitle: 'TAX INVOICE', receiptTitle: 'RECEIPT', headerStyle: 'DEFAULT', showBank: true, showClientTaxNo: true, taxLabel: 'TRN', blocks: [] } };
-  const L = CMP_SET.type.layout, can = cmpCan('FULL'), dis = can ? '' : 'disabled';
+  const L = CMP_SET.type.layout, can = cmpCan('FULL'), dis = can ? '' : 'disabled', inv = kind === 'INVOICE';
   L.blocks = L.blocks || [];
   cmpTypesList();
   const inp = (k, label, ph = '', max = 200) => `<label><span>${label}</span><input data-l="${k}" maxlength="${max}" value="${esc(L[k] || '')}" placeholder="${esc(ph)}" ${dis}></label>`;
   const area = (k, label, ph = '', max = 800) => `<label class="sm:col-span-2"><span>${label}</span><textarea data-l="${k}" rows="2" maxlength="${max}" placeholder="${esc(ph)}" ${dis}>${esc(L[k] || '')}</textarea></label>`;
   $('#cmTypeEdit').innerHTML = `<form id="cmTypeForm" onsubmit="event.preventDefault(); cmpTypeSave()" oninput="cmpTypeRead()" onchange="cmpTypeRead()" class="space-y-3 bg-slate-50 border rounded-lg p-3">
-      <h3 class="font-semibold">${t ? `Edit ${esc(t.name)}` : 'A new invoice format'}</h3>
+      <h3 class="font-semibold">${t ? `Edit ${esc(t.name)}` : `A new ${inv ? 'invoice' : 'receipt'} format`}</h3>
       <div class="grid sm:grid-cols-2 gap-3">
         <label><span>Name *</span><input name="name" required maxlength="60" placeholder="e.g. UAE - Dubai" value="${esc(CMP_SET.type.name)}" ${dis}></label>
         <label><span>Country *</span><select name="country" ${dis}>${cmpCountryOptions(CMP_SET.type.country)}</select></label>
-        <label class="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" name="isDefault" ${CMP_SET.type.isDefault ? 'checked' : ''} ${dis}> The default for this country (an invoice starts with it)</label>
-        ${inp('invoiceTitle', 'Invoice title', 'e.g. TAX INVOICE', 40)}${inp('receiptTitle', 'Receipt title', 'e.g. RECEIPT VOUCHER', 40)}
-        <label class="sm:col-span-2"><span>Top of the page</span><select data-l="headerStyle" ${dis}>${[['DEFAULT', 'As in the settings above'], ['LOGO', 'The logo, the header line and the firm\'s details'], ['LETTERHEAD', 'The letterhead picture (settings above)'], ['NONE', 'Only the title (e.g. on printed letterhead paper)']].map(([k, v]) => `<option value="${k}" ${L.headerStyle === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-        ${inp('firmName', 'Firm name on this format', s.firmName || 'as in the settings')}${inp('taxLabel', 'Tax number called', 'e.g. TRN', 40)}
-        ${area('firmAddress', 'Address on this format', s.firmAddress || 'as in the settings', 500)}${inp('taxNo', 'Tax registration number on this format', s.firmTaxNo || 'as in the settings', 60)}
-        <div class="space-y-1 text-sm pt-5"><label class="flex items-center gap-2"><input type="checkbox" data-l="showBank" ${L.showBank !== false ? 'checked' : ''} ${dis}> Show the bank details</label>
+        <label class="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" name="isDefault" ${CMP_SET.type.isDefault ? 'checked' : ''} ${dis}> The default for this country (${inv ? 'an invoice' : 'a receipt'} starts with it)</label>
+        ${inv ? inp('invoiceTitle', 'Invoice title', 'e.g. TAX INVOICE', 40) : inp('receiptTitle', 'Receipt title', 'e.g. RECEIPT VOUCHER', 40)}
+        <label><span>Top of the page</span><select data-l="headerStyle" ${dis}>${[['DEFAULT', 'As in the standard format'], ['LOGO', 'The logo, the header line and the firm\'s details'], ['LETTERHEAD', 'The letterhead picture (standard format)'], ['NONE', 'Only the title (printed letterhead paper)']].map(([k, v]) => `<option value="${k}" ${L.headerStyle === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        ${inp('firmName', 'Firm name on this format', s.firmName || 'as in the standard format')}${inp('taxLabel', 'Tax number called', 'e.g. TRN', 40)}
+        ${area('firmAddress', 'Address on this format', s.firmAddress || 'as in the standard format', 500)}${inp('taxNo', 'Tax registration number on this format', s.firmTaxNo || 'as in the standard format', 60)}
+        <div class="space-y-1 text-sm pt-5">${inv ? `<label class="flex items-center gap-2"><input type="checkbox" data-l="showBank" ${L.showBank !== false ? 'checked' : ''} ${dis}> Show the bank details</label>` : ''}
           <label class="flex items-center gap-2"><input type="checkbox" data-l="showClientTaxNo" ${L.showClientTaxNo !== false ? 'checked' : ''} ${dis}> Show the client's registration no.</label></div>
-        ${area('bankDetails', 'Bank details on this format', s.bankDetails || 'as in the settings')}${area('footer', 'Footer on this format', s.invoiceFooter || 'as in the settings', 500)}
-        ${area('receiptNote', 'A note on the receipts', 'e.g. This receipt is valid subject to the realisation of the cheque.', 500)}
+        ${inv ? area('bankDetails', 'Bank details on this format', s.bankDetails || 'as in the standard format') : area('receiptNote', 'A note on the receipts', 'e.g. This receipt is valid subject to the realisation of the cheque.', 500)}
+        ${area('footer', 'Footer on this format', s.invoiceFooter || 'as in the standard format', 500)}
       </div>
       <div><div class="flex items-center justify-between gap-2"><h4 class="text-sm font-semibold">Extra information <span class="font-normal text-slate-500">— anything you like, placed anywhere: drag it on the preview</span></h4>
         ${can ? `<button type="button" class="text-sm text-emerald-700 underline" onclick="cmpBlockAdd()">+ Add information</button>` : ''}</div>
-        <p class="text-xs text-slate-500">Placeholders such as [Client Name], [Invoice Number], [Invoice Amount] or [Firm Name] are filled in on each invoice.</p>
+        <p class="text-xs text-slate-500">Placeholders such as [Client Name], [Invoice Number], [Invoice Amount]${inv ? '' : ', [Receipt Number], [Receipt Amount]'} or [Firm Name] are filled in on each ${inv ? 'invoice' : 'receipt'}.</p>
         <div id="cmBlocks" class="space-y-2 mt-2"></div></div>
       <div class="flex justify-end gap-2">${cmpBtn('Close', "CMP_SET.type = null; cmpTypesList(); cmpSetPreview()")}${can ? '<button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save format</button>' : ''}</div></form>`;
   cmpBlocksDraw();
@@ -313,11 +338,12 @@ function cmpTypeEdit(id) {
   $('#cmTypeEdit').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function cmpBlocksDraw() {
-  const L = CMP_SET.type.layout, dis = cmpCan('FULL') ? '' : 'disabled', num = (b, k, label, min, max, step = 1) => `<label class="w-20"><span class="text-xs">${label}</span><input type="number" data-b="${k}" min="${min}" max="${max}" step="${step}" value="${b[k]}" ${dis}></label>`;
+  const L = CMP_SET.type.layout, kind = CMP_SET.type.kind || 'INVOICE', dis = cmpCan('FULL') ? '' : 'disabled', num = (b, k, label, min, max, step = 1) => `<label class="w-20"><span class="text-xs">${label}</span><input type="number" data-b="${k}" min="${min}" max="${max}" step="${step}" value="${b[k]}" ${dis}></label>`;
+  // (an invoice format made before kept the extra information of its receipts too: it shows here with "on the receipt")
   $('#cmBlocks').innerHTML = L.blocks.length ? L.blocks.map((b, i) => `<div class="cmBlock border rounded-lg bg-white p-2 space-y-2" data-i="${i}">
       <textarea data-b="text" rows="2" maxlength="500" placeholder="e.g. Trade License No. 123456 · Stamp and signature" ${dis}>${esc(b.text)}</textarea>
       <div class="flex flex-wrap items-end gap-2">
-        <label class="w-28"><span class="text-xs">On the</span><select data-b="doc" ${dis}><option value="INVOICE" ${b.doc !== 'RECEIPT' ? 'selected' : ''}>Invoice</option><option value="RECEIPT" ${b.doc === 'RECEIPT' ? 'selected' : ''}>Receipt</option></select></label>
+        ${(b.doc || 'INVOICE') !== kind ? `<span class="text-xs text-amber-800 min-h-[2.5rem] flex items-center">on the ${b.doc === 'RECEIPT' ? 'receipt' : 'invoice'}</span>` : ''}
         <label class="w-36"><span class="text-xs">Place it</span><select data-pos ${dis}><option value="">…</option>${CMP_POS.map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
         ${num(b, 'x', 'From left %', 0, 100, 0.5)}${num(b, 'y', 'From top %', 0, 100, 0.5)}${num(b, 'w', 'Width %', 5, 100)}${num(b, 'size', 'Text size', 6, 32)}
         <label class="w-24"><span class="text-xs">Text</span><select data-b="align" ${dis}>${['left', 'center', 'right'].map(a => `<option value="${a}" ${b.align === a ? 'selected' : ''}>${a === 'center' ? 'centred' : a}</option>`).join('')}</select></label>
@@ -328,7 +354,7 @@ function cmpBlocksDraw() {
 }
 function cmpBlockAdd() {
   const L = CMP_SET.type.layout;
-  L.blocks.push({ id: 'b' + Math.random().toString(36).slice(2, 9), doc: CMP_SET.doc === 'RECEIPT' ? 'RECEIPT' : 'INVOICE', text: 'Your text here', x: 5, y: 80, w: 40, size: 11, bold: false, align: 'left', border: false });
+  L.blocks.push({ id: 'b' + Math.random().toString(36).slice(2, 9), doc: CMP_SET.type.kind === 'RECEIPT' ? 'RECEIPT' : 'INVOICE', text: 'Your text here', x: 5, y: 80, w: 40, size: 11, bold: false, align: 'left', border: false });
   cmpBlocksDraw(); cmpSetPreview();
 }
 // What is typed in the format's form, into the format being edited (then the preview)
@@ -376,9 +402,9 @@ async function cmpTypeSave() {
   cmpTypeRead();
   const t = CMP_SET.type;
   try {
-    const saved = await api(t.id ? `/api/cmp/invoice-types/${t.id}` : '/api/cmp/invoice-types', { method: t.id ? 'PUT' : 'POST', body: { name: t.name, country: t.country, isDefault: t.isDefault, layout: t.layout } });
+    const saved = await api(t.id ? `/api/cmp/invoice-types/${t.id}` : '/api/cmp/invoice-types', { method: t.id ? 'PUT' : 'POST', body: { name: t.name, kind: t.kind || 'INVOICE', country: t.country, isDefault: t.isDefault, layout: t.layout } });
     await cmpInvoiceTypes(null, true);
-    toast(`Invoice format "${saved.name}" saved`, true);
+    toast(`${saved.kind === 'RECEIPT' ? 'Receipt' : 'Invoice'} format "${saved.name}" saved`, true);
     cmpTypeEdit(saved.id);
   } catch (err) { toast(err.message); }
 }
@@ -442,15 +468,25 @@ function cmpSenderRow(x = { label: 'Business WhatsApp', phone: '', open: 'WEB', 
     ${can ? '<button type="button" class="px-2 min-h-[2.5rem] text-red-600" onclick="this.closest(\'.cmSender\').remove()" aria-label="Remove">✕</button>' : ''}</div>`);
 }
 async function cmpSettingsSave() {
-  const f = $('#cmSetForm');
+  const f = $('#cmGenForm');
   try {
-    const style = (f.querySelector('input[name="headerStyle"]:checked') || {}).value || 'LOGO';
-    if (style === 'LETTERHEAD' && !CMP_SET.letterhead) return toast('Choose the letterhead picture first, or keep the logo and header line.');
-    CMP.settings = await api('/api/cmp/settings', { method: 'PUT', body: { timeZone: f.timeZone.value, reminderHour: Number(f.reminderHour.value), logo: CMP_SET.logo, letterhead: CMP_SET.letterhead, headerStyle: style,
-      ...Object.fromEntries(['firmName', 'firmAddress', 'firmPhone', 'firmEmail', 'firmTaxNo', 'bankDetails', 'invoiceFooter', 'invoiceHeader', 'invoiceFormat', 'receiptFormat'].map(k => [k, f[k].value])),
+    CMP.settings = await api('/api/cmp/settings', { method: 'PUT', body: { timeZone: f.timeZone.value, reminderHour: Number(f.reminderHour.value),
       waSenders: [...document.querySelectorAll('#cmSenders .cmSender')].map(r => ({ id: r.dataset.id || undefined, label: r.querySelector('.snLabel').value, phone: r.querySelector('.snPhone').value, open: r.querySelector('.snOpen').value, isDefault: r.querySelector('.snDefault').checked })) } });
     if (CMP.me) CMP.me.settings = CMP.settings;
     PAGE_ENTER['cm-settings']();
     toast('Settings saved', true);
+  } catch (err) { toast(err.message); }
+}
+// The standard format of invoices and receipts (Invoice and Receipt Format)
+async function cmpFmtStdSave() {
+  const f = $('#cmSetForm');
+  try {
+    const style = (f.querySelector('input[name="headerStyle"]:checked') || {}).value || 'LOGO';
+    if (style === 'LETTERHEAD' && !CMP_SET.letterhead) return toast('Choose the letterhead picture first, or keep the logo and header line.');
+    CMP.settings = await api('/api/cmp/settings', { method: 'PUT', body: { logo: CMP_SET.logo, letterhead: CMP_SET.letterhead, headerStyle: style,
+      ...Object.fromEntries(['firmName', 'firmAddress', 'firmPhone', 'firmEmail', 'firmTaxNo', 'bankDetails', 'invoiceFooter', 'invoiceHeader', 'invoiceFormat', 'receiptFormat'].map(k => [k, f[k].value])) } });
+    if (CMP.me) CMP.me.settings = CMP.settings;
+    CMP_SET.saved = CMP.settings;
+    toast('The standard format is saved', true); cmpSetPreview();
   } catch (err) { toast(err.message); }
 }
