@@ -251,6 +251,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     // the same route() so each still names its permission
     svc.notify.registerRoutes({ route, can, base, HttpError, NO_PERM, prisma });
     svc.reportsCatalog.registerRoutes({ route, can, base, HttpError, NO_PERM, prisma });
+    // the Dashboard (the CA's dashboard SRS): it reads only, it writes nothing
+    if (svc.dashboard) svc.dashboard.registerRoutes({ route, can });
 
     return routes;
 }

@@ -516,6 +516,12 @@ function createObligations({ prisma, audit, common, now }) {
 
     // The obligations list: one row per year, with filters (SRS 10). status: UPCOMING, PERIOD_CLOSED, DATA_COLLECTED, FILED, PAID, COMPLETED,
     // OVERDUE, OPEN (everything not completed, the default), CONFIRM (dates to confirm) or ALL
+    // the obligations of one name, written the same way (dots, case and repeated spaces do not count), archived ones too
+    async function idsByName(tenantId, name) {
+        const key = R.keyOf(V.line(name, 120, 'Obligation'));
+        const all = await prisma.cmpObligation.findMany({ where: { tenantId }, select: { id: true, name: true }, take: 50000 });
+        return all.filter(o => R.keyOf(o.name) === key).map(o => o.id);
+    }
     async function listOccurrences(ctx, q = {}) {
         const at = now(), status = String(q.status || 'OPEN').toUpperCase();
         const where = { tenantId: ctx.tenantId };
@@ -529,6 +535,9 @@ function createObligations({ prisma, audit, common, now }) {
             DATA_COLLECTED: { stage: 'DATA_COLLECTED', dueAt: { gt: at } }, FILED: { stage: 'FILED', dueAt: { gt: at } }, PAID: { stage: 'PAID', dueAt: { gt: at } },
             PERIOD_CLOSED: { stage: 'OPEN', periodEndAt: { lte: at }, dueAt: { gt: at } }, UPCOMING: { stage: 'OPEN', periodEndAt: { gt: at } },
             CONFIRM: { datesConfirmed: false, stage: { not: 'COMPLETED' } }, PLANNED: {},
+            // the Dashboard's drill-downs (the CA, 24 Nov 2026): data still to collect; the task open (data in, not completed); open and
+            // not past its due date ("due in the next days": never the planned periods)
+            DATA_PENDING: { stage: 'OPEN' }, TASK_PENDING: { stage: { in: ['DATA_COLLECTED', 'FILED', 'PAID'] } }, OPEN_NOT_DUE: { stage: { not: 'COMPLETED' }, dueAt: { gt: at } },
         };
         if (!byStatus[status]) throw bad('Unknown status.');
         AND.push(byStatus[status]);
@@ -540,6 +549,9 @@ function createObligations({ prisma, audit, common, now }) {
             const who = common.assigneeFilter(q.assignee, ctx.userId);
             AND.push(who === null ? { obligation: { assignedToId: null, client: { assignedToId: null } } } : { OR: [{ obligation: { assignedToId: who } }, { obligation: { assignedToId: null, client: { assignedToId: who } } }] });
         }
+        // one obligation by its name (the Dashboard's Obligation filter): written the same way, whatever the dots, case or spaces
+        const obIds = q.obligation ? await idsByName(ctx.tenantId, q.obligation) : null;
+        if (obIds) AND.push({ obligationId: { in: obIds } });
         const from = q.from ? V.day(q.from, 'From') : null, to = q.to ? V.day(q.to, 'To') : null;
         if (from) AND.push({ dueDate: { gte: dateOf(from) } });
         if (to) AND.push({ dueDate: { lte: dateOf(to) } });
@@ -583,6 +595,7 @@ function createObligations({ prisma, audit, common, now }) {
                 obAND.push(who === null ? { assignedToId: null, client: { assignedToId: null } } : { OR: [{ assignedToId: who }, { assignedToId: null, client: { assignedToId: who } }] });
             }
             if (search) for (const w of search) obAND.push({ OR: searchOf(w) });
+            if (obIds) obAND.push({ id: { in: obIds } });
             if (words.some(w => WORDS[w.toLowerCase()] && w.toLowerCase() !== 'locked')) obAND.push({ id: '-' }); // (a status word: no planned period has one)
             if (words.some(w => w.toLowerCase() === 'locked')) obAND.push({ locked: true });
             obWhere.AND = obAND;
@@ -638,7 +651,7 @@ function createObligations({ prisma, audit, common, now }) {
         return same;
     }
 
-    return { templateUpdate, linkView, sentMap, present, reminderList, get, forClient, ensureNext, create, createMany, update, setReminders, next, updateOccurrence, setStage, setDataCollected, complete, reopen, setBilling, setPattern, setArchived, remove, listOccurrences, suggest, billingOf };
+    return { templateUpdate, linkView, sentMap, present, reminderList, get, forClient, ensureNext, create, createMany, update, setReminders, next, updateOccurrence, setStage, setDataCollected, complete, reopen, setBilling, setPattern, setArchived, remove, listOccurrences, idsByName, suggest, billingOf };
 }
 
 module.exports = { createObligations, occData };

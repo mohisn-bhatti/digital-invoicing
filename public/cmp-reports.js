@@ -1,6 +1,6 @@
 'use strict';
-/* Compliance & Deadlines: the dashboard (SRS 11: upcoming in 7/30/60-day windows and overdue, with flags), the calendar of deadlines,
-   the reports (overdue list, upcoming deadlines, invoice aging) and printing any list as a PDF (SRS 13). */
+/* Compliance & Deadlines: printing any list as a PDF (SRS 13), and the table of periods the lists share. The Dashboard and its calendar
+   are in cmp-dashboard.js, the Reports page in cmp-report-catalog.js. */
 
 const CMP_REP = { days: 30, month: null, day: null, calCountry: '', calAssignee: '', report: 'obligations', repDays: 30, repStatus: 'ALL' };
 CMP_RESETS.push(() => Object.assign(CMP_REP, { days: 30, month: null, day: null, calCountry: '', calAssignee: '', report: 'obligations', repDays: 30, repStatus: 'ALL' }));
@@ -23,96 +23,3 @@ const cmpOccTable = (rows, id, { showDays = true } = {}) => `<div class="overflo
     <td>${esc(r.obligation.name)}</td><td class="whitespace-nowrap">${esc(CmpRules.periodName(r))}</td><td>${cmpOccChip(r)}</td>
     ${showDays ? `<td class="text-right ${r.view.overdue ? 'text-red-700 font-semibold' : ''}">${r.view.daysLeft}</td>` : ''}<td class="text-xs">${esc(cmpWho(r.assignedToId))}</td></tr>`).join('')
   || `<tr><td colspan="8">${cmpEmpty('Nothing here.')}</td></tr>`}</tbody></table></div>`;
-
-/* ---------- the dashboard ---------- */
-// (the CA, 20 Nov 2026: the calendar is on the Dashboard, under the summary; those who may not see the reports see the calendar only)
-CMP_PAGES.push({
-  id: 'cm-dashboard',
-  html: () => `<div class="space-y-4"><div id="cmDashSummary" class="space-y-4">
-    <div class="flex flex-wrap items-center justify-between gap-3"><div role="tablist" class="inline-flex bg-slate-100 rounded-xl p-1">
-      ${[7, 30, 60].map(n => `<button type="button" class="seg-btn cmDays" data-days="${n}" onclick="CMP_REP.days = ${n}; cmpLoadDashboard()">Next ${n} days</button>`).join('')}</div>
-      <div class="text-xs text-slate-500">Due dates are each client's own calendar day.</div></div>
-    <div id="cmDashCards" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3"></div>
-    <div class="grid xl:grid-cols-3 gap-4">
-      <section class="min-w-0 xl:col-span-2 bg-white rounded-xl shadow p-4"><h2 class="font-semibold mb-2 text-red-700">Overdue</h2><div id="cmDashOverdue"></div>
-        <h2 class="font-semibold mt-5 mb-2">Due in the window <span id="cmDashWin" class="text-slate-500 font-normal text-sm"></span></h2><div id="cmDashUpcoming"></div></section>
-      <div class="min-w-0 space-y-4"><section class="bg-white rounded-xl shadow p-4"><h2 class="font-semibold mb-2">By country</h2><div id="cmDashCountries"></div></section>
-        <section id="cmDashUnpaidBox" class="bg-white rounded-xl shadow p-4 hidden"><h2 class="font-semibold mb-2">Fees not paid yet</h2><div id="cmDashUnpaid"></div></section></div>
-    </div></div>
-    <section id="cmDashCalendar">${cmpCalendarHtml()}</section></div>`,
-  enter: () => {
-    $('#cmDashSummary').classList.toggle('hidden', !cmpCan('REPORTS'));
-    if (cmpCan('REPORTS')) cmpLoadDashboard();
-    $('#cmCalWho').innerHTML = cmpTeamFilter(); $('#cmCalWho').value = CMP_REP.calAssignee; cmpLoadCalendar();
-    if (CMP_REP.toCalendar) { CMP_REP.toCalendar = false; setTimeout(() => $('#cmDashCalendar').scrollIntoView({ behavior: 'smooth' }), 100); }
-  },
-});
-async function cmpLoadDashboard() {
-  document.querySelectorAll('.cmDays').forEach(b => b.classList.toggle('on', Number(b.dataset.days) === CMP_REP.days));
-  let d;
-  try { d = await api('/api/cmp/dashboard?days=' + CMP_REP.days); } catch (err) { $('#cmDashCards').innerHTML = cmpEmpty(esc(err.message)); return; }
-  const s = d.summary;
-  const card = (n, label, tone, go) => `<button type="button" onclick="${go}" class="text-left bg-white rounded-xl shadow p-4 border-l-4 ${tone} hover:ring-2 hover:ring-emerald-200"><div class="text-2xl font-semibold">${n}</div><div class="text-sm">${label}</div></button>`;
-  $('#cmDashCards').innerHTML = [
-    card(s.overdue, 'Overdue', 'border-red-600', "cmpOpenObligations('OVERDUE')"),
-    card(s.dueInWindow, `Due in ${d.days} days`, 'border-amber-500', "cmpOpenObligations('OPEN')"),
-    card(s.ready, 'Reminders to send', 'border-amber-400', "go('cm-notify')"),
-    card(s.confirm, 'Dates to confirm', 'border-sky-500', "cmpOpenObligations('CONFIRM')"),
-    card(s.completedThisMonth, 'Completed this month', 'border-emerald-500', "cmpOpenObligations('COMPLETED')"),
-    card(s.clients, 'Clients', 'border-slate-300', "go('cm-clients')"),
-  ].join('');
-  $('#cmDashWin').textContent = `(next ${d.days} days)`;
-  $('#cmDashOverdue').innerHTML = cmpOccTable(d.overdue, 'cmDashOverdueT');
-  $('#cmDashUpcoming').innerHTML = cmpOccTable(d.upcoming, 'cmDashUpcomingT');
-  $('#cmDashCountries').innerHTML = d.byCountry.length ? `<table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Country</th><th class="text-right">Open</th><th class="text-right">Overdue</th></tr></thead><tbody>
-    ${d.byCountry.map(c => `<tr class="border-b last:border-0"><td class="py-1">${cmpFlagName(c.country)}</td><td class="text-right">${c.open}</td><td class="text-right ${c.overdue ? 'text-red-700 font-semibold' : ''}">${c.overdue}</td></tr>`).join('')}</tbody></table>` : cmpEmpty('No open obligations.');
-  $('#cmDashUnpaidBox').classList.toggle('hidden', !d.unpaid);
-  if (d.unpaid) $('#cmDashUnpaid').innerHTML = d.unpaid.length ? d.unpaid.map(u => `<div class="flex justify-between text-sm py-1 border-b last:border-0"><span>${u.count} invoice${u.count === 1 ? '' : 's'}</span><b>${cmpMoney(u.outstanding, u.currency)}</b></div>`).join('')
-    + `<div class="mt-2">${cmpBtn('Invoice aging', "CMP_REP.report = 'aging'; go('cm-reports')")}</div>` : cmpEmpty('Everything is paid.');
-}
-
-/* ---------- the calendar ---------- */
-// (an old link to the calendar opens the Dashboard at its calendar)
-CMP_PAGES.push({ id: 'cm-calendar', html: () => '', enter: () => { CMP_REP.toCalendar = true; go('cm-dashboard'); } });
-const cmpCalendarHtml = () => `<div class="bg-white rounded-xl shadow p-4"><h2 class="font-semibold mb-2">Calendar</h2>
-    <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
-      <div class="flex flex-wrap items-end gap-2">${cmpBtn('‹', 'cmpCalMove(-1)')}
-        <label><span>Month</span><input id="cmCalMonth" type="month" class="!w-44" onchange="if (this.value) { CMP_REP.month = this.value; CMP_REP.day = null; cmpLoadCalendar(); }"></label>
-        ${cmpBtn('›', 'cmpCalMove(1)')}${cmpBtn('Today', 'CMP_REP.month = null; CMP_REP.day = null; cmpLoadCalendar()')}
-        <label><span>Go to a date</span><input type="date" class="!w-44" onchange="if (this.value) { CMP_REP.month = this.value.slice(0, 7); CMP_REP.day = this.value; cmpLoadCalendar(); }"></label>
-        <h2 id="cmCalTitle" class="font-semibold text-lg px-2 pb-2"></h2></div>
-      <div class="flex flex-wrap gap-2">
-        <label><span>Country</span><select onchange="CMP_REP.calCountry = this.value; cmpLoadCalendar()">${cmpCountryOptions('', 'All countries')}</select></label>
-        <label><span>Assigned to</span><select id="cmCalWho" onchange="CMP_REP.calAssignee = this.value; cmpLoadCalendar()"></select></label></div></div>
-    <div class="grid grid-cols-7 text-xs text-slate-500 mb-1">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => `<div class="px-1">${d}</div>`).join('')}</div>
-    <div id="cmCalGrid" class="grid grid-cols-7 gap-px bg-slate-200 border border-slate-200 rounded-lg overflow-hidden"></div>
-    <p class="text-xs text-slate-500 mt-2">Each due date in its client's own calendar. Green safe · amber approaching · red overdue · grey completed · dashed: planned (still to come, shown for as long as the obligation repeats).</p></div>`;
-function cmpCalMove(n) {
-  const [y, m] = (CMP_REP.month || CmpRules.dayIn(cmpTz()).slice(0, 7)).split('-').map(Number), idx = y * 12 + (m - 1) + n;
-  CMP_REP.month = `${Math.floor(idx / 12)}-${String(idx % 12 + 1).padStart(2, '0')}`; CMP_REP.day = null;
-  cmpLoadCalendar();
-}
-async function cmpLoadCalendar() {
-  const month = CMP_REP.month || CmpRules.dayIn(cmpTz()).slice(0, 7), first = month + '-01';
-  const [y, m] = month.split('-').map(Number), days = new Date(Date.UTC(y, m, 0)).getUTCDate(), last = `${month}-${String(days).padStart(2, '0')}`;
-  $('#cmCalTitle').textContent = `${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][m - 1]} ${y}`;
-  $('#cmCalMonth').value = month;
-  let d;
-  try { d = await api('/api/cmp/calendar?' + cmpQs({ from: first, to: last, country: CMP_REP.calCountry, assignee: CMP_REP.calAssignee, projected: '1' })); } catch (err) { $('#cmCalGrid').innerHTML = cmpEmpty(esc(err.message)); return; }
-  const byDay = new Map();
-  for (const r of d.rows) { const k = r.dueDate; if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(r); }
-  const lead = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7, today = CmpRules.dayIn(cmpTz()), cells = [];
-  for (let i = 0; i < lead; i++) cells.push('<div class="bg-slate-50 min-h-[6rem]"></div>');
-  for (let dd = 1; dd <= days; dd++) {
-    const ymd = `${month}-${String(dd).padStart(2, '0')}`, items = byDay.get(ymd) || [];
-    const picked = ymd === CMP_REP.day;
-    cells.push(`<div class="bg-white min-h-[6rem] p-1 ${ymd === today ? 'ring-2 ring-inset ring-emerald-500' : ''} ${picked ? 'ring-2 ring-inset ring-sky-500 bg-sky-50' : ''}"><div class="text-xs ${ymd === today ? 'font-bold text-emerald-700' : picked ? 'font-bold text-sky-700' : 'text-slate-500'}">${dd}</div>
-      ${items.slice(0, 4).map(r => `<button type="button" onclick="cmpOpenPeriod('${r.obligation.id}', '${r.id}', cmpLoadCalendar)" title="${esc(`${r.client.name} — ${r.obligation.name} (${CmpRules.STATUS[r.view.status]})`)}"
-        class="w-full text-left text-[11px] leading-tight truncate rounded px-1 py-0.5 mt-0.5 ${{ red: 'bg-red-100 text-red-800', amber: 'bg-amber-100 text-amber-900', green: 'bg-emerald-50 text-emerald-900', done: 'bg-slate-100 text-slate-500 line-through', planned: 'border border-dashed border-slate-400 text-slate-500' }[r.view.colour]}">${cmpCountry(r.client.country).flag} ${esc(r.client.name)} · ${esc(r.obligation.name)}</button>`).join('')}
-      ${items.length > 4 ? `<button type="button" class="text-[11px] text-emerald-700 underline" onclick="cmpCalDay('${ymd}')">+${items.length - 4} more</button>` : ''}</div>`);
-  }
-  while (cells.length % 7) cells.push('<div class="bg-slate-50 min-h-[6rem]"></div>');
-  $('#cmCalGrid').innerHTML = cells.join('');
-}
-// "+ more" on a busy day: the sheet for that day
-function cmpCalDay(ymd) { cmpRange('ob'); CMP.ranges.ob.r = { ...CMP.ranges.ob.r, mode: 'dates', from: ymd, to: ymd }; CMP_OB.status = 'ALL'; go('cm-obligations'); }

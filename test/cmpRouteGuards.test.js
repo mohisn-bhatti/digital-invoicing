@@ -40,12 +40,13 @@ const PERMS = {
 // the notifications and the reports catalogue register their own routes, and list each route's permission next to them
 const Notify = require('../src/compliance/notify');
 const Catalog = require('../src/compliance/reportsCatalog');
-Object.assign(PERMS, Notify.ROUTE_PERMS, Catalog.ROUTE_PERMS);
+const Dashboard = require('../src/compliance/dashboard');
+Object.assign(PERMS, Notify.ROUTE_PERMS, Catalog.ROUTE_PERMS, Dashboard.ROUTE_PERMS);
 
 test('every compliance route checks the module and its own permission', () => {
     const app = { use() {}, param() {} };
     for (const m of ['get', 'post', 'put', 'delete', 'patch']) app[m] = () => {};
-    const svc = { clients: {}, obligations: {}, comms: {}, invoices: {}, bulk: {}, reports: {}, notify: Notify.createNotify({ common: {} }), reportsCatalog: Catalog.createReportsCatalog({ common: {} }) };
+    const svc = { clients: {}, obligations: {}, comms: {}, invoices: {}, bulk: {}, reports: {}, notify: Notify.createNotify({ common: {} }), reportsCatalog: Catalog.createReportsCatalog({ common: {} }), dashboard: Dashboard.createDashboard({ common: {} }) };
     const routes = registerCmpRoutes(app, { svc, authenticateToken() {}, requireTenant() {}, tenantModules: () => [], prisma: {}, HttpError: Error, listAudit() {} });
     const seen = new Set();
     for (const r of routes) {
