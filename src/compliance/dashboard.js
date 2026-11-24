@@ -72,7 +72,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         if (f.clientId) AND.push({ clientId: f.clientId });
         const who = whoOf(ctx, f);
         if (who !== undefined) AND.push(who === null ? { obligation: { assignedToId: null, client: { assignedToId: null } } } : { OR: [{ obligation: { assignedToId: who } }, { obligation: { assignedToId: null, client: { assignedToId: who } } }] });
-        if (f.obligation) AND.push({ obligation: { name: { equals: f.obligation, mode: 'insensitive' } } });
+        if (f.obIds) AND.push({ obligationId: { in: f.obIds } });
         return { tenantId: ctx.tenantId, AND: [...AND, ...extra] };
     }
     // the money of the clients the filters choose (archived clients' documents stay: they are the firm's records)
@@ -80,8 +80,11 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         const who = whoOf(ctx, f), c = { ...(f.country ? { country: f.country } : {}), ...(f.clientId ? { id: f.clientId } : {}), ...(who !== undefined ? { assignedToId: who } : {}) };
         return Object.keys(c).length ? { client: c } : {};
     }
-    const listArgs = f => ({ money: '0', ...(f.country ? { country: f.country } : {}), ...(f.clientId ? { clientId: f.clientId } : {}), ...(f.assignee ? { assignee: f.assignee } : {}) });
-    const sameName = f => r => !f.obligation || R.keyOf(r.obligation.name) === R.keyOf(f.obligation);
+    const listArgs = f => ({ money: '0', ...(f.country ? { country: f.country } : {}), ...(f.clientId ? { clientId: f.clientId } : {}), ...(f.assignee ? { assignee: f.assignee } : {}), ...(f.obligation ? { obligation: f.obligation } : {}) });
+    // the Obligation filter: the obligations of that name, written the same way (dots, case and spaces do not count), archived ones too —
+    // the same rule for every part of the dashboard and for My Obligations
+    const withIds = async (ctx, f) => ({ ...f, obIds: f.obligation ? await obligations.idsByName(ctx.tenantId, f.obligation) : null });
+    const aboutObs = F => (F.obIds ? { occurrence: { obligationId: { in: F.obIds } } } : {});
     // one period as the tables show it
     const occBrief = r => ({ id: r.id, seq: r.seq, projected: Boolean(r.projected), periodStart: r.periodStart, periodEnd: r.periodEnd, dueDate: r.dueDate, stage: r.stage, datesConfirmed: r.datesConfirmed,
         status: r.projected ? 'PLANNED' : r.view.status, colour: r.projected ? 'planned' : r.view.colour, daysLeft: r.view ? r.view.daysLeft : null, assignedToId: r.assignedToId || null,
@@ -90,7 +93,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
 
     async function overview(ctx, q = {}) {
         const settings = await common.settings(ctx.tenantId), tz = settings.timeZone, at = now(), today = R.dayIn(tz, at);
-        const P = periodOf(q, today), f = filtersOf(q);
+        const P = periodOf(q, today), f = filtersOf(q), F = await withIds(ctx, f);
         const days = (() => { const n = Number(q.days || 30); if (!Number.isInteger(n) || n < 1 || n > 366) throw bad('Choose an upcoming window of 1 to 366 days.'); return n; })();
         const money = ctx.perms.has('INVOICE'), logs = ctx.perms.has('LOGS');
         const pFrom = R.zoned(P.from, 0, 0, tz), pTo = R.zoned(R.addDays(P.to, 1), 0, 0, tz); // (the period's moments, on the firm's clock)
@@ -99,12 +102,12 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         const [openList, plannedList, completed, team] = await Promise.all([
             obligations.listOccurrences(ctx, { ...listArgs(f), status: 'OPEN', limit: 20000 }),
             obligations.listOccurrences(ctx, { ...listArgs(f), status: 'PLANNED', projected: '1', from: today, to: R.addDays(today, days), limit: 20000 }),
-            prisma.cmpOccurrence.findMany({ where: occWhere(ctx, f, [{ stage: 'COMPLETED' }, { OR: [{ completedOn: { gte: dateOf(P.from), lte: dateOf(P.to) } }, { completedOn: null, closedAt: { gte: pFrom, lt: pTo } }] }]),
+            prisma.cmpOccurrence.findMany({ where: occWhere(ctx, F, [{ stage: 'COMPLETED' }, { OR: [{ completedOn: { gte: dateOf(P.from), lte: dateOf(P.to) } }, { completedOn: null, closedAt: { gte: pFrom, lt: pTo } }] }]),
                 orderBy: [{ completedOn: 'desc' }, { closedAt: 'desc' }], take: 5000, select: { id: true, seq: true, periodStart: true, periodEnd: true, dueDate: true, completedOn: true, closedAt: true, closeKind: true, obligationId: true,
                     obligation: { select: { id: true, name: true, assignedToId: true, client: { select: { id: true, code: true, name: true, country: true, assignedToId: true } } } } } }),
             prisma.user.findMany({ where: { tenantId: ctx.tenantId, role: 'CLIENT_USER', active: true }, select: { id: true, name: true, email: true }, orderBy: { name: 'asc' } }),
         ]);
-        const open = openList.rows.filter(sameName(f)), planned = plannedList.rows.filter(sameName(f));
+        const open = openList.rows, planned = plannedList.rows;
         const overdue = open.filter(r => r.view.overdue).sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0));
         const upcoming = open.filter(r => !r.view.overdue && r.view.daysLeft <= days);
         const dataPending = open.filter(r => r.stage === 'OPEN'), taskPending = open.filter(r => ['DATA_COLLECTED', 'FILED', 'PAID'].includes(r.stage));
@@ -128,8 +131,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         });
         const remCount = st => reminders.filter(x => x.status === st).length;
         // the reminders sent (or given another way, or marked not sent) in the dates chosen, whatever the period's state now
-        const periodMsgs = await prisma.cmpMessage.findMany({ where: { tenantId: ctx.tenantId, kind: 'REMINDER', createdAt: { gte: pFrom, lt: pTo }, ...(Object.keys(moneyClient(ctx, f)).length ? moneyClient(ctx, f) : {}),
-            ...(f.obligation ? { occurrence: { obligation: { name: { equals: f.obligation, mode: 'insensitive' } } } } : {}) }, select: { channel: true, voidedAt: true } });
+        const periodMsgs = await prisma.cmpMessage.findMany({ where: { tenantId: ctx.tenantId, kind: 'REMINDER', createdAt: { gte: pFrom, lt: pTo }, ...moneyClient(ctx, f), ...aboutObs(F) }, select: { channel: true, voidedAt: true } });
 
         // the clients (the CA's FR-011, FR-012): not archived; with missing additional information as the Clients page counts it
         const [activeClients, newClients, missingList] = await Promise.all([
@@ -145,8 +147,9 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         };
         const workflow = {
             CONFIRM: open.filter(r => !r.datesConfirmed).length, PLANNED: planned.length, UPCOMING: open.filter(r => r.view.status === 'UPCOMING').length, OPEN: open.length, OVERDUE: overdue.length,
-            PERIOD_CLOSED: open.filter(r => r.view.status === 'PERIOD_CLOSED').length, DATA_PENDING: dataPending.length, DATA_COLLECTED: open.filter(r => r.stage === 'DATA_COLLECTED').length,
-            FILED: open.filter(r => r.stage === 'FILED').length, PAID: open.filter(r => r.stage === 'PAID').length, COMPLETED: completed.length,
+            // (data collected, filed and paid as My Obligations shows them: a period past its due date is overdue instead)
+            PERIOD_CLOSED: open.filter(r => r.view.status === 'PERIOD_CLOSED').length, DATA_PENDING: dataPending.length, DATA_COLLECTED: open.filter(r => r.view.status === 'DATA_COLLECTED').length,
+            FILED: open.filter(r => r.view.status === 'FILED').length, PAID: open.filter(r => r.view.status === 'PAID').length, COMPLETED: completed.length,
         };
         const lastReminder = r => {
             const past = r.view.reminders.map((x, i) => ({ x, i })).filter(e => e.x.state !== 'BLEAK');
@@ -160,7 +163,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
             generatedAt: at, today, timeZone: tz, period: P, days, filters: f, money, logs,
             team: team.map(u => ({ id: u.id, name: u.name || u.email })),
             obligationNames: [...new Set((await prisma.cmpObligation.findMany({ where: { tenantId: ctx.tenantId, archivedAt: null, client: { archivedAt: null, ...(f.country ? { country: f.country } : {}), ...(f.clientId ? { id: f.clientId } : {}) } },
-                select: { name: true }, take: 3000 })).map(o => o.name.trim()))].sort((a, b) => a.localeCompare(b)).slice(0, 500),
+                select: { name: true }, take: 3000 })).map(o => o.name.trim()).filter((n, i, all) => all.findIndex(m => R.keyOf(m) === R.keyOf(n)) === i))].sort((a, b) => a.localeCompare(b)).slice(0, 500),
             clientsList: (await prisma.cmpClient.findMany({ where: { tenantId: ctx.tenantId, archivedAt: null, ...(f.country ? { country: f.country } : {}) }, select: { id: true, code: true, name: true, country: true }, orderBy: { name: 'asc' }, take: 3000 })),
             kpis,
             upcoming: { total: upcoming.length, rows: upcoming.slice(0, LIMIT).map(withReminders) },
@@ -177,7 +180,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
             data: {
                 pending: dataPending.length, late: dataLate.length,
                 collected: open.filter(r => r.dataCollectedOn).length,
-                collectedInPeriod: (await prisma.cmpOccurrence.count({ where: occWhere(ctx, f, [{ dataCollectedOn: { gte: dateOf(P.from), lte: dateOf(P.to) } }]) })),
+                collectedInPeriod: (await prisma.cmpOccurrence.count({ where: occWhere(ctx, F, [{ dataCollectedOn: { gte: dateOf(P.from), lte: dateOf(P.to) } }]) })),
                 rows: dataPending.map(r => ({ ...occBrief(r), deadline: lastReminderDay(r), late: lastReminderDay(r) < clientToday(r) })).sort((a, b) => (a.deadline < b.deadline ? -1 : 1)).slice(0, LIMIT),
             },
             tasks: {
@@ -203,10 +206,10 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         out.byPerson = [...byPerson.values()].map(x => ({ ...x, name: x.key ? ((team.find(u => u.id === x.key) || {}).name || (team.find(u => u.id === x.key) || {}).email || 'A former user') : 'Nobody' })).sort((a, b) => b.overdue - a.overdue || b.open - a.open);
 
         // money (the CA's FR-042 to FR-064): only for those who may see the invoices
-        if (money) out.finance = await finance(ctx, f, P, today);
+        if (money) out.finance = await finance(ctx, F, P, today);
 
         // the activity timeline (FR-065 to FR-080): only for those who may see the logs
-        if (logs) { out.activity = await activity(ctx, f, pFrom, pTo, tz); out.communication = await communication(ctx, f, pFrom, pTo); }
+        if (logs) { out.activity = await activity(ctx, F, pFrom, pTo, tz); out.communication = await communication(ctx, F, pFrom, pTo); }
 
         // the alerts to act on (FR-081 to FR-087): worked out now, never stored
         const failed = ctx.perms.has('FULL') ? await prisma.cmpNotification.count({ where: { tenantId: ctx.tenantId, status: 'FAILED' } }) : 0;
@@ -225,12 +228,12 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
 
     async function finance(ctx, f, P, today) {
         const mc = moneyClient(ctx, f);
-        const obl = f.obligation ? { occurrence: { obligation: { name: { equals: f.obligation, mode: 'insensitive' } } } } : {};
+        const obl = aboutObs(f);
         const [advs, invs, rcs] = await Promise.all([
             prisma.cmpAdvance.findMany({ where: { tenantId: ctx.tenantId, voidedAt: null, ...mc, ...obl }, take: 20000, select: { id: true, number: true, receivedOn: true, currency: true, amount: true, used: true, client: { select: { id: true, code: true, name: true, country: true } } } }),
             prisma.cmpInvoice.findMany({ where: { tenantId: ctx.tenantId, ...mc, ...obl }, take: 20000, select: { id: true, number: true, status: true, currency: true, issueDate: true, total: true, advanceAdjusted: true, received: true, sentAt: true, createdAt: true,
                 client: { select: { id: true, code: true, name: true, country: true } } } }),
-            prisma.cmpReceipt.findMany({ where: { tenantId: ctx.tenantId, receivedOn: { gte: dateOf(P.from), lte: dateOf(P.to) }, ...(Object.keys(mc).length || f.obligation ? { invoice: { ...(mc.client ? { client: mc.client } : {}), ...obl } } : {}) },
+            prisma.cmpReceipt.findMany({ where: { tenantId: ctx.tenantId, receivedOn: { gte: dateOf(P.from), lte: dateOf(P.to) }, ...(Object.keys(mc).length || f.obIds ? { invoice: { ...(mc.client ? { client: mc.client } : {}), ...obl } } : {}) },
                 take: 20000, select: { amount: true, method: true, voidedAt: true, settlement: true, invoice: { select: { currency: true } } } }),
         ]);
         const per = new Map(), cur = c => { if (!per.has(c)) per.set(c, { currency: c, d: C.currencyDecimals(c), adv: { received: 0, receivedCount: 0, adjusted: 0, unallocated: 0, count: 0 }, inv: { invoiced: 0, net: 0, outstanding: 0, unpaid: 0 }, rc: { total: 0, count: 0, undone: 0, undoneCount: 0, methods: {} } }); return per.get(c); };
@@ -292,7 +295,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
     async function communication(ctx, f, pFrom, pTo) {
         const mc = moneyClient(ctx, f);
         const where = { tenantId: ctx.tenantId, createdAt: { gte: pFrom, lt: pTo }, ...mc };
-        if (f.obligation) where.OR = [{ occurrence: { obligation: { name: { equals: f.obligation, mode: 'insensitive' } } } }, { invoice: { occurrence: { obligation: { name: { equals: f.obligation, mode: 'insensitive' } } } } }];
+        if (f.obIds) where.OR = [aboutObs(f), { invoice: aboutObs(f) }, { advance: aboutObs(f) }];
         const rows = await prisma.cmpMessage.findMany({ where, orderBy: { createdAt: 'desc' }, take: LIMIT,
             select: { id: true, createdAt: true, kind: true, channel: true, templateName: true, voidedAt: true, userEmail: true, clientId: true, occurrenceId: true, invoiceId: true, advanceId: true,
                 client: { select: { id: true, code: true, name: true, country: true } }, occurrence: { select: { seq: true, periodStart: true, periodEnd: true, obligationId: true, obligation: { select: { name: true } } } },
@@ -309,20 +312,21 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         const allowed = filtered ? new Set((await prisma.cmpClient.findMany({ where: clientWhere(ctx, f, { live: false }), select: { id: true }, take: 20000 })).map(c => c.id)) : null;
         // the Obligation filter (FR-010): the obligations of that name, and the invoices, receipts and advances of their periods
         let obIds = null, docIds = null;
-        if (f.obligation) {
-            const obs = await prisma.cmpObligation.findMany({ where: { tenantId: ctx.tenantId, name: { equals: f.obligation, mode: 'insensitive' } }, select: { id: true }, take: 5000 });
-            obIds = new Set(obs.map(o => o.id));
+        if (f.obIds) {
+            obIds = new Set(f.obIds);
             const occ = { occurrence: { obligationId: { in: [...obIds] } } };
             const [invs, advs] = await Promise.all([prisma.cmpInvoice.findMany({ where: { tenantId: ctx.tenantId, ...occ }, select: { id: true }, take: 5000 }), prisma.cmpAdvance.findMany({ where: { tenantId: ctx.tenantId, ...occ }, select: { id: true }, take: 5000 })]);
             docIds = new Set([...invs.map(i => i.id), ...advs.map(a => a.id)]);
         }
         const aboutOb = (r, d) => !obIds || (d.obligationId && obIds.has(d.obligationId)) || (r.entityType === 'CmpObligation' && obIds.has(r.entityId))
             || (['CmpInvoice', 'CmpAdvance'].includes(r.entityType) && docIds.has(r.entityId)) || (r.entityType === 'CmpReceipt' && d.invoiceId && docIds.has(d.invoiceId));
+        // (with a filter, more of the log is read: most of it may be other clients' or other obligations')
+        const many = filtered || obIds ? 6000 : 600;
         const [rows, msgs] = await Promise.all([
-            prisma.auditLog.findMany({ where: { tenantId: ctx.tenantId, action: { in: Object.keys(ACTIVITY) }, createdAt: { gte: pFrom, lt: pTo } }, orderBy: { createdAt: 'desc' }, take: 600,
+            prisma.auditLog.findMany({ where: { tenantId: ctx.tenantId, action: { in: Object.keys(ACTIVITY) }, createdAt: { gte: pFrom, lt: pTo } }, orderBy: { createdAt: 'desc' }, take: many,
                 select: { id: true, createdAt: true, action: true, summary: true, userEmail: true, entityType: true, entityId: true, details: true } }),
             // (WhatsApp sends of reminders, advance receipts and receipts are in the WhatsApp log; an invoice sent is in the activity log already)
-            prisma.cmpMessage.findMany({ where: { tenantId: ctx.tenantId, kind: { in: ['REMINDER', 'ADVANCE', 'RECEIPT'] }, channel: 'WHATSAPP', createdAt: { gte: pFrom, lt: pTo } }, orderBy: { createdAt: 'desc' }, take: 300,
+            prisma.cmpMessage.findMany({ where: { tenantId: ctx.tenantId, kind: { in: ['REMINDER', 'ADVANCE', 'RECEIPT'] }, channel: 'WHATSAPP', createdAt: { gte: pFrom, lt: pTo }, ...moneyClient(ctx, f) }, orderBy: { createdAt: 'desc' }, take: 300,
                 select: { id: true, createdAt: true, kind: true, userEmail: true, clientId: true, occurrenceId: true, receiptId: true, advanceId: true, invoiceId: true, voidedAt: true, templateName: true,
                     client: { select: { name: true, code: true } }, occurrence: { select: { obligationId: true, obligation: { select: { name: true } } } } } }),
         ]);
@@ -348,7 +352,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
                 user: m.userEmail, client: `${m.client.name} (${m.client.code})`, link: m.occurrence ? { period: [m.occurrence.obligationId, m.occurrenceId] } : m.advanceId ? { advance: m.advanceId } : { client: m.clientId } });
         }
         items.sort((a, b) => +new Date(b.at) - +new Date(a.at));
-        return { total: items.length, rows: items.slice(0, 200), timeZone: tz };
+        return { total: items.length, rows: items.slice(0, 200), more: rows.length >= many, timeZone: tz };
     }
 
     // The calendar (FR-019 to FR-026): due dates (with the periods still to come), reminder dates and task dates, for a month, a week or a
@@ -356,8 +360,16 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
     async function calendar(ctx, q = {}) {
         const from = V.day(q.from, 'From'), to = V.day(q.to, 'To');
         if (to < from || R.daysBetween(from, to) > 62) throw bad('Choose up to two months.');
-        const f = filtersOf(q), keep = sameName(f);
-        const rows = (await obligations.listOccurrences(ctx, { ...listArgs(f), status: 'ALL', from: R.addDays(from, -366), to: R.addDays(to, 366), projected: '1', limit: 20000 })).rows.filter(keep);
+        const f = filtersOf(q);
+        // the periods kept (a reminder or a completion can be up to a year from the due date), and the reminders' reach before and after
+        // the due date, so the periods still to come are worked out only as far as needed (not a year each side: too many to list)
+        const [stored, reach] = await Promise.all([
+            obligations.listOccurrences(ctx, { ...listArgs(f), status: 'ALL', from: R.addDays(from, -366), to: R.addDays(to, 366), limit: 20000 }),
+            prisma.cmpReminder.aggregate({ where: { tenantId: ctx.tenantId }, _min: { offsetDays: true }, _max: { offsetDays: true } }),
+        ]);
+        const before = Math.max(0, -(reach._min.offsetDays || 0)), after = Math.max(0, reach._max.offsetDays || 0);
+        const planned = await obligations.listOccurrences(ctx, { ...listArgs(f), status: 'PLANNED', projected: '1', from: R.addDays(from, -after), to: R.addDays(to, before), limit: 20000 });
+        const rows = [...stored.rows, ...planned.rows];
         const inR = d => d && d >= from && d <= to, out = [];
         for (const r of rows) {
             const b = occBrief(r);

@@ -79,7 +79,8 @@ run('the ten figures, the tables, the stages, data collection and tasks', async 
     assert.deepStrictEqual([d.overdue.rows[0].obligation.name, d.overdue.rows[0].daysOverdue, d.overdue.rows[0].lastReminder.status], ['VAT Return Q2', 5, 'NOT_SENT']);
     assert.strictEqual((await dash({ days: 60 })).kpis.upcoming, 2, 'Zakat (in 40 days) with a 60-day window');
     assert.deepStrictEqual(d.reminders.counts, { DUE: 0, MISSED: 1, MARKED_NOT_SENT: 0, SCHEDULED: 1, SENT: 1, OTHER_WAY: 0, NOT_NEEDED: 0 });
-    assert.deepStrictEqual([d.workflow.OPEN, d.workflow.OVERDUE, d.workflow.DATA_PENDING, d.workflow.DATA_COLLECTED, d.workflow.COMPLETED, d.workflow.CONFIRM], [3, 1, 2, 1, 1, 0]);
+    // (Q2 has its data in but is past its due date: overdue, as My Obligations shows it, so not counted under "data collected")
+    assert.deepStrictEqual([d.workflow.OPEN, d.workflow.OVERDUE, d.workflow.DATA_PENDING, d.workflow.DATA_COLLECTED, d.workflow.COMPLETED, d.workflow.CONFIRM], [3, 1, 2, 0, 1, 0]);
     assert.deepStrictEqual([d.data.pending, d.data.late], [2, 0]);
     assert.deepStrictEqual([d.tasks.pending, d.tasks.overdue, d.tasks.completed, d.tasks.completedRows[0].obligation.name], [1, 1, 1, 'Corporate Tax']);
     assert.ok(d.alerts.some(a => a.key === 'OVERDUE' && a.count === 1) && d.alerts.some(a => a.key === 'MISSED') && d.alerts.some(a => a.key === 'MISSING'), JSON.stringify(d.alerts));
@@ -203,6 +204,46 @@ run('acceptance: clients in other time zones (AT-003), a cancelled invoice (AT-0
     await ok(call(`/api/cmp/clients/${c.id}/obligations`, 'POST', { name: 'VAT Return', periodStart: day(-60), periodEnd: day(-1), dueDate: day(3), autoNext: false }));
     const texts = [(await call('/api/cmp/overview?days=30')).text, (await call(`/api/cmp/overview/calendar?from=${day(-10)}&to=${day(10)}`)).text, (await call('/api/cmp/catalog/staff-clients')).text, (await call('/api/cmp/catalog/client-register')).text];
     for (const t of texts) { assert.ok(!t.includes('Zq9-Secret-Pass!') && !t.includes('7319') && !/portalPassword|pinCode/.test(t), t.slice(0, 200)); }
+});
+
+run('each figure opens the same periods it counts; the Obligation filter is one rule everywhere', async () => {
+    const d = await dash({ days: 30 });
+    // "due in the next 30 days": open, not past the due date, without the planned periods (OPEN_NOT_DUE over those dates)
+    const win = await ok(call(`/api/cmp/occurrences?status=OPEN_NOT_DUE&from=${today}&to=${day(30)}&projected=1`));
+    assert.deepStrictEqual(win.rows.map(r => r.obligation.name).sort(), d.upcoming.rows.map(r => r.obligation.name).sort());
+    assert.ok(win.rows.every(r => !r.projected));
+    // the stages: the list of each opens as many periods as the figure says
+    for (const st of ['DATA_COLLECTED', 'FILED', 'PAID', 'OVERDUE', 'CONFIRM', 'DATA_PENDING', 'TASK_PENDING']) {
+        const l = await ok(call(`/api/cmp/occurrences?status=${st}`)), n = { DATA_COLLECTED: d.workflow.DATA_COLLECTED, FILED: d.workflow.FILED, PAID: d.workflow.PAID, OVERDUE: d.workflow.OVERDUE, CONFIRM: d.workflow.CONFIRM, DATA_PENDING: d.kpis.dataPending, TASK_PENDING: d.kpis.taskPending }[st];
+        assert.strictEqual(l.rows.length, n, st);
+    }
+    // the obligation by its exact name (not the search box): dots, case and spaces do not count; another obligation's name is not a match
+    const one = await ok(call('/api/cmp/occurrences?status=ALL&obligation=' + encodeURIComponent('v.a.t.  return q2')));
+    assert.deepStrictEqual(one.rows.map(r => r.obligation.name), ['VAT Return Q2']);
+    // every part of the dashboard by the same rule: the open periods, the completed tasks and the money of "Corporate Tax"
+    const ct = await dash({ obligation: 'corporate  tax.' });
+    assert.deepStrictEqual([ct.kpis.open, ct.tasks.completed, ct.workflow.COMPLETED, ct.finance.currencies.find(x => x.currency === 'AED').invoices.invoiced], [0, 1, 1, 1000]);
+    assert.ok(ct.activity.rows.some(a => a.label === 'Task completed'), ct.activity.rows.map(a => a.label).join(', '));
+    assert.strictEqual(new Set(d.obligationNames.map(R.keyOf)).size, d.obligationNames.length, 'each name once');
+});
+
+run('the calendar shows the periods still to come of monthly obligations (worked out only as far as the reminders reach)', async () => {
+    const c = (await ok(call('/api/cmp/clients', 'POST', { country: 'AE', name: 'Palm Grove Services', contactNumber: '+971501117788', noPortal: true }))).client;
+    await ok(call(`/api/cmp/clients/${c.id}/obligations`, 'POST', { name: 'Payroll Return', frequency: 'MONTHLY', periodStart: day(-40), periodEnd: day(-10), dueDate: day(5), reminders: [{ offsetDays: -3, body: 'Payroll due [Due Date]' }] }), 'monthly');
+    const cal = await ok(call(`/api/cmp/overview/calendar?from=${day(40)}&to=${day(100)}&clientId=${c.id}`));
+    const due = cal.entries.filter(e => e.type === 'due'), rem = cal.entries.filter(e => e.type === 'reminder');
+    assert.ok(due.length >= 1 && due.every(e => e.occurrence.projected), JSON.stringify(due.map(e => e.date)));
+    // (each planned reminder 3 days before a planned due date of the calendar, or of the days just after it)
+    assert.ok(rem.length >= 1 && rem.every(e => e.planned && (due.some(x => x.date === R.addDays(e.date, 3)) || R.addDays(e.date, 3) > day(100))), JSON.stringify(rem.map(e => e.date)));
+});
+
+run('the compliance rate counts a period completed before its due date as on time, never above 100%', async () => {
+    const z = W.sat.occurrences[0].id;
+    await ok(call(`/api/cmp/occurrences/${z}/data`, 'POST', { on: today }));
+    await ok(call(`/api/cmp/occurrences/${z}/complete`, 'POST', { mode: 'TASK', on: today }));
+    const rows = (await ok(call(`/api/cmp/catalog/annual-compliance?from=${day(-30)}&to=${day(60)}&group=client`))).rows;
+    assert.deepStrictEqual(rows.filter(r => /Oasis Point/.test(r.name)).map(r => [r.due, r.onTime, r.rate]), [[1, 1, '100%']]);
+    assert.ok(rows.every(r => r.rate === '—' || Number(r.rate.replace('%', '')) <= 100), JSON.stringify(rows.map(r => r.rate)));
 });
 
 run('it writes nothing: every table of the firm and the activity log are the same before and after', async () => {

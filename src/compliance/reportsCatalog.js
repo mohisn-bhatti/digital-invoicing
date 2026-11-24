@@ -1182,7 +1182,7 @@ function createReportsCatalog({ prisma, audit, common, obligations, invoices, re
             } },
         { key: 'annual-compliance', cat: 'compliance', title: 'Annual Compliance Status', info: 'Periods due in the year: completed on time, late, open, overdue; compliance rate', need: [REP],
             filters: { range: 'due date', country: 1, client: 1, group: [['client', 'By client'], ['obligation', 'By obligation'], ['country', 'By country']] },
-            note: 'The periods whose due date is in the dates chosen (this calendar year when none are chosen). On time = completed on or before its due date. Rate = on time ÷ the periods whose due date has passed.',
+            note: 'The periods whose due date is in the dates chosen (this calendar year when none are chosen). On time = completed on or before its due date. Rate = on time ÷ the periods that can be judged (due date passed, or completed already).',
             run: async f => {
                 const y = f.today.slice(0, 4), from = f.from || `${y}-01-01`, to = f.to || `${y}-12-31`, at = now();
                 const list = await prisma.cmpOccurrence.findMany({ where: { tenantId: f.tenantId, obligation: liveOb(f), dueDate: { gte: dateOf(from), lte: dateOf(to) }, ...(f.clientId ? { clientId: f.clientId } : {}) }, take: TAKE * 4,
@@ -1190,17 +1190,17 @@ function createReportsCatalog({ prisma, audit, common, obligations, invoices, re
                 const keyOf = o => (f.group === 'obligation' ? o.obligation.name.trim() : f.group === 'country' ? countryName(o.obligation.client.country) : cl(o.obligation.client));
                 const by = new Map();
                 for (const o of list) {
-                    const k = keyOf(o); if (!by.has(k)) by.set(k, { name: k, due: 0, onTime: 0, late: 0, open: 0, overdue: 0, passed: 0 });
+                    const k = keyOf(o); if (!by.has(k)) by.set(k, { name: k, due: 0, onTime: 0, late: 0, open: 0, overdue: 0, judged: 0 });
                     const x = by.get(k), done = o.stage === 'COMPLETED', passed = +o.dueAt <= +at;
-                    x.due++; if (passed) x.passed++;
+                    x.due++; if (passed || done) x.judged++; // (completed before its due date: on time already; open and not due yet: not judged)
                     if (done) { const day = o.completedOn ? ymd(o.completedOn) : dayIn(f, o.closedAt); if (day && day > ymd(o.dueDate)) x.late++; else x.onTime++; }
                     else if (passed) x.overdue++; else x.open++;
                 }
-                const rows = [...by.values()].map(x => ({ ...x, rate: x.passed ? `${Math.round(x.onTime / x.passed * 100)}%` : '—' })).sort((a, b) => a.name.localeCompare(b.name));
-                const all = rows.reduce((m, x) => ({ due: m.due + x.due, onTime: m.onTime + x.onTime, passed: m.passed + x.passed }), { due: 0, onTime: 0, passed: 0 });
+                const rows = [...by.values()].map(x => ({ ...x, rate: x.judged ? `${Math.round(x.onTime / x.judged * 100)}%` : '—' })).sort((a, b) => a.name.localeCompare(b.name));
+                const all = rows.reduce((m, x) => ({ due: m.due + x.due, onTime: m.onTime + x.onTime, judged: m.judged + x.judged }), { due: 0, onTime: 0, judged: 0 });
                 const columns = [col('name', f.group === 'obligation' ? 'Obligation' : f.group === 'country' ? 'Country' : 'Client'), col('due', 'Periods due', 'number', { sum: true }), col('onTime', 'On time', 'number', { sum: true }),
                     col('late', 'Late', 'number', { sum: true }), col('open', 'Open (not due yet)', 'number', { sum: true }), col('overdue', 'Overdue', 'number', { sum: true }), col('rate', 'Compliance rate')];
-                return { columns, rows, totals: totalsOf(columns, rows), cards: [{ label: `${R.fmtDay(from, f.settings.dateFormat)} – ${R.fmtDay(to, f.settings.dateFormat)}`, value: `${all.due} due` }, { label: 'Compliance rate', value: all.passed ? `${Math.round(all.onTime / all.passed * 100)}%` : '—' }] };
+                return { columns, rows, totals: totalsOf(columns, rows), cards: [{ label: `${R.fmtDay(from, f.settings.dateFormat)} – ${R.fmtDay(to, f.settings.dateFormat)}`, value: `${all.due} due` }, { label: 'Compliance rate', value: all.judged ? `${Math.round(all.onTime / all.judged * 100)}%` : '—' }] };
             } },
         { key: 'data-pending', cat: 'data', title: 'Pending Data Collection', info: 'Periods whose data is not collected yet, with the day it is expected by', need: [REP], filters: { country: 1, client: 1 },
             note: 'Expected by = the last reminder\'s day (else the due date); late once that day has passed on the client\'s calendar. "Partially collected" needs a list of the documents of each obligation, which the module does not keep.',

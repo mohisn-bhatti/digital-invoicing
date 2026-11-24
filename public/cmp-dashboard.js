@@ -7,7 +7,8 @@
    (↶) if it did not go, and sends it again. */
 
 const CMP_DB_DEFAULT = { preset: 'month', from: '', to: '', days: 30, country: '', clientId: '', obligation: '', assignee: '' };
-const CMP_DB = { f: { ...CMP_DB_DEFAULT }, data: null, cal: { view: 'month', day: null, data: null }, sort: {}, page: {}, remFilter: 'ACT', taskView: 'open', timer: null, loading: false };
+// (seq, calSeq: the latest request of each; an older answer that comes back later is dropped, so the page always shows the filters chosen)
+const CMP_DB = { f: { ...CMP_DB_DEFAULT }, data: null, cal: { view: 'month', day: null, data: null }, sort: {}, page: {}, remFilter: 'ACT', taskView: 'open', timer: null, seq: 0, calSeq: 0 };
 CMP_RESETS.push(() => { clearInterval(CMP_DB.timer); Object.assign(CMP_DB, { f: { ...CMP_DB_DEFAULT }, data: null, cal: { view: 'month', day: null, data: null }, sort: {}, page: {}, remFilter: 'ACT', timer: null }); });
 const CMP_DB_PRESETS = [['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['quarter', 'This quarter'], ['year', 'This year'], ['lastyear', 'Last year'], ['custom', 'Choose dates']];
 const CMP_DB_SIZE = 10;
@@ -36,17 +37,26 @@ CMP_PAGES.push({
 CMP_PAGES.push({ id: 'cm-calendar', html: () => '', enter: () => { go('cm-dashboard'); setTimeout(() => { const c = document.getElementById('cmDbCal'); if (c) c.scrollIntoView({ behavior: 'smooth' }); }, 400); } });
 
 /* ---------- the filters (the CA's FR-001 to FR-010) ---------- */
+const cmpDbOpt = (v, label, sel) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(label)}</option>`;
+// the clients and obligations to choose from (those of the country chosen); the one chosen stays listed even if it is not among them
+function cmpDbClientOptions() {
+  const f = CMP_DB.f, list = CMP_DB.data ? CMP_DB.data.clientsList : [];
+  return `<option value="">All clients</option>${list.map(c => cmpDbOpt(c.id, `${cmpCountry(c.country).flag} ${c.name} (${c.code})`, f.clientId)).join('')}${f.clientId && !list.some(c => c.id === f.clientId) ? cmpDbOpt(f.clientId, '(the client chosen)', f.clientId) : ''}`;
+}
+function cmpDbObOptions() {
+  const f = CMP_DB.f, names = CMP_DB.data ? CMP_DB.data.obligationNames : [];
+  return `<option value="">All obligations</option>${names.map(n => cmpDbOpt(n, n, f.obligation)).join('')}${f.obligation && !names.some(n => CmpRules.keyOf(n) === CmpRules.keyOf(f.obligation)) ? cmpDbOpt(f.obligation, f.obligation, f.obligation) : ''}`;
+}
 function cmpDbFilters() {
   const f = CMP_DB.f, d = CMP_DB.data, team = (CMP.me && CMP.me.team) || [];
-  const clients = d ? d.clientsList : [], names = d ? d.obligationNames : [];
-  const opt = (v, label, sel) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(label)}</option>`;
+  const opt = cmpDbOpt;
   $('#cmDbFilters').innerHTML = `<div class="flex flex-wrap items-end gap-2">
       <label class="w-40"><span>Dates</span><select onchange="cmpDbSet('preset', this.value)">${CMP_DB_PRESETS.map(([k, v]) => opt(k, v, f.preset)).join('')}</select></label>
       ${f.preset === 'custom' ? `<label class="w-40"><span>From</span><input type="date" value="${esc(f.from)}" onchange="cmpDbSet('from', this.value)"></label><label class="w-40"><span>To</span><input type="date" value="${esc(f.to)}" onchange="cmpDbSet('to', this.value)"></label>` : ''}
       <label class="w-36"><span>Upcoming</span><select onchange="cmpDbSet('days', Number(this.value))">${[7, 14, 30, 60, 90].map(n => opt(String(n), `Next ${n} days`, String(f.days))).join('')}</select></label>
       <label class="w-44"><span>Country</span><select onchange="cmpDbSet('country', this.value)">${cmpCountryOptions(f.country, 'All countries')}</select></label>
-      <label class="w-52"><span>Client</span><select onchange="cmpDbSet('clientId', this.value)"><option value="">All clients</option>${clients.map(c => opt(c.id, `${cmpCountry(c.country).flag} ${c.name} (${c.code})`, f.clientId)).join('')}</select></label>
-      <label class="w-48"><span>Obligation</span><select onchange="cmpDbSet('obligation', this.value)"><option value="">All obligations</option>${names.map(n => opt(n, n, f.obligation)).join('')}</select></label>
+      <label class="w-52"><span>Client</span><select id="cmDbClient" onchange="cmpDbSet('clientId', this.value)">${cmpDbClientOptions()}</select></label>
+      <label class="w-48"><span>Obligation</span><select id="cmDbOb" onchange="cmpDbSet('obligation', this.value)">${cmpDbObOptions()}</select></label>
       <label class="w-40"><span>Assigned to</span><select onchange="cmpDbSet('assignee', this.value)">${opt('', 'Everyone', f.assignee)}${opt('me', 'Me', f.assignee)}${opt('none', 'Nobody', f.assignee)}${team.map(u => opt(u.id, u.name || u.email, f.assignee)).join('')}</select></label>
       <div class="flex flex-wrap gap-2 ml-auto">${cmpBtn('↻ Refresh', "CMP_DB.cal.data = null; cmpCan('REPORTS') ? cmpDbLoad() : cmpDbCalLoad()")}${cmpBtn('Reset', 'cmpDbReset()')}${cmpCan('REPORTS') ? cmpBtn('⚙ Widgets', 'cmpDbWidgets()') + cmpBtn('Download (Excel)', 'cmpDbExcel()') + cmpBtn('Print / PDF', 'cmpDbPrint()') : ''}</div>
     </div>
@@ -70,15 +80,22 @@ const cmpDbQuery = () => { const f = CMP_DB.f; return cmpQs({ preset: f.preset, 
 /* ---------- loading, and the parts in the CA's order ---------- */
 async function cmpDbLoad(quiet) {
   const body = $('#cmDbBody'); if (!body) return;
+  const seq = ++CMP_DB.seq;
   if (!quiet && !CMP_DB.data) body.innerHTML = '<div class="bg-white rounded-xl shadow p-6 text-sm text-slate-500">Loading the dashboard…</div>';
   if (!quiet && CMP_DB.data) body.classList.add('opacity-60');
   let d;
   try { d = await api('/api/cmp/overview?' + cmpDbQuery()); }
-  catch (err) { body.classList.remove('opacity-60'); body.innerHTML = `<div class="bg-white rounded-xl shadow p-6"><div class="text-sm text-red-700 font-medium">The dashboard could not be loaded.</div><div class="text-sm text-slate-600 mt-1">${esc(err.message)}</div><div class="mt-3">${cmpBtn('Try again', 'cmpDbLoad()')}</div></div>`; return; }
+  catch (err) {
+    if (seq !== CMP_DB.seq || !document.getElementById('cmDbBody')) return;
+    body.classList.remove('opacity-60'); body.innerHTML = `<div class="bg-white rounded-xl shadow p-6"><div class="text-sm text-red-700 font-medium">The dashboard could not be loaded.</div><div class="text-sm text-slate-600 mt-1">${esc(err.message)}</div><div class="mt-3">${cmpBtn('Try again', 'cmpDbLoad()')}</div></div>`; return;
+  }
+  if (seq !== CMP_DB.seq || !document.getElementById('cmDbBody')) return; // (filters changed meanwhile, or the page was left)
   body.classList.remove('opacity-60');
   CMP_DB.data = d;
+  // (while a filter has the focus the bar is not drawn again, which would lose it: only its lists and the line under it are)
   const keepFilters = document.activeElement && document.getElementById('cmDbFilters').contains(document.activeElement);
-  if (!keepFilters) cmpDbFilters(); else $('#cmDbStamp').innerHTML = cmpDbStampText(d);
+  if (!keepFilters) cmpDbFilters();
+  else { $('#cmDbStamp').innerHTML = cmpDbStampText(d); const c = document.getElementById('cmDbClient'), o = document.getElementById('cmDbOb'); if (c) c.innerHTML = cmpDbClientOptions(); if (o) o.innerHTML = cmpDbObOptions(); }
   cmpDbRender(d);
 }
 // The parts, in the CA's order (4.1): figures, upcoming, overdue, calendar, reminders (and the communication log), stages, data collection
@@ -143,7 +160,7 @@ function cmpDbKpis(d) {
     ${card(n(k.dataPending), 'Data collection pending', 'border-violet-400', "cmpDbObligations('DATA_PENDING')")}
     ${card(n(k.taskPending), 'Tasks pending', 'border-indigo-400', "cmpDbObligations('TASK_PENDING')", 'Each obligation\'s task: open once its data is collected')}
     ${d.money ? card(cmpDbMoneyLines(cmpDbOutstandingLines(d), 'v'), 'Outstanding invoices', 'border-rose-400', "cmpDbGo('out')") : ''}
-    ${d.money ? card(cmpDbMoneyLines(money.filter(x => x.advances.unallocated).map(x => ({ currency: x.currency, v: x.advances.unallocated })), 'v'), 'Unallocated advances', 'border-teal-400', "CMP_ADV.status = 'OPEN'; go('cm-advances')") : ''}
+    ${d.money ? card(cmpDbMoneyLines(money.filter(x => x.advances.unallocated).map(x => ({ currency: x.currency, v: x.advances.unallocated })), 'v'), 'Unallocated advances', 'border-teal-400', "cmpDbAdvances('', 'OPEN')") : ''}
   </div>`;
 }
 // money cards: the outstanding per currency (the helper above draws lines from a key)
@@ -156,25 +173,33 @@ function cmpDbClients(missing) {
   go('cm-clients');
   setTimeout(() => { const c = document.getElementById('cmClCountry'); if (c) c.value = f.country; const m = document.querySelector('[data-page="cm-clients"] input[onchange*="CMP_CL.missing"]'); if (m) m.checked = Boolean(missing); }, 150);
 }
+// Each opens the same periods as its figure counts: the obligation by its exact name (not the search box, which reads words such as
+// "open" as a status); "due in the next days" = open and not past the due date, without the planned periods; the completed ones (counted
+// by the day they were completed) in the dashboard's own list of completed tasks
 function cmpDbObligations(status) {
   const f = CMP_DB.f, d = CMP_DB.data, today = CmpRules.dayIn(cmpTz());
+  if (status === 'COMPLETED') {
+    if (!cmpDbLayout().hidden.includes('dt')) { CMP_DB.taskView = 'done'; CMP_DB.page.tasksDone = 0; cmpDbRedraw(); return cmpDbGo('tasks'); }
+    return cmpDbReport('tasks-completed');
+  }
   const inWindow = status === 'UPCOMING_WINDOW';
-  cmpObligationsFilter({ status: inWindow ? 'OPEN' : status, country: f.country, clientId: f.clientId, assignee: f.assignee, q: f.obligation || '' });
+  cmpObligationsFilter({ status: inWindow ? 'OPEN_NOT_DUE' : status, country: f.country, clientId: f.clientId, assignee: f.assignee, q: '', obligation: f.obligation || '' });
   if (inWindow || status === 'PLANNED') { cmpRange('ob'); CMP.ranges.ob.r = { ...CMP.ranges.ob.r, mode: 'dates', from: today, to: CmpRules.addDays(today, d ? d.days : 30) }; }
-  if (status === 'COMPLETED' && d) { cmpRange('ob'); CMP.ranges.ob.r = { ...CMP.ranges.ob.r, mode: 'dates', from: d.period.from, to: d.period.to }; }
   go('cm-obligations');
   setTimeout(() => {
     const pg = document.querySelector('[data-page="cm-obligations"]'); if (!pg) return;
     const c = pg.querySelector('select[onchange*="CMP_OB.country"]'); if (c) c.value = f.country;
-    const q = pg.querySelector('input[oninput*="CMP_OB.q"]'); if (q) q.value = f.obligation || '';
+    const q = pg.querySelector('input[oninput*="CMP_OB.q"]'); if (q) q.value = '';
   }, 150);
 }
+// the Advance Payments page over all dates (an advance received last year can still be unallocated)
+function cmpDbAdvances(q, status) { CMP_ADV.q = q; CMP_ADV.status = status; cmpRange('adv'); CMP.ranges.adv.r = { ...CMP.ranges.adv.r, mode: 'all' }; go('cm-advances'); }
 
 /* ---------- tables: sorted by a click on a heading, ten rows a page (UI-002, NFR-002) ---------- */
 function cmpDbTable(id, rows, cols, { empty = 'Nothing here.', rowClass = () => '' } = {}) {
   const s = CMP_DB.sort[id] || {}, col = cols.find(c => c.key === s.key);
   const list = col ? [...rows].sort((a, b) => { const x = col.val(a), y = col.val(b); return (x < y ? -1 : x > y ? 1 : 0) * (s.dir || 1); }) : rows;
-  const page = Math.min(CMP_DB.page[id] || 0, Math.max(0, Math.ceil(list.length / CMP_DB_SIZE) - 1)), shown = list.slice(page * CMP_DB_SIZE, page * CMP_DB_SIZE + CMP_DB_SIZE);
+  const page = CMP_DB.page[id] = Math.min(CMP_DB.page[id] || 0, Math.max(0, Math.ceil(list.length / CMP_DB_SIZE) - 1)), shown = list.slice(page * CMP_DB_SIZE, page * CMP_DB_SIZE + CMP_DB_SIZE);
   if (!rows.length) return cmpEmpty(empty);
   return `<div class="overflow-x-auto"><table id="cmDbT-${id}" class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr>${cols.map(c => `<th class="py-2 pr-2 whitespace-nowrap ${c.right ? 'text-right' : ''}">${c.val ? `<button type="button" class="hover:text-emerald-700" onclick="cmpDbSort('${id}', '${c.key}')">${esc(c.label)}${s.key === c.key ? (s.dir > 0 ? ' ▲' : ' ▼') : ''}</button>` : esc(c.label)}</th>`).join('')}</tr></thead>
     <tbody>${shown.map(r => `<tr class="border-b last:border-0 ${rowClass(r)}">${cols.map(c => `<td class="py-1.5 pr-2 align-top ${c.right ? 'text-right' : ''}">${c.html(r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
@@ -328,7 +353,7 @@ function cmpDbFinance(d) {
     { key: 'client', label: 'Client', val: r => r.client.name.toLowerCase(), html: r => `<a href="#" class="hover:underline" onclick="event.preventDefault(); cmpOpenClient('${r.client.id}')">${esc(r.client.name)}</a>` },
     { key: 'rec', label: 'Received', right: true, val: r => r.received, html: r => cmpMoney(r.received, r.currency) }, { key: 'adj', label: 'Adjusted', right: true, val: r => r.adjusted, html: r => cmpMoney(r.adjusted, r.currency) },
     { key: 'rem', label: 'Remaining', right: true, val: r => r.remaining, html: r => `<b>${cmpMoney(r.remaining, r.currency)}</b>` }, { key: 'last', label: 'Last payment', val: r => r.lastOn, html: r => cmpDay(r.lastOn) },
-    { key: 'act', label: '', html: r => cmpBtn('Open', `CMP_ADV.q = ${JSON.stringify(r.client.name).replace(/"/g, '&quot;')}; CMP_ADV.status = ''; go('cm-advances')`) },
+    { key: 'act', label: '', html: r => cmpBtn('Open', `cmpDbAdvances(${JSON.stringify(r.client.name).replace(/"/g, '&quot;')}, '')`) },
   ];
   const outCols = [
     { key: 'no', label: 'Invoice', val: r => r.number, html: r => `<a href="#" class="text-emerald-700 underline" onclick="event.preventDefault(); cmpInvoiceOpen('${r.id}', cmpDbLoad)">${esc(r.number)}</a>` },
@@ -350,13 +375,14 @@ function cmpDbFinance(d) {
 function cmpDbActivity(d) {
   const A = d.activity, tone = { Client: 'bg-slate-100', Obligation: 'bg-sky-100 text-sky-800', Reminder: 'bg-emerald-100 text-emerald-800', 'Data collection': 'bg-violet-100 text-violet-800', Task: 'bg-indigo-100 text-indigo-800', Advance: 'bg-teal-100 text-teal-800', Invoice: 'bg-amber-100 text-amber-900', Receipt: 'bg-lime-100 text-lime-900' };
   const open = a => (!a.link ? '' : a.link.invoice ? `cmpInvoiceOpen('${a.link.invoice}', cmpDbLoad)` : a.link.advance ? `cmpAdvanceView('${a.link.advance}')` : a.link.period ? `cmpOpenPeriod('${a.link.period[0]}', '${a.link.period[1]}', cmpDbLoad)` : a.link.client ? `cmpOpenClient('${a.link.client}')` : '');
-  const page = CMP_DB.page.act || 0, rows = A.rows.slice(page * 15, page * 15 + 15);
+  const page = CMP_DB.page.act = Math.min(CMP_DB.page.act || 0, Math.max(0, Math.ceil(A.rows.length / 15) - 1)), rows = A.rows.slice(page * 15, page * 15 + 15);
   return cmpDbSec('act', `Recent activity <span class="text-sm font-normal text-slate-500">— ${esc(cmpDbPeriodText(d))}</span>`, rows.length ? `<ul class="divide-y">${rows.map(a => `<li class="py-2 flex gap-3 items-start">
       <span class="px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${tone[a.type] || 'bg-slate-100'}">${esc(a.type)}</span>
       <div class="min-w-0 flex-1"><div class="text-sm">${open(a) ? `<a href="#" class="hover:underline font-medium" onclick="event.preventDefault(); ${open(a)}">${esc(a.label)}</a>` : `<b>${esc(a.label)}</b>`}${a.client ? ` · ${esc(a.client)}` : ''}</div>
         <div class="text-xs text-slate-500 truncate" title="${esc(a.summary)}">${esc(a.summary)}</div></div>
       <div class="text-[11px] text-slate-500 text-right whitespace-nowrap">${esc(cmpAt(a.at))}<div>${esc(a.user || '')}</div></div></li>`).join('')}</ul>
     ${A.rows.length > 15 ? `<div class="flex items-center justify-end gap-2 text-xs text-slate-600 mt-2">${page * 15 + 1}–${Math.min(A.rows.length, page * 15 + 15)} of ${A.rows.length}${A.total > A.rows.length ? ` (the latest ${A.rows.length} of ${A.total})` : ''}${cmpBtn('‹', "cmpDbPage('act', -1)")}${cmpBtn('›', "cmpDbPage('act', 1)")}</div>` : ''}
+    ${A.more ? '<p class="text-xs text-slate-500 mt-1">A very busy stretch of dates: only the latest part of the log was read. Choose fewer dates to see all of it.</p>' : ''}
     <div class="mt-2"><a href="#/cm-activity" class="text-sm text-emerald-700 underline">The whole activity log ›</a></div>` : cmpEmpty('Nothing happened in these dates.'), cmpDbRepLink('audit-trail'));
 }
 function cmpDbAlerts(d) {
@@ -386,10 +412,13 @@ function cmpDbCalRange() {
   const [y, m] = day.split('-').map(Number); return { from: `${day.slice(0, 8)}01`, to: `${day.slice(0, 8)}${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}` };
 }
 async function cmpDbCalLoad() {
-  const box = document.getElementById('cmDbCal'); if (!box) return;
-  const r = cmpDbCalRange(), f = CMP_DB.f;
-  try { CMP_DB.cal.data = await api('/api/cmp/overview/calendar?' + cmpQs({ ...r, country: f.country, clientId: f.clientId, obligation: f.obligation, assignee: f.assignee })); }
-  catch (err) { box.innerHTML = `<h2 class="font-semibold mb-2">Compliance calendar</h2>${cmpEmpty(esc(err.message))}`; return; }
+  if (!document.getElementById('cmDbCal')) return;
+  const r = cmpDbCalRange(), f = CMP_DB.f, seq = ++CMP_DB.calSeq;
+  let data;
+  try { data = await api('/api/cmp/overview/calendar?' + cmpQs({ ...r, country: f.country, clientId: f.clientId, obligation: f.obligation, assignee: f.assignee })); }
+  catch (err) { const box = document.getElementById('cmDbCal'); if (box && seq === CMP_DB.calSeq) box.innerHTML = `<h2 class="font-semibold mb-2">Compliance calendar</h2>${cmpEmpty(esc(err.message))}`; return; }
+  if (seq !== CMP_DB.calSeq || !document.getElementById('cmDbCal')) return; // (another month or filter was chosen meanwhile)
+  CMP_DB.cal.data = data;
   cmpDbCalDraw();
 }
 function cmpDbCalMove(n) {

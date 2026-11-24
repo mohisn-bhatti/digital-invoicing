@@ -8,16 +8,17 @@
    An obligation is added (or edited) in one window: one row per obligation with its three dates and its three reminders, each a day and
    its own message (written in a second window that shows how it looks). It comes back every year on the same dates. */
 
-const CMP_OB = { status: 'ALL', country: '', clientId: '', q: '', assignee: '', archived: false, timer: null, form: null, period: null, clients: null, saving: false };
-CMP_RESETS.push(() => Object.assign(CMP_OB, { status: 'ALL', country: '', clientId: '', q: '', assignee: '', archived: false, form: null, period: null, clients: null, saving: false }));
-const cmpObQuery = () => cmpQs({ status: CMP_OB.status, country: CMP_OB.country, clientId: CMP_OB.clientId, q: CMP_OB.q, assignee: CMP_OB.assignee, archived: CMP_OB.archived ? '1' : '', ...cmpRangeDates('ob') });
+// (obligation: one obligation by its exact name, from the Dashboard's Obligation filter; shown above the table with ✕ to drop it)
+const CMP_OB = { status: 'ALL', country: '', clientId: '', q: '', obligation: '', assignee: '', archived: false, timer: null, form: null, period: null, clients: null, saving: false };
+CMP_RESETS.push(() => Object.assign(CMP_OB, { status: 'ALL', country: '', clientId: '', q: '', obligation: '', assignee: '', archived: false, form: null, period: null, clients: null, saving: false }));
+const cmpObQuery = () => cmpQs({ status: CMP_OB.status, country: CMP_OB.country, clientId: CMP_OB.clientId, q: CMP_OB.q, obligation: CMP_OB.obligation, assignee: CMP_OB.assignee, archived: CMP_OB.archived ? '1' : '', ...cmpRangeDates('ob') });
 
 const CMP_OB_STATUSES = [['ALL', 'Everything'], ['OPEN', 'Open (not completed)'], ['OVERDUE', 'Overdue'], ['UPCOMING', 'Upcoming'], ['PERIOD_CLOSED', 'Period closed'], ['DATA_COLLECTED', 'Data collected'],
   ['FILED', 'Filed'], ['PAID', 'Paid'], ['COMPLETED', 'Completed'], ['CONFIRM', 'Dates to confirm'], ['PLANNED', 'Planned (still to come)'],
-  ['DATA_PENDING', 'Data collection pending'], ['TASK_PENDING', 'Task pending (data collected)']];
+  ['DATA_PENDING', 'Data collection pending'], ['TASK_PENDING', 'Task pending (data collected)'], ['OPEN_NOT_DUE', 'Open, not past the due date']];
 // From the dashboard or the notifications: a status over all dates (an overdue period of last year is still overdue)
 function cmpObligationsFilter(over) {
-  Object.assign(CMP_OB, over);
+  Object.assign(CMP_OB, { obligation: '' }, over); // (the obligation filter only when it is asked for)
   if (over.status) { cmpRange('ob'); CMP.ranges.ob.r = { ...CMP.ranges.ob.r, mode: 'all' }; }
   const s = document.getElementById('cmObStatus'); if (s) s.value = CMP_OB.status;
 }
@@ -336,7 +337,8 @@ async function cmpLoadObligations(offset) {
   for (const id of [...CMP_SEL.occ.keys()]) if (!d.rows.some(r => r.id === id)) CMP_SEL.occ.delete(id); // (what is no longer shown is no longer selected)
   const real = d.total - (d.planned || 0);
   $('#cmObNote').innerHTML = `${esc(cmpRangeText('ob'))} · ${real} period${real === 1 ? '' : 's'}${d.planned ? ` and ${d.planned} planned (still to come)` : ''} · by due date, then client`
-    + (CMP_OB.clientId ? ` · <button type="button" class="underline text-emerald-700" onclick="cmpObOnly('')">show all clients</button>` : '');
+    + (CMP_OB.clientId ? ` · <button type="button" class="underline text-emerald-700" onclick="cmpObOnly('')">show all clients</button>` : '')
+    + (CMP_OB.obligation ? ` · obligation: <b>${esc(CMP_OB.obligation)}</b> <button type="button" class="underline text-emerald-700" onclick="CMP_OB.obligation = ''; cmpLoadObligations()">✕ every obligation</button>` : '');
   $('#cmObRows').innerHTML = d.rows.map(r => cmpTrackerRow(r, 'cmpLoadObligations', { ticks: true })).join('')
     || `<tr><td colspan="20">${cmpEmpty(`Nothing for ${esc(cmpRangeText('ob'))}. Obligations are added from a client's page; choose other dates above to see other years.`)}</td></tr>`;
   cmpOccBar();
