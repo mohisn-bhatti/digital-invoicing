@@ -11,35 +11,65 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
     const log = (ctx, action, entityType, entityId, summary, details) => audit(ctx.req, { tenantId: ctx.tenantId, action, entityType, entityId, summary, details });
 
     /* ---------- templates ---------- */
+    // Each with its category, its country ('' = every country) and how many obligations use it (reminders, and the advance / invoice /
+    // receipt templates of obligations). ?country=AE: those a client of the UAE can use (the UAE's and every country's); ?category=…
+    const tplView = t => ({ id: t.id, name: t.name, purpose: t.purpose, country: t.country || '', version: t.version, body: t.body, active: t.active,
+        reminders: t._count ? t._count.reminders : 0, docLinks: t._count ? t._count.docLinks : 0, updatedBy: t.updatedBy || t.createdBy, updatedAt: t.updatedAt });
     async function listTemplates(ctx, q = {}) {
-        const rows = await prisma.cmpTemplate.findMany({ where: { tenantId: ctx.tenantId, ...(q.all === '1' ? {} : { active: true }) }, orderBy: [{ active: 'desc' }, { name: 'asc' }], include: { _count: { select: { reminders: true } } } });
-        return rows.map(t => ({ id: t.id, name: t.name, purpose: t.purpose, body: t.body, active: t.active, reminders: t._count.reminders, updatedBy: t.updatedBy || t.createdBy, updatedAt: t.updatedAt }));
+        const where = { tenantId: ctx.tenantId, ...(q.all === '1' ? {} : { active: true }) };
+        if (q.country) where.country = { in: [V.country(q.country).code, ''] };
+        if (q.category) { const c = String(q.category).toUpperCase(); where.purpose = /^REMINDER_/.test(c) ? { in: [c, 'REMINDER'] } : c === 'OTHER' ? { in: ['OTHER', 'DATA_COLLECTION', 'COMPLETION'] } : c; }
+        const rows = await prisma.cmpTemplate.findMany({ where, orderBy: [{ active: 'desc' }, { name: 'asc' }], include: { _count: { select: { reminders: true, docLinks: true } } } });
+        return rows.map(tplView);
     }
     const taken = e => { if (e && e.code === 'P2002') throw new CmpError(409, 'There is already a template with that name.'); throw e; };
+    const forWhom = t => (t.country ? ` for ${common.countryName(t.country)} clients` : '');
     async function createTemplate(ctx, b) {
         const d = V.cleanTemplate(b || {});
         const t = await prisma.cmpTemplate.create({ data: { tenantId: ctx.tenantId, ...d, createdBy: ctx.email, updatedBy: ctx.email } }).catch(taken);
-        await log(ctx, 'cmp.template.create', 'CmpTemplate', t.id, `Template "${t.name}" added (${R.TEMPLATE_PURPOSES[t.purpose].toLowerCase()})`);
-        return t;
+        await log(ctx, 'cmp.template.create', 'CmpTemplate', t.id, `Template "${t.name}" added (${R.templateCategory(t.purpose)}${forWhom(t)})`);
+        return tplView(t);
     }
     async function findTemplate(ctx, id) {
-        const t = await prisma.cmpTemplate.findFirst({ where: { id: String(id || ''), tenantId: ctx.tenantId }, include: { _count: { select: { reminders: true } } } });
+        const t = await prisma.cmpTemplate.findFirst({ where: { id: String(id || ''), tenantId: ctx.tenantId }, include: { _count: { select: { reminders: true, docLinks: true } } } });
         if (!t) throw new CmpError(404, 'Template not found.');
         return t;
     }
+    const usedBy = t => t._count.reminders + t._count.docLinks;
+    const usedText = t => [t._count.reminders && `${t._count.reminders} reminder(s)`, t._count.docLinks && `${t._count.docLinks} obligation(s) as their advance, invoice or receipt template`].filter(Boolean).join(' and ');
+    // A changed message (the CA, 24 Nov 2026): the obligations that use the template take the new version at once, except the LOCKED ones:
+    // they keep the message they have (kept as their own copy) and show "the template is updated: unlock to accept, or reject".
     async function updateTemplate(ctx, id, b) {
         const t = await findTemplate(ctx, id);
-        const d = V.cleanTemplate(b || {}, { partial: true });
-        if (d.active === false && t._count.reminders) throw new CmpError(409, `"${t.name}" is used by ${t._count.reminders} reminder(s). Choose another template for them first.`);
-        const upd = await prisma.cmpTemplate.update({ where: { id: t.id }, data: { ...d, updatedBy: ctx.email } }).catch(taken);
-        const what = [d.name !== undefined && d.name !== t.name && `renamed "${t.name}" → "${d.name}"`, d.purpose !== undefined && d.purpose !== t.purpose && `for ${R.TEMPLATE_PURPOSES[d.purpose].toLowerCase()}`,
-            d.body !== undefined && d.body !== t.body && 'message changed', d.active !== undefined && d.active !== t.active && (d.active ? 'back in use' : 'retired')].filter(Boolean);
-        if (what.length) await log(ctx, 'cmp.template.update', 'CmpTemplate', t.id, `Template "${upd.name}": ${what.join(', ')}`);
-        return upd;
+        const d = V.cleanTemplate(b || {}, { partial: true, was: t.purpose });
+        if (d.active === false && usedBy(t)) throw new CmpError(409, `"${t.name}" is used by ${usedText(t)}. Choose another template for them first.`);
+        const changed = d.body !== undefined && d.body !== t.body;
+        let kept = 0, followed = 0;
+        const upd = await prisma.$transaction(async tx => {
+            const u = await tx.cmpTemplate.update({ where: { id: t.id }, data: { ...d, ...(changed ? { version: { increment: 1 } } : {}), updatedBy: ctx.email } });
+            if (!changed) return u;
+            for (const model of ['cmpReminder', 'cmpObligationTemplate']) {
+                const links = await tx[model].findMany({ where: { templateId: t.id }, select: { id: true, body: true, obligation: { select: { locked: true } } } });
+                const locked = links.filter(l => l.obligation.locked), open = links.filter(l => !l.obligation.locked);
+                // a locked one with no copy of its own yet keeps the message as it was until now
+                const freeze = locked.filter(l => l.body === null).map(l => l.id);
+                if (freeze.length) await tx[model].updateMany({ where: { id: { in: freeze } }, data: { body: t.body } });
+                if (open.length) await tx[model].updateMany({ where: { id: { in: open.map(l => l.id) } }, data: { body: null, templateVersion: u.version, rejectedVersion: 0 } });
+                kept += locked.length; followed += open.length;
+            }
+            return u;
+        }).catch(taken);
+        const what = [d.name !== undefined && d.name !== t.name && `renamed "${t.name}" → "${d.name}"`, d.purpose !== undefined && d.purpose !== t.purpose && `category ${R.templateCategory(t.purpose)} → ${R.templateCategory(d.purpose)}`,
+            d.country !== undefined && d.country !== (t.country || '') && `for ${d.country ? common.countryName(d.country) : 'every country'}`,
+            changed && `message changed (version ${upd.version}${followed ? `; ${followed} use${followed === 1 ? 's' : ''} it now` : ''}${kept ? `; ${kept} locked keep${kept === 1 ? 's' : ''} the earlier one until accepted` : ''})`,
+            d.active !== undefined && d.active !== t.active && (d.active ? 'back in use' : 'retired')].filter(Boolean);
+        if (what.length) await log(ctx, 'cmp.template.update', 'CmpTemplate', t.id, `Template "${upd.name}": ${what.join(', ')}`,
+            { version: upd.version, changes: common.changes({ ...t, country: t.country || '' }, { ...t, ...d }, { name: 'Name', purpose: 'Category', country: 'Country', body: 'Message', active: 'In use' }) });
+        return { ...tplView({ ...upd, _count: t._count }), followed, kept };
     }
     async function deleteTemplate(ctx, id) {
         const t = await findTemplate(ctx, id);
-        if (t._count.reminders) throw new CmpError(409, `"${t.name}" is used by ${t._count.reminders} reminder(s). Choose another template for them first.`);
+        if (usedBy(t)) throw new CmpError(409, `"${t.name}" is used by ${usedText(t)}. Choose another template for them first.`);
         await prisma.cmpTemplate.delete({ where: { id: t.id } }); // the messages already sent keep its name (CmpMessage.templateName)
         await log(ctx, 'cmp.template.delete', 'CmpTemplate', t.id, `Template "${t.name}" deleted`);
         return { ok: true };
@@ -52,8 +82,8 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         for (const f of await clients.fieldsOf(ctx.tenantId, client)) if (!f.missing) fields[f.name] = f.type === 'DATE' ? R.fmtDay(f.value) : f.value;
         const settings = await common.settings(ctx.tenantId), wa = phoneFor(client, fields);
         return { client, countryName: common.countryName(client.country), whatsapp: wa ? '+' + wa : '', obligationName: occ ? occ.obligation.name : '', portalUrl: occ ? occ.obligation.portalUrl : '',
-            daysLeft: occ ? R.daysBetween(R.dayIn(client.timeZone, now()), R.ymdOf(occ.dueDate)) : null, occurrence: occ || {}, fields,
-            firm: { name: settings.firmName, phone: settings.firmPhone, email: settings.firmEmail } };
+            daysLeft: occ ? R.daysBetween(R.dayIn(client.timeZone, now()), R.ymdOf(occ.dueDate)) : null, occurrence: occ || {}, fields, dateFormat: settings.dateFormat,
+            firm: { name: settings.firmName, phone: settings.firmPhone, email: settings.firmEmail, address: [settings.firmAddress, settings.firmCity, settings.firmCountry ? common.countryName(settings.firmCountry) : ''].filter(Boolean).join(', '), website: settings.firmWebsite } };
     }
     // The number WhatsApp gets: the client's "WhatsApp Number" field if it has one, else its contact number (SRS 8)
     function phoneFor(client, fields) {
@@ -64,14 +94,16 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
     // What a message is about, checked: the client, optionally a year of one of its obligations and one of that obligation's reminders.
     // A reminder can only be sent once its time has come (SRS 6: a bleak reminder has no WhatsApp button).
     async function resolve(ctx, b) {
-        const kind = String(b.kind || (b.reminderId ? 'REMINDER' : b.receiptId ? 'RECEIPT' : b.invoiceId ? 'INVOICE' : 'OTHER')).toUpperCase();
+        const kind = String(b.kind || (b.reminderId ? 'REMINDER' : b.advanceId ? 'ADVANCE' : b.receiptId ? 'RECEIPT' : b.invoiceId ? 'INVOICE' : 'OTHER')).toUpperCase();
         if (!R.MESSAGE_KINDS[kind]) throw bad('Unknown kind of message.');
         let occ = null, reminder = null, money = null;
-        // an invoice or receipt (SRS 9: WhatsApp on both): the client is the invoice's
-        if (b.invoiceId || b.receiptId) {
-            money = await invoices.messageContext(ctx, { invoiceId: b.invoiceId, receiptId: b.receiptId });
-            if (!b.clientId) b = { ...b, clientId: money.inv.clientId };
-            else if (b.clientId !== money.inv.clientId) throw bad('That invoice is not this client\'s.');
+        // an invoice, a receipt or an advance payment receipt (SRS 9 and the CA: WhatsApp on each): the client is the document's
+        if (b.invoiceId || b.receiptId || b.advanceId) {
+            money = await invoices.messageContext(ctx, { invoiceId: b.invoiceId, receiptId: b.receiptId, advanceId: b.advanceId });
+            if (!b.clientId) b = { ...b, clientId: money.clientId };
+            else if (b.clientId !== money.clientId) throw bad('That document is not this client\'s.');
+            // the obligation period it is about, when it has one (its templates are the ones set on that obligation)
+            if (!b.occurrenceId && money.occurrenceId) b = { ...b, occurrenceId: money.occurrenceId };
         }
         if (b.occurrenceId) {
             occ = await common.findOccurrence(ctx.tenantId, b.occurrenceId, { live: true });
@@ -85,28 +117,42 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
             if (!reminder) throw bad('That reminder is not one of this obligation\'s.');
             const settings = await common.settings(ctx.tenantId);
             const sent = await obligations.sentMap([occ.id]);
-            const state = R.reminderStates(occ, obligations.reminderList([reminder]), { tz: client.timeZone, hour: settings.reminderHour, now: now(), sent: sent.get(occ.id) || new Map() })[0];
+            const state = R.reminderStates(occ, obligations.reminderList([reminder]), { tz: client.timeZone, hour: settings.reminderHour, now: now(), sent: sent.get(occ.id) || new Map(), work: R.workOf(settings) })[0];
             if (state.state === 'BLEAK') throw new CmpError(409, `This reminder is not due yet: it becomes active on ${R.fmtAt(state.fireAt, client.timeZone)} (${C.zoneCity(client.timeZone)} time).`);
             if (state.state === 'CLOSED') throw new CmpError(409, 'This period is completed: its reminders are closed.');
         }
+        // The template (the CA, 24 Nov 2026): the one set on the obligation for this reminder or document comes first, as the obligation has
+        // it (a locked obligation may keep an earlier version); another one can be chosen in the window; else the first of its category for
+        // the client's country
+        const n = reminder ? [...occ.obligation.reminders].sort((x, y) => x.offsetDays - y.offsetDays).findIndex(r => r.id === reminder.id) + 1 : 1;
+        const category = R.categoryFor(kind, n);
+        let link = null;
+        if (reminder) link = reminder.templateId || reminder.body ? { templateId: reminder.templateId, body: reminder.body } : null;
+        else if (occ && ['ADVANCE', 'INVOICE', 'RECEIPT'].includes(kind)) link = await prisma.cmpObligationTemplate.findUnique({ where: { obligationId_kind: { obligationId: occ.obligationId, kind } } });
         let template = null;
-        const templateId = b.templateId || (reminder && !reminder.body && reminder.templateId);
-        if (templateId) {
-            template = await prisma.cmpTemplate.findFirst({ where: { id: String(templateId), tenantId: ctx.tenantId } });
+        const asked = b.templateId ? String(b.templateId) : null;
+        if (b.noTemplate === true && !asked) { /* "— none —" chosen in the window: the person writes the message */ }
+        else if (asked && !(link && link.templateId === asked)) {
+            template = await prisma.cmpTemplate.findFirst({ where: { id: asked, tenantId: ctx.tenantId } });
             if (!template) throw bad('Template not found.');
-        } else if (reminder && reminder.body) {
-            // the reminder's own message (the CA: each obligation has its own), named after its place: "2nd reminder"
-            const n = [...occ.obligation.reminders].sort((x, y) => x.offsetDays - y.offsetDays).findIndex(r => r.id === reminder.id) + 1;
-            template = { id: null, name: `${R.ordinal(n)} reminder`, body: reminder.body };
+        } else if (link && link.templateId) {
+            const t = await prisma.cmpTemplate.findFirst({ where: { id: link.templateId, tenantId: ctx.tenantId } });
+            if (t) template = { ...t, body: link.body ?? t.body }; // (its own copy when it kept an earlier version)
+        } else if (link && link.body) {
+            // a reminder's own message written before templates were required (16–24 Nov 2026), named after its place: "2nd reminder"
+            template = { id: null, name: `${R.ordinal(n)} reminder`, body: link.body };
+        } else if (!asked && !b.noDefault) {
+            const list = await prisma.cmpTemplate.findMany({ where: { tenantId: ctx.tenantId, active: true }, orderBy: { name: 'asc' } });
+            template = list.find(t => R.templateFits(t, category, client.country) && t.country) || list.find(t => R.templateFits(t, category, client.country)) || null;
         }
-        return { kind, occ, client, reminder, template, money };
+        return { kind, occ, client, reminder, template, money, category };
     }
     // The text and the number, ready for the person to read and change before it goes to WhatsApp
     async function prepare(ctx, b) {
-        const { kind, occ, client, template, money } = await resolve(ctx, b || {});
+        const { kind, occ, client, template, money, category } = await resolve(ctx, b || {});
         const c = { ...(await contextFor(ctx, client, occ)), ...(money ? money.ctx : {}) };
         const r = template ? R.render(template.body, c) : { text: '', missing: [], empty: [] };
-        return { kind, body: r.text, missing: r.missing, empty: r.empty, phone: phoneFor(client, c.fields), templateId: template ? template.id : null, templateName: template ? template.name : '',
+        return { kind, category, body: r.text, missing: r.missing, empty: r.empty, phone: phoneFor(client, c.fields), templateId: template ? template.id : null, templateName: template ? template.name : '',
             client: { id: client.id, code: client.code, name: client.name, country: client.country } };
     }
     // Logs the message and gives back the WhatsApp link to open
@@ -121,9 +167,10 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         if (b.fromId && !from) throw bad('That WhatsApp number is not one of the firm\'s any more. Reload the page.');
         const m = await prisma.cmpMessage.create({ data: { tenantId: ctx.tenantId, clientId: client.id, occurrenceId: occ ? occ.id : null, reminderId: reminder ? reminder.id : null,
             templateId: template ? template.id : null, templateName: template ? template.name : '', kind, phone, fromPhone: from ? from.phone : '', fromLabel: from ? from.label : '', body, userId: ctx.userId || null, userEmail: ctx.email,
-            invoiceId: money && money.inv ? money.inv.id : null, receiptId: money && money.receipt ? money.receipt.id : null } });
-        // an issued invoice handed to WhatsApp counts as sent (SRS 9: Draft, Issued, Sent ...)
+            invoiceId: money && money.inv ? money.inv.id : null, receiptId: money && money.receipt ? money.receipt.id : null, advanceId: money && money.advance ? money.advance.id : null } });
+        // an issued invoice handed to WhatsApp counts as sent (SRS 9: Draft, Issued, Sent ...); an advance receipt too
         if (money && money.inv && kind === 'INVOICE' && !money.inv.sentAt) await invoices.markSent(ctx, money.inv.id, 'on WhatsApp');
+        if (money && money.advance && kind === 'ADVANCE' && !money.advance.sentAt) await prisma.cmpAdvance.update({ where: { id: money.advance.id }, data: { sentAt: now() } });
         return { url: R.waUrl(phone, body), to: phone, text: body, open: from ? from.open : 'ANY', from: from ? { label: from.label, phone: from.phone } : null, message: { id: m.id, createdAt: m.createdAt } };
     }
     // A reminder given another way (the CA: a client with no WhatsApp is reminded by phone or email): marked by hand, so it counts as
@@ -156,12 +203,15 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         const where = { tenantId: ctx.tenantId, voidedAt: null };
         if (b.reminderId) Object.assign(where, { occurrenceId: String(b.occurrenceId || ''), reminderId: String(b.reminderId) });
         else if (b.receiptId) where.receiptId = String(b.receiptId);
+        else if (b.advanceId) Object.assign(where, { advanceId: String(b.advanceId), kind: 'ADVANCE' });
         else if (b.invoiceId) Object.assign(where, { invoiceId: String(b.invoiceId), kind: 'INVOICE' });
-        else throw bad('Say which reminder, invoice or receipt.');
+        else throw bad('Say which reminder, advance payment, invoice or receipt.');
         const m = await prisma.cmpMessage.findFirst({ where, orderBy: { createdAt: 'desc' }, select: { id: true } });
         if (!m) throw new CmpError(409, 'Nothing was sent for it yet.');
         const out = await voidMessage(ctx, m.id);
         // an invoice none of whose messages count any more is "not sent" again (unless it was marked sent by hand without a message)
+        if (b.advanceId && !(await prisma.cmpMessage.count({ where: { tenantId: ctx.tenantId, advanceId: String(b.advanceId), kind: 'ADVANCE', voidedAt: null } })))
+            await prisma.cmpAdvance.updateMany({ where: { id: String(b.advanceId), tenantId: ctx.tenantId }, data: { sentAt: null } });
         if (b.invoiceId && !(await prisma.cmpMessage.count({ where: { tenantId: ctx.tenantId, invoiceId: String(b.invoiceId), kind: 'INVOICE', voidedAt: null } }))) {
             const inv = await prisma.cmpInvoice.findFirst({ where: { id: String(b.invoiceId), tenantId: ctx.tenantId }, select: { id: true, sentAt: true, status: true } });
             if (inv && inv.sentAt && inv.status !== 'CANCELLED') await invoices.unmarkSent(ctx, inv.id);
@@ -242,14 +292,16 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
             prisma.cmpOccurrence.findMany({ where: { tenantId: ctx.tenantId, stage: { not: 'COMPLETED' }, obligation: { ...live, reminders: { some: {} } }, dueAt: { gte: new Date(+at - 367 * R.DAY), lte: new Date(+at + 367 * R.DAY) } },
                 select: { id: true, periodEnd: true, dueDate: true, stage: true, obligation: { select: { client: { select: { timeZone: true } }, reminders: { select: { id: true, offsetDays: true } } } } } }),
         ]);
-        const sent = await obligations.sentMap(rows.map(r => r.id));
-        const ready = rows.filter(o => R.reminderStates(o, o.obligation.reminders, { tz: o.obligation.client.timeZone, hour: settings.reminderHour, now: at, sent: sent.get(o.id) || new Map() })
+        const sent = await obligations.sentMap(rows.map(r => r.id)), work = R.workOf(settings);
+        const ready = rows.filter(o => R.reminderStates(o, o.obligation.reminders, { tz: o.obligation.client.timeZone, hour: settings.reminderHour, now: at, sent: sent.get(o.id) || new Map(), work })
             .some(r => r.state === 'HIGHLIGHTED' || r.state === 'MISSED')).length;
         return { overdue, ready, confirm };
     }
 
     // The templates page (the CA): pick a client and see every placeholder with that client's real value, in groups, to write a
-    // template with. The obligation is the one asked for, else the client's next open one; the invoice and receipt its latest ones.
+    // template with (24 Nov 2026: no period to choose — every obligation of the client shows, each with its own values, and any of them can
+    // be the one the preview uses). The default obligation is the one asked for, else the client's next open one; the advance, invoice and
+    // receipt are the client's latest ones.
     async function templateContext(ctx, q = {}) {
         const client = await common.findClient(ctx.tenantId, q.clientId);
         let occ = null;
@@ -257,20 +309,33 @@ function createComms({ prisma, audit, common, clients, obligations, invoices, no
         else occ = await prisma.cmpOccurrence.findFirst({ where: { clientId: client.id, stage: { not: 'COMPLETED' }, obligation: { archivedAt: null } }, orderBy: { dueDate: 'asc' }, include: { obligation: true } })
             || await prisma.cmpOccurrence.findFirst({ where: { clientId: client.id }, orderBy: { dueDate: 'desc' }, include: { obligation: true } });
         const c = await contextFor(ctx, client, occ);
-        const inv = ctx.perms.has('INVOICE') ? await prisma.cmpInvoice.findFirst({ where: { clientId: client.id, status: { notIn: ['DRAFT', 'CANCELLED'] } }, orderBy: { issuedAt: 'desc' }, select: { id: true } }) : null;
-        const rc = ctx.perms.has('INVOICE') ? await prisma.cmpReceipt.findFirst({ where: { clientId: client.id, voidedAt: null }, orderBy: { createdAt: 'desc' }, select: { id: true } }) : null;
+        const money = ctx.perms.has('INVOICE');
+        const inv = money ? await prisma.cmpInvoice.findFirst({ where: { clientId: client.id, status: { notIn: ['DRAFT', 'CANCELLED'] } }, orderBy: { issuedAt: 'desc' }, select: { id: true } }) : null;
+        const rc = money ? await prisma.cmpReceipt.findFirst({ where: { clientId: client.id, voidedAt: null }, orderBy: { createdAt: 'desc' }, select: { id: true } }) : null;
+        const adv = money ? await prisma.cmpAdvance.findFirst({ where: { clientId: client.id, voidedAt: null }, orderBy: { createdAt: 'desc' }, select: { id: true } }) : null;
         if (inv) Object.assign(c, (await invoices.messageContext(ctx, { invoiceId: inv.id })).ctx);
         if (rc) c.receipt = (await invoices.messageContext(ctx, { receiptId: rc.id })).ctx.receipt;
+        if (adv) c.advance = (await invoices.messageContext(ctx, { advanceId: adv.id })).ctx.advance;
         const fieldNames = (await clients.fieldsOf(ctx.tenantId, client)).map(f => f.name);
-        const value = name => { const r = R.render(`[${name}]`, c); return r.missing.length ? '' : r.text; };
-        const groups = R.PLACEHOLDER_GROUPS.map(([title, names]) => ({ title, items: names.map(name => ({ name, value: value(name) })) }));
-        groups.splice(1, 0, { title: 'Additional information', items: fieldNames.map(name => ({ name, value: value(name) })) });
-        const obligationsList = await prisma.cmpOccurrence.findMany({ where: { clientId: client.id, obligation: { archivedAt: null } }, orderBy: { dueDate: 'desc' }, take: 50, include: { obligation: { select: { name: true } } } });
+        const valueIn = (name, cx) => { const r = R.render(`[${name}]`, cx); return r.missing.length ? '' : r.text; };
+        const groups = R.PLACEHOLDER_GROUPS.map(([title, names]) => ({ title, items: names.map(name => ({ name, value: valueIn(name, c) })) }));
+        groups.splice(1, 0, { title: 'Additional information', items: fieldNames.map(name => ({ name, value: valueIn(name, c) })) });
+        // every obligation of the client (not archived): its next open period (else its last one), with the Obligation placeholders' values
+        const obs = await prisma.cmpObligation.findMany({ where: { tenantId: ctx.tenantId, clientId: client.id, archivedAt: null }, orderBy: { name: 'asc' }, take: 200,
+            include: { occurrences: { orderBy: { seq: 'asc' } } } });
+        const today = R.dayIn(client.timeZone, now());
+        const obNames = (R.PLACEHOLDER_GROUPS.find(g => g[0] === 'Obligation') || [, []])[1];
+        const obligationsList = obs.map(ob => {
+            const o = (occ && occ.obligationId === ob.id ? ob.occurrences.find(x => x.id === occ.id) : null) || ob.occurrences.find(x => x.stage !== 'COMPLETED') || ob.occurrences[ob.occurrences.length - 1];
+            if (!o) return null;
+            const part = { obligationName: ob.name, portalUrl: ob.portalUrl, daysLeft: R.daysBetween(today, R.ymdOf(o.dueDate)), occurrence: { periodStart: R.ymdOf(o.periodStart), periodEnd: R.ymdOf(o.periodEnd), dueDate: R.ymdOf(o.dueDate) } };
+            return { occurrenceId: o.id, obligationId: ob.id, name: ob.name, period: R.periodName(o), dueDate: R.ymdOf(o.dueDate), part, items: obNames.map(name => ({ name, value: valueIn(name, { ...c, ...part }) })) };
+        }).filter(Boolean).sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : a.name.localeCompare(b.name)));
         // (the context goes to the browser: the client's plain details only, never its stored password or PIN, even encrypted)
         const safe = { ...c, client: Object.fromEntries(['name', 'code', 'registrationNo', 'email', 'contactNumber', 'address', 'reference', 'country'].map(k => [k, client[k]])),
             occurrence: occ ? { periodStart: R.ymdOf(occ.periodStart), periodEnd: R.ymdOf(occ.periodEnd), dueDate: R.ymdOf(occ.dueDate) } : {} };
-        return { client: { id: client.id, code: client.code, name: client.name, country: client.country }, occurrenceId: occ ? occ.id : null, ctx: safe, groups,
-            periods: obligationsList.map(o => ({ id: o.id, name: o.obligation.name, period: R.periodName(o), dueDate: R.ymdOf(o.dueDate) })) };
+        return { client: { id: client.id, code: client.code, name: client.name, country: client.country }, occurrenceId: occ ? occ.id : null, ctx: safe, groups, obligations: obligationsList,
+            periods: obligationsList.map(o => ({ id: o.occurrenceId, name: o.name, period: o.period, dueDate: o.dueDate })) };
     }
 
     return { listTemplates, createTemplate, updateTemplate, deleteTemplate, prepare, send, markReminded, voidMessage, voidLast, listMessages, notifications, alerts, templateContext };

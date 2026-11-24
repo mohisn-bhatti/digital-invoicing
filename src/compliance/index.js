@@ -8,6 +8,8 @@ const { createSweep } = require('./sweep');
 const { createInvoices } = require('./invoices');
 const { createBulk } = require('./bulk');
 const { createReports } = require('./reports');
+const { createNotify } = require('./notify');
+const { createReportsCatalog } = require('./reportsCatalog');
 
 function createCompliance({ prisma, audit, encrypt, decrypt, now = () => new Date() }) {
     const common = createCommon({ prisma });
@@ -17,8 +19,12 @@ function createCompliance({ prisma, audit, encrypt, decrypt, now = () => new Dat
     const comms = createComms({ prisma, audit, common, clients, obligations, invoices, now });
     const bulk = createBulk({ prisma, audit, common, obligations, now });
     const reports = createReports({ prisma, audit, common, clients, obligations, comms, invoices, now });
-    const { sweep } = createSweep({ prisma, audit, obligations, now });
-    return { common, clients, obligations, comms, invoices, bulk, reports, sweep };
+    // the notifications hear about what happens through common.notify (set here, once everything they may need exists)
+    const notify = createNotify({ prisma, audit, common, clients, obligations, invoices, comms, now });
+    common.hooks.notify = notify;
+    const reportsCatalog = createReportsCatalog({ prisma, audit, common, clients, obligations, comms, invoices, reports, now });
+    const { sweep } = createSweep({ prisma, audit, obligations, notify, now });
+    return { common, clients, obligations, comms, invoices, bulk, reports, notify, reportsCatalog, sweep };
 }
 
 module.exports = { createCompliance };

@@ -17,7 +17,7 @@ function createClients({ prisma, audit, encrypt, decrypt, common, now }) {
         const before = await common.settings(ctx.tenantId);
         await prisma.cmpSettings.upsert({ where: { tenantId: ctx.tenantId }, create: { tenantId: ctx.tenantId, ...data }, update: data });
         const after = await common.settings(ctx.tenantId);
-        const SHOWN = ['timeZone', 'reminderHour', 'amberDays', 'autoNextYear', 'invoiceFormat', 'receiptFormat'];
+        const SHOWN = ['timeZone', 'reminderHour', 'amberDays', 'autoNextYear', 'invoiceFormat', 'receiptFormat', 'advanceFormat', 'dateFormat', 'numberFormat', 'holidayMode', 'notifyHour', 'sessionMinutes', 'firmCity', 'firmCountry'];
         const what = Object.keys(data).filter(k => JSON.stringify(before[k]) !== JSON.stringify(after[k])).map(k => (SHOWN.includes(k) ? `${k} ${before[k]} → ${after[k]}` : k === 'waSenders' ? `WhatsApp numbers: ${after.waSenders.map(s => `${s.label} ${s.phone}`).join(', ') || 'none'}` : k));
         if (what.length) await audit(ctx.req, { tenantId: ctx.tenantId, action: 'cmp.settings.update', entityType: 'CmpSettings', entityId: ctx.tenantId, summary: `Compliance settings: ${what.join(', ')}` });
         return after;
@@ -68,7 +68,8 @@ function createClients({ prisma, audit, encrypt, decrypt, common, now }) {
         } catch (e) { if (e.code === 'P2002') throw new CmpError(409, 'There is already a field with that name.'); throw e; }
         const what = [data.name && data.name !== def.name && `renamed "${def.name}" → "${data.name}"`, data.type && data.type !== def.type && `type ${V.FIELD_TYPES[def.type].toLowerCase()} → ${V.FIELD_TYPES[data.type].toLowerCase()}${def._count.values ? ` (${def._count.values} value${def._count.values === 1 ? '' : 's'} kept${converted.length ? `, ${converted.length} rewritten` : ''})` : ''}`,
             (data.allCountries !== undefined && (data.allCountries !== def.allCountries || data.countries.join() !== def.countries.join())) && `for ${scopeText(upd)}`].filter(Boolean);
-        if (what.length) await audit(ctx.req, { tenantId: ctx.tenantId, action: 'cmp.field.update', entityType: 'CmpFieldDef', entityId: def.id, summary: `Field "${upd.name}": ${what.join(', ')}` });
+        if (what.length) await audit(ctx.req, { tenantId: ctx.tenantId, action: 'cmp.field.update', entityType: 'CmpFieldDef', entityId: def.id, summary: `Field "${upd.name}": ${what.join(', ')}`,
+            details: { changes: common.changes(def, upd, { name: 'Name', type: 'Type', allCountries: 'All countries', countries: 'Countries' }) } });
         if (data.active !== undefined && data.active !== def.active) await audit(ctx.req, { tenantId: ctx.tenantId, action: data.active ? 'cmp.field.restore' : 'cmp.field.retire', entityType: 'CmpFieldDef', entityId: def.id, summary: `Field "${upd.name}" ${data.active ? 'back in use' : 'retired (its values are kept, hidden)'}` });
         return upd;
     }
@@ -209,7 +210,11 @@ function createClients({ prisma, audit, encrypt, decrypt, common, now }) {
             password && 'password changed', data.noPortal && !c.noPortal && c.portalPasswordEnc && 'password removed', pin && 'PIN changed', !pin && removePin && c.pinCodeEnc && 'PIN removed',
             ...vals.filter(v => (oldValues.get(v.def.id) || '') !== v.value).map(v => v.def.name),
         ].filter(Boolean);
-        if (what.length) await log(ctx, 'cmp.client.update', c.id, `Client ${common.clientLabel({ ...c, ...data })}: ${[...new Set(what)].join(', ')}`, { clientId: c.id, changed: [...new Set(what)] });
+        // field by field (the CA's Client History and Information History reports: old value, new value); never the password or PIN
+        const changes = [...common.changes(c, { ...c, ...data }, LABELS), ...(data.assignedToId !== undefined ? common.changes(c, { ...c, assignedToId: data.assignedToId }, { assignedToId: 'Assigned to' }) : []),
+            ...vals.filter(v => (oldValues.get(v.def.id) || '') !== v.value).map(v => ({ field: v.def.name, old: oldValues.get(v.def.id) || '', new: v.value, info: true })),
+            ...(password ? [{ field: 'Portal password', old: '', new: '(changed)' }] : []), ...(pin ? [{ field: 'PIN', old: '', new: '(changed)' }] : [])];
+        if (what.length) await log(ctx, 'cmp.client.update', c.id, `Client ${common.clientLabel({ ...c, ...data })}: ${[...new Set(what)].join(', ')}`, { clientId: c.id, changed: [...new Set(what)], changes });
         return get(ctx, c.id);
     }
 

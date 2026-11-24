@@ -32,13 +32,21 @@ const PERMS = {
     'GET /api/cmp/receipts': ['INVOICE'], 'POST /api/cmp/receipts/:id/void': ['INVOICE'],
     'GET /api/cmp/taxes': ['INVOICE', 'SETUP'], 'POST /api/cmp/taxes': ['INVOICE', 'SETUP'], 'PUT /api/cmp/taxes/:id': ['INVOICE', 'SETUP'],
     'GET /api/cmp/items': ['INVOICE', 'SETUP'], 'POST /api/cmp/items': ['INVOICE', 'SETUP'], 'PUT /api/cmp/items/:id': ['INVOICE', 'SETUP'],
+    'GET /api/cmp/security/logins': ['VIEW'], 'POST /api/cmp/security/signout-others': ['VIEW'],
+    'POST /api/cmp/obligations/:id/template-update': ['OBLIGATION_EDIT'], 'GET /api/cmp/advances/:id': ['INVOICE'], 'DELETE /api/cmp/invoice-types/:id': ['FULL'],
     'GET /api/cmp/dashboard': ['REPORTS'], 'GET /api/cmp/calendar': ['VIEW'], 'GET /api/cmp/reports/:kind': ['REPORTS'], 'GET /api/cmp/export/:kind': ['EXPORT'],
 };
+
+// the notifications and the reports catalogue register their own routes, and list each route's permission next to them
+const Notify = require('../src/compliance/notify');
+const Catalog = require('../src/compliance/reportsCatalog');
+Object.assign(PERMS, Notify.ROUTE_PERMS, Catalog.ROUTE_PERMS);
 
 test('every compliance route checks the module and its own permission', () => {
     const app = { use() {}, param() {} };
     for (const m of ['get', 'post', 'put', 'delete', 'patch']) app[m] = () => {};
-    const routes = registerCmpRoutes(app, { svc: { clients: {}, obligations: {}, comms: {}, invoices: {}, bulk: {}, reports: {} }, authenticateToken() {}, requireTenant() {}, tenantModules: () => [], prisma: {}, HttpError: Error, listAudit() {} });
+    const svc = { clients: {}, obligations: {}, comms: {}, invoices: {}, bulk: {}, reports: {}, notify: Notify.createNotify({ common: {} }), reportsCatalog: Catalog.createReportsCatalog({ common: {} }) };
+    const routes = registerCmpRoutes(app, { svc, authenticateToken() {}, requireTenant() {}, tenantModules: () => [], prisma: {}, HttpError: Error, listAudit() {} });
     const seen = new Set();
     for (const r of routes) {
         const key = `${r.method} ${r.path}`;

@@ -19,7 +19,10 @@ function cmpReset() {
   const pop = document.getElementById('cmpPopup'); if (pop) pop.remove();
   document.getElementById('cmpBell')?.remove();
   CMP_RESETS.forEach(f => f());
+  CmpRules.setDayFormat(''); CmpRules.setNumberFormat(''); // (the standard ones, until the next firm's are read)
 }
+// The firm's date and number formats (Settings → General), on every screen of the module
+function cmpApplyFormats() { const s = CMP.settings || {}; CmpRules.setDayFormat(s.dateFormat); CmpRules.setNumberFormat(s.numberFormat); }
 
 /* ---------- helpers ---------- */
 const cmpCan = (...p) => p.some(x => CMP.perms.has(x));
@@ -162,6 +165,7 @@ async function initCmp() {
     renderReadOnly(); // (the banner, and the menu without what needs a change: app.html)
     CMP.me = await api('/api/cmp/me');
     CMP.perms = new Set(CMP.me.perms); CMP.settings = CMP.me.settings;
+    cmpApplyFormats();
     S.cmpPerms = CMP.me.perms; renderNav();
   } catch (err) { toast(err.message); }
   $('#envBadge').classList.add('hidden'); // (the FBR environment badge belongs to Digital Invoicing)
@@ -169,7 +173,7 @@ async function initCmp() {
   host.querySelectorAll('[data-page^="cm-"]').forEach(el => el.remove());
   host.insertAdjacentHTML('beforeend', cmpPagesHtml());
   cmpEnsureModal();
-  Object.assign(PAGE_ENTER, { 'cm-notify': cmpEnterNotify }, Object.fromEntries(CMP_PAGES.map(x => [x.id, x.enter])));
+  Object.assign(PAGE_ENTER, Object.fromEntries(CMP_PAGES.map(x => [x.id, x.enter])));
   clearInterval(CMP.alertTimer); CMP.alertTimer = setInterval(cmpPollAlerts, 5 * 60000);
   cmpBell();
   cmpWatchIdle();
@@ -182,49 +186,13 @@ function cmpPagesHtml() {
   return [
     page('cm-none', `<div class="bg-white rounded-xl shadow p-6 max-w-xl"><h2 class="font-semibold mb-2">No access yet</h2>
       <p class="text-sm text-slate-600">Your login can open Compliance &amp; Deadlines, but the ETAX administrator has not given you any permissions in it yet. Ask them to set what you may do.</p></div>`),
-    page('cm-notify', '<div id="cmNotify"></div>'),
     ...CMP_PAGES.map(x => page(x.id, x.html())),
   ].join('');
 }
 
-/* ---------- alerts, the menu badge and the pop-up (SRS 6) ---------- */
-async function cmpPollAlerts() {
-  if (!S.token || S.module !== 'COMPLIANCE') { clearInterval(CMP.alertTimer); return; }
-  if (document.hidden || !cmpCan('VIEW')) return;
-  try { CMP.alerts = await api('/api/cmp/alerts'); cmpBadge(); cmpPopup(); } catch { /* the pages report problems themselves */ }
-}
-// The bell at the top right of the window (the CA: notifications there, not in the menu), with the number that needs attention
-function cmpBell() {
-  if (!cmpCan('REPORTS', 'WHATSAPP')) { document.getElementById('cmpBell')?.remove(); return; }
-  if (document.getElementById('cmpBell')) return;
-  const bar = document.querySelector('#topbar > div'); if (!bar) return;
-  bar.insertAdjacentHTML('beforeend', `<button type="button" id="cmpBell" onclick="go('cm-notify')" class="relative p-2 rounded-full hover:bg-slate-100 shrink-0" aria-label="Notifications" title="Notifications">
-    <svg viewBox="0 0 24 24" class="w-6 h-6 text-slate-700" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON.bell}"/></svg>
-    <span id="cmpBellN" class="hidden absolute -top-0.5 -right-0.5 min-w-[1.25rem] h-5 px-1 rounded-full text-[11px] font-semibold text-white items-center justify-center"></span></button>`);
-}
-function cmpBadge() {
-  const a = CMP.alerts, n = document.getElementById('cmpBellN');
-  if (!a || !n) return;
-  const k = a.overdue + a.ready;
-  n.textContent = k > 99 ? '99+' : String(k);
-  n.classList.toggle('hidden', !k); n.classList.toggle('flex', Boolean(k));
-  n.classList.toggle('bg-red-600', Boolean(a.overdue)); n.classList.toggle('bg-amber-500', !a.overdue);
-  document.getElementById('cmpBell').title = k ? `${a.overdue} overdue · ${a.ready} reminder${a.ready === 1 ? '' : 's'} to send` : 'Notifications';
-}
-// Once per session for the same numbers: "N reminders are ready to send, M obligations are overdue"
-function cmpPopup() {
-  const a = CMP.alerts; if (!a || !(a.overdue + a.ready) || !cmpCan('REPORTS', 'WHATSAPP')) return;
-  const key = `cmpPopup:${S.company}:${a.overdue}:${a.ready}`;
-  try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, '1'); } catch { /* shown again next time: harmless */ }
-  document.getElementById('cmpPopup')?.remove();
-  const bits = [a.ready && `<b>${a.ready}</b> reminder${a.ready === 1 ? ' is' : 's are'} ready to send`, a.overdue && `<b class="text-red-700">${a.overdue}</b> obligation${a.overdue === 1 ? ' is' : 's are'} overdue`].filter(Boolean);
-  document.body.insertAdjacentHTML('beforeend', `<div id="cmpPopup" role="alert" class="fixed bottom-4 right-4 z-40 max-w-sm bg-white rounded-xl shadow-2xl border-l-4 ${a.overdue ? 'border-red-600' : 'border-amber-500'} p-4">
-    <div class="flex items-start gap-3"><span class="text-xl" aria-hidden="true">🔔</span><div class="flex-1 text-sm"><div class="font-semibold mb-1">Compliance reminders</div>${bits.join('<br>')}
-      <div class="flex gap-2 mt-3">${cmpBtn('Open notifications', "document.getElementById('cmpPopup').remove(); go('cm-notify')", 'primary')}${cmpBtn('Later', "document.getElementById('cmpPopup').remove()")}</div></div></div></div>`);
-}
-
 /* ---------- a session left alone signs out (SRS 16: session timeout) ---------- */
-const CMP_IDLE_MINUTES = 30;
+// how long: the firm's choice (Settings → Security), 30 minutes unless it says otherwise
+const cmpIdleMinutes = () => Number((CMP.settings && CMP.settings.sessionMinutes) || 30);
 function cmpWatchIdle() {
   CMP.lastActive = Date.now();
   if (!CMP.idleBound) {
@@ -234,7 +202,7 @@ function cmpWatchIdle() {
   clearInterval(CMP.idleTimer);
   CMP.idleTimer = setInterval(() => {
     if (!S.token || S.module !== 'COMPLIANCE') { clearInterval(CMP.idleTimer); return; }
-    if (Date.now() - CMP.lastActive > CMP_IDLE_MINUTES * 60000) { clearInterval(CMP.idleTimer); logout(); toast(`Signed out after ${CMP_IDLE_MINUTES} minutes without activity, to keep your clients' details safe.`); }
+    if (Date.now() - CMP.lastActive > cmpIdleMinutes() * 60000) { clearInterval(CMP.idleTimer); logout(); toast(`Signed out after ${cmpIdleMinutes()} minutes without activity, to keep your clients' details safe.`); }
   }, 60000);
 }
 
@@ -247,15 +215,18 @@ async function cmpWhatsApp(what, after) {
   CMP.wa = { what: { ...what, templateId: p.templateId }, after };
   let templates = [];
   try { templates = await cmpTemplates(); } catch { /* the template stays as prepared */ }
-  const purposeFirst = { REMINDER: 'REMINDER', DATA_COLLECTION: 'DATA_COLLECTION', COMPLETION: 'COMPLETION', OTHER: 'OTHER' }[p.kind];
-  const sorted = [...templates].sort((a, b) => (b.purpose === purposeFirst) - (a.purpose === purposeFirst) || a.name.localeCompare(b.name));
+  // only the templates of this message's category for the client's country (the CA, 24 Nov 2026: "on the invoice issuance screen only the
+  // templates saved under the category of invoice"); the one set on the obligation comes first, already chosen
+  const sorted = templates.filter(t => CmpRules.templateFits(t, p.category, p.client.country)).sort((a, b) => (b.country === p.client.country) - (a.country === p.client.country) || a.name.localeCompare(b.name));
+  if (p.templateId && !sorted.some(t => t.id === p.templateId)) sorted.unshift({ id: p.templateId, name: p.templateName || 'template', purpose: '' });
   const warn = [p.missing.length && `Not known, left as typed: ${p.missing.map(x => `[${esc(x)}]`).join(' ')}`, p.empty.length && `No value for this client (left empty): ${p.empty.map(x => `[${esc(x)}]`).join(' ')}`].filter(Boolean);
   cmpShowModal(`${cmpModalHead(`${CMP_WA_ICON} Send on WhatsApp`, `${cmpCountry(p.client.country).flag} ${esc(p.client.name)} · ${esc(CmpRules.MESSAGE_KINDS[p.kind])}`)}
     <div class="space-y-3">
       <div class="grid sm:grid-cols-2 gap-3">
         <label><span>WhatsApp number</span><input id="cmWaPhone" value="${p.phone ? '+' + esc(p.phone) : ''}" inputmode="tel" placeholder="+971 50 123 4567"></label>
-        <label><span>Template</span><select id="cmWaTpl" onchange="cmpWhatsAppTemplate(this.value)"><option value="">— none —</option>
-          ${sorted.map(t => `<option value="${t.id}" ${t.id === p.templateId ? 'selected' : ''}>${esc(t.name)} · ${esc(CmpRules.TEMPLATE_PURPOSES[t.purpose])}</option>`).join('')}</select></label>
+        <label><span>Template <span class="text-slate-400">— ${esc(CmpRules.templateCategory(p.category))}</span></span><select id="cmWaTpl" onchange="cmpWhatsAppTemplate(this.value)"><option value="">${sorted.length ? '— none —' : `— no ${esc(CmpRules.templateCategory(p.category))} template yet —`}</option>
+          ${!p.templateId && p.templateName ? `<option value="" selected>${esc(p.templateName)} (its own message)</option>` : ''}
+          ${sorted.map(t => `<option value="${t.id}" ${t.id === p.templateId ? 'selected' : ''}>${esc(t.name)}${t.country ? ` · ${esc(t.country)}` : ''}</option>`).join('')}</select></label>
       </div>
       ${p.phone ? '' : '<div class="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">This client has no usable WhatsApp number. Type one with its country code.</div>'}
       ${cmpSenderPicker()}
@@ -269,13 +240,13 @@ async function cmpWhatsApp(what, after) {
 }
 async function cmpWhatsAppTemplate(id) {
   try {
-    const p = await api('/api/cmp/messages/prepare', { method: 'POST', body: { ...CMP.wa.what, templateId: id || undefined } });
+    const p = await api('/api/cmp/messages/prepare', { method: 'POST', body: { ...CMP.wa.what, templateId: id || undefined, noTemplate: !id } });
     $('#cmWaBody').value = p.body;
-    CMP.wa.what.templateId = id || null;
+    CMP.wa.what.templateId = id || null; CMP.wa.what.noTemplate = !id;
   } catch (err) { toast(err.message); }
 }
 // The firm's WhatsApp numbers to send from (Setup → Settings), the last one used on this computer first
-const cmpSenders = () => ((CMP.settings && CMP.settings.waSenders) || []);
+const cmpSenders = () => ((CMP.settings && CMP.settings.waSenders) || []).filter(x => x.active !== false); // (an inactive number is not offered: the CA's Active / Inactive)
 function cmpSenderPicker() {
   const list = cmpSenders();
   if (!list.length) return `<p class="text-xs text-slate-500">It goes from the WhatsApp account open on this computer or phone.${cmpCan('FULL') ? ' To choose your business number, add it under Settings → Your WhatsApp numbers.' : ''}</p>`;
@@ -310,12 +281,11 @@ async function cmpWhatsAppGo() {
     if (CMP.wa.after) CMP.wa.after();
   } catch (err) { if (w) w.close(); toast(err.message); }
 }
-// A message about the client that is not a reminder (e.g. asking for documents): pick a template first
-async function cmpClientMessage(clientId, occurrenceId, kind = 'DATA_COLLECTION') {
-  let t = [];
-  try { t = await cmpTemplates(true); } catch (err) { return toast(err.message); }
-  const pref = t.find(x => x.purpose === kind) || t[0];
-  cmpWhatsApp({ kind, clientId, occurrenceId: occurrenceId || undefined, templateId: pref ? pref.id : undefined }, () => { if (S.page && PAGE_ENTER[S.page]) PAGE_ENTER[S.page](); });
+// A message about the client that is not a reminder (e.g. asking for documents, telling it the work is done): a template of the Others
+// category (the CA, 24 Nov 2026: the categories are the three reminders, advance payment, invoice, receipt and others)
+async function cmpClientMessage(clientId, occurrenceId) {
+  try { await cmpTemplates(true); } catch (err) { return toast(err.message); }
+  cmpWhatsApp({ kind: 'OTHER', clientId, occurrenceId: occurrenceId || undefined }, () => { if (S.page && PAGE_ENTER[S.page]) PAGE_ENTER[S.page](); });
 }
 
 /* ---------- reminders, as pills (SRS 6: highlighted, bleak, missed, sent) ---------- */
@@ -352,62 +322,6 @@ async function cmpRemindedSave() {
   } catch (err) { toast(err.message); }
 }
 
-/* ---------- notifications dashboard (SRS 6, 11) ---------- */
-async function cmpEnterNotify() {
-  const box = $('#cmNotify');
-  if (!box.dataset.ready) {
-    box.dataset.ready = '1';
-    box.innerHTML = `
-      <div id="cmNSummary" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
-      <div class="bg-white rounded-xl shadow p-4 mt-4">
-        <div class="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-end sm:gap-3 mb-3">
-          <label><span>Show</span><select id="cmNShow" onchange="CMP.notify.show = this.value; cmpLoadNotify()">
-            <option value="all">Everything in its reminder period</option><option value="overdue">Overdue</option><option value="ready">Ready to send</option><option value="waiting">Waiting</option></select></label>
-          <label><span>Country</span><select id="cmNCountry" onchange="CMP.notify.country = this.value; cmpLoadNotify()">${cmpCountryOptions('', 'All countries')}</select></label>
-          <label class="col-span-2 sm:flex-1 sm:min-w-[14rem]"><span>Search</span><input id="cmNQ" type="search" placeholder="Client, code or obligation" autocomplete="off"
-            oninput="clearTimeout(CMP.searchTimer); CMP.searchTimer = setTimeout(() => { CMP.notify.q = this.value; cmpLoadNotify(); }, 350)"></label>
-          <div class="flex items-end">${cmpBtn('Refresh', 'cmpLoadNotify()')}</div>
-        </div>
-        <p class="text-xs text-slate-500 mb-3">An obligation shows here from the end of its period (or its first reminder) until it is completed. The reminder whose time has come is highlighted with its WhatsApp button; later reminders stay dimmed until their time.</p>
-        <div id="cmNList" class="space-y-3"></div>
-      </div>`;
-  }
-  cmpLoadNotify();
-}
-async function cmpLoadNotify() {
-  const n = CMP.notify, qs = new URLSearchParams({ show: n.show, ...(n.country ? { country: n.country } : {}), ...(n.q ? { q: n.q } : {}) });
-  let d;
-  try { d = await api('/api/cmp/notifications?' + qs); } catch (err) { $('#cmNList').innerHTML = cmpEmpty(esc(err.message)); return; }
-  CMP.settings = d.settings || CMP.settings;
-  CMP.alerts = { overdue: d.summary.overdue, ready: d.summary.ready, confirm: d.summary.confirm }; cmpBadge();
-  const card = (key, label, n, tone, note) => `<button type="button" onclick="${key === 'confirm' ? "cmpOpenObligations('CONFIRM')" : `CMP.notify.show='${key}'; $('#cmNShow').value='${key}'; cmpLoadNotify()`}"
-    class="text-left bg-white rounded-xl shadow p-4 border-l-4 ${tone} hover:ring-2 hover:ring-emerald-200"><div class="text-2xl font-semibold">${n}</div><div class="text-sm font-medium">${label}</div><div class="text-xs text-slate-500">${note}</div></button>`;
-  $('#cmNSummary').innerHTML = [
-    card('overdue', 'Overdue', d.summary.overdue, 'border-red-600', 'past the due date, not completed'),
-    card('ready', 'Ready to send', d.summary.ready, 'border-amber-500', 'a reminder has come due'),
-    card('waiting', 'Waiting', d.summary.waiting, 'border-slate-300', 'next reminder not due yet'),
-    card('confirm', 'Dates to confirm', d.summary.confirm, 'border-sky-500', 'copied from the period before'),
-  ].join('');
-  $('#cmNList').innerHTML = d.items.length ? d.items.map(cmpNotifyCard).join('') : cmpEmpty('Nothing here. Obligations show up once their period ends (or their first reminder comes due).');
-}
-function cmpNotifyCard(x) {
-  const v = x.view, refresh = 'cmpLoadNotify';
-  return `<div class="border rounded-lg border-l-4 ${CMP_BAR[v.colour]} p-3">
-    <div class="flex flex-wrap items-start justify-between gap-2">
-      <div class="min-w-0">
-        <a href="#" onclick="event.preventDefault(); cmpOpenClient('${x.client.id}')" class="font-medium hover:underline">${cmpCountry(x.client.country).flag} ${esc(x.client.name)}</a> <span class="text-xs text-slate-500">${esc(x.client.code)}</span>
-        <div class="text-sm"><b>${esc(x.obligation.name)}</b> · ${esc(CmpRules.periodName(x))} · due <b>${cmpDay(x.dueDate)}</b> <span class="text-slate-500">(${esc(CmpCountries.zoneCity(x.client.timeZone))})</span>
-          · <span class="${v.overdue ? 'text-red-700 font-medium' : 'text-slate-600'}">${cmpDaysLeft(v)}</span>${x.datesConfirmed ? '' : ' · <span class="text-sky-700">dates to confirm</span>'}</div>
-      </div>
-      <div class="flex items-center gap-2">${cmpStatusChip(v.status)}</div>
-    </div>
-    <div class="mt-2 flex flex-col gap-1.5">${v.reminders.length ? v.reminders.map(r => cmpReminderPill(r, x, refresh)).join('') : '<div class="text-xs text-slate-500">No reminders set for this obligation.</div>'}</div>
-    <div class="mt-2 flex flex-wrap gap-2">
-      ${cmpBtn('Open', `cmpOpenPeriod('${x.obligation.id}', '${x.id}', ${refresh})`)}
-      ${cmpCan('WHATSAPP') && !x.client.noWhatsApp ? cmpBtn(`${CMP_WA_ICON} Other message`, `cmpClientMessage('${x.client.id}', '${x.id}')`, 'plain', 'needs-write') : ''}
-      ${x.obligation.portalUrl ? `<a href="${esc(x.obligation.portalUrl)}" target="_blank" rel="noopener noreferrer" class="px-3 min-h-[2.5rem] inline-flex items-center rounded-lg text-sm border bg-white hover:border-emerald-600">Portal ↗</a>` : ''}
-    </div></div>`;
-}
 const cmpOpenClient = id => { if (CMP.clientId !== id) Object.assign(CMP, { clTrackQ: '', clTrackS: 'ALL', clTrackOff: 0 }); CMP.clientId = id; go('cm-client'); };
 const cmpOpenObligations = status => { if (typeof cmpObligationsFilter === 'function') cmpObligationsFilter({ status }); go('cm-obligations'); };
 

@@ -1195,8 +1195,11 @@
 <script src="/cmp-setup.js"></script>
 <script src="/cmp-logs.js"></script>
 <script src="/cmp-invoices.js"></script>
+<script src="/cmp-advances.js"></script>
 <script src="/cmp-tasks.js"></script>
 <script src="/cmp-reports.js"></script>
+<script src="/cmp-report-catalog.js"></script>
+<script src="/cmp-notify.js"></script>
 <script src="/authorities.js"></script>
 <script src="/admin-rates.js"></script>
 <script>
@@ -1294,12 +1297,15 @@ const NAV = {
     // The CA's order (20 Nov 2026): the calendar is on the Dashboard; the setup pages are in the menu itself; the logs last
     { id: 'cm-dashboard', label: 'Dashboard', icon: 'home', crumb: 'Overview', perms: ['VIEW'] },
     // (the CA: Notifications open from the bell at the top right, My Tasks is My Obligations: neither is in the menu)
-    { id: 'cm-notify', label: 'Notifications', icon: 'bell', crumb: 'Overview', perms: ['REPORTS', 'WHATSAPP'], nomenu: true },
+    // (24 Nov 2026: every user of the module gets notifications, so every one can open them)
+    { id: 'cm-notify', label: 'Notifications', icon: 'bell', crumb: 'Overview', perms: ['VIEW'], nomenu: true },
     { id: 'cm-tasks', label: 'My Tasks', icon: 'draft', crumb: 'Work', perms: ['VIEW'], nomenu: true },
     { id: 'cm-calendar', label: 'Calendar', icon: 'clock', crumb: 'Overview', perms: ['VIEW'], nomenu: true },
     { id: 'cm-clients', label: 'Clients', icon: 'users', crumb: 'Work', perms: ['VIEW'] },
     { id: 'cm-client', label: 'Client', crumb: 'Clients', parent: 'cm-clients', perms: ['VIEW'] },
     { id: 'cm-obligations', label: 'My Obligations', icon: 'list', crumb: 'Work', perms: ['VIEW'] },
+    // (the CA, 24 Nov 2026: Advance Payment above Invoices Created)
+    { id: 'cm-advances', label: 'Advance Payment', icon: 'box', crumb: 'Billing', perms: ['INVOICE'] },
     { id: 'cm-invoices', label: 'Invoices Created', icon: 'book', crumb: 'Billing', perms: ['INVOICE'] },
     { id: 'cm-invoices-issued', label: 'Invoices Issued', icon: 'upload', crumb: 'Billing', perms: ['INVOICE'] },
     { id: 'cm-receipts', label: 'Receipts Booked', icon: 'draft', crumb: 'Billing', perms: ['INVOICE'] },

@@ -40,7 +40,8 @@ function rateOf(v, what) {
     if (!/^\d+(\.\d{1,3})?$/.test(s) || Number(s) > 100) throw bad(`${what}: enter a rate from 0 to 100 (up to 3 decimals).`);
     return Number(s);
 }
-// The invoice's lines and taxes, checked, with the totals in minor units: each tax on the subtotal, rounded to the currency's unit
+// The invoice's lines and taxes, checked, with the totals in minor units: the subtotal, less the discount, plus the additional charges (the
+// CA's invoice, 24 Nov 2026) is what each tax is on, rounded to the currency's unit
 function cleanBody(b, currency) {
     const lines = (Array.isArray(b.lines) ? b.lines : []).map((l, i) => ({ description: V.line(l && l.description, 300, `Line ${i + 1}: description`, { required: true }), amount: money(l && l.amount, currency, `Line ${i + 1}: amount`), save: Boolean(l && l.save), sortOrder: i,
         occurrenceId: l && l.occurrenceId ? V.line(l.occurrenceId, 64, 'Obligation') : null, bankName: V.line(l && l.bankName, 300, `Line ${i + 1}: name`) }));
@@ -50,9 +51,13 @@ function cleanBody(b, currency) {
     if (taxes.length > 10) throw bad('At most 10 taxes on one invoice.');
     const d = decimalsOf(currency);
     const sub = lines.reduce((m, l) => m + toMinor(l.amount, d), 0);
-    for (const t of taxes) t.minor = Math.round(sub * t.rate / 100);
+    const opt = (v, what) => (v === undefined || v === null || v === '' ? 0 : money(v, currency, what));
+    const discount = toMinor(opt(b.discount, 'Discount'), d), charges = toMinor(opt(b.charges, 'Additional charges'), d);
+    if (discount > sub + charges) throw bad('The discount is more than the subtotal (and the additional charges).');
+    const base = sub - discount + charges;
+    for (const t of taxes) t.minor = Math.round(base * t.rate / 100);
     const tax = taxes.reduce((m, t) => m + t.minor, 0);
-    return { lines, taxes, d, subMinor: sub, taxMinor: tax, totalMinor: sub + tax };
+    return { lines, taxes, d, subMinor: sub, discountMinor: discount, chargesMinor: charges, taxMinor: tax, totalMinor: base + tax };
 }
 
 function createInvoices({ prisma, audit, common, now }) {
@@ -64,7 +69,9 @@ function createInvoices({ prisma, audit, common, now }) {
     const today = async tenantId => R.dayIn((await common.settings(tenantId)).timeZone, now());
 
     /* ---------- tax rates (country sensitive) ---------- */
-    const rateView = r => ({ id: r.id, name: r.name, rate: Number(r.rate), allCountries: r.allCountries, countries: r.countries, active: r.active });
+    const rateView = r => ({ id: r.id, name: r.name, rate: Number(r.rate), allCountries: r.allCountries, countries: r.countries, active: r.active, type: r.type || '', effectiveFrom: r.effectiveFrom ? ymd(r.effectiveFrom) : '', createdAt: r.createdAt });
+    // the tax's type and the day it applies from (the CA's Tax Configuration report), when given
+    const rateExtra = b => ({ ...(b.type !== undefined ? { type: V.line(b.type, 60, 'Tax type') } : {}), ...(b.effectiveFrom !== undefined ? { effectiveFrom: b.effectiveFrom ? dateOf(V.day(b.effectiveFrom, 'Effective from')) : null } : {}) });
     async function listTaxRates(ctx, q = {}) {
         const rows = await prisma.cmpTaxRate.findMany({ where: { tenantId: ctx.tenantId, ...(q.all === '1' ? {} : { active: true }) }, orderBy: [{ name: 'asc' }, { rate: 'asc' }] });
         const country = q.country ? V.country(q.country).code : null;
@@ -86,7 +93,7 @@ function createInvoices({ prisma, audit, common, now }) {
         return out;
     }
     async function createTaxRate(ctx, b) {
-        const d = cleanRate(b || {});
+        const d = { ...cleanRate(b || {}), ...rateExtra(b || {}) };
         const r = await prisma.cmpTaxRate.create({ data: { tenantId: ctx.tenantId, ...d, createdBy: ctx.email } }).catch(e => { if (e.code === 'P2002') throw new CmpError(409, 'That tax with that rate is already there.'); throw e; });
         await log(ctx, 'cmp.tax.create', 'CmpTaxRate', r.id, `Tax "${r.name} ${Number(r.rate)}%" added for ${r.allCountries ? 'all countries' : r.countries.join(', ')}`);
         return rateView(r);
@@ -94,7 +101,7 @@ function createInvoices({ prisma, audit, common, now }) {
     /* ---------- items and services (the CA: typed once, then suggested with their price for that country's clients) ---------- */
     const itemKey = name => R.keyOf(name);
     // every price it was billed at, newest first, with the first and last day it was used (the CA: the price bank)
-    const itemView = r => ({ id: r.id, name: r.name, currency: r.currency, amount: Number(r.amount), allCountries: r.allCountries, countries: r.countries, active: r.active, updatedAt: r.updatedAt,
+    const itemView = r => ({ id: r.id, name: r.name, code: r.code || '', category: r.category || '', unit: r.unit || '', currency: r.currency, amount: Number(r.amount), allCountries: r.allCountries, countries: r.countries, active: r.active, updatedAt: r.updatedAt, createdAt: r.createdAt,
         prices: (r.prices || []).map(p => ({ amount: Number(p.amount), firstOn: ymd(p.firstOn), lastOn: ymd(p.lastOn), uses: p.uses })) });
     const PRICES = { prices: { orderBy: [{ lastOn: 'desc' }, { amount: 'desc' }], take: 20 } };
     async function listItems(ctx, q = {}) {
@@ -120,6 +127,8 @@ function createInvoices({ prisma, audit, common, now }) {
         const out = { name, key: itemKey(name), currency, amount: money(b.amount, currency, 'Price'), allCountries: b.allCountries === true };
         out.countries = out.allCountries ? [] : [...new Set((Array.isArray(b.countries) ? b.countries : []).map(c => V.country(c).code))];
         if (!out.allCountries && !out.countries.length) throw bad('Choose the countries this item is for (or all countries).');
+        // the firm's own code, a category and a unit (the CA's Item Register), when given
+        for (const [k, max, label] of [['code', 40, 'Item code'], ['category', 60, 'Category'], ['unit', 40, 'Unit']]) if (b[k] !== undefined) out[k] = V.line(b[k], max, label);
         return out;
     }
     const itemTaken = e => { if (e && e.code === 'P2002') throw new CmpError(409, 'That item is already there in that currency.'); throw e; };
@@ -143,7 +152,7 @@ function createInvoices({ prisma, audit, common, now }) {
         const r = await prisma.cmpItem.findFirst({ where: { id: String(id || ''), tenantId: ctx.tenantId } });
         if (!r) throw new CmpError(404, 'Item not found.');
         const data = {};
-        if (['name', 'amount', 'currency', 'allCountries', 'countries'].some(k => b[k] !== undefined)) Object.assign(data, cleanItem({ name: b.name ?? r.name, amount: b.amount ?? Number(r.amount), currency: b.currency ?? r.currency, allCountries: b.allCountries ?? r.allCountries, countries: b.countries ?? r.countries }));
+        if (['name', 'amount', 'currency', 'allCountries', 'countries', 'code', 'category', 'unit'].some(k => b[k] !== undefined)) Object.assign(data, cleanItem({ name: b.name ?? r.name, amount: b.amount ?? Number(r.amount), currency: b.currency ?? r.currency, allCountries: b.allCountries ?? r.allCountries, countries: b.countries ?? r.countries, code: b.code ?? r.code, category: b.category ?? r.category, unit: b.unit ?? r.unit }));
         if (b.active !== undefined) data.active = b.active === true;
         const u = await prisma.cmpItem.update({ where: { id: r.id }, data }).catch(itemTaken);
         // a price changed here joins the bank too
@@ -151,7 +160,8 @@ function createInvoices({ prisma, audit, common, now }) {
             const day = dateOf(await today(ctx.tenantId));
             await prisma.cmpItemPrice.upsert({ where: { itemId_amount: { itemId: u.id, amount: u.amount } }, create: { tenantId: ctx.tenantId, itemId: u.id, amount: u.amount, firstOn: day, lastOn: day, createdBy: ctx.email }, update: { lastOn: day } });
         }
-        await log(ctx, 'cmp.item.update', 'CmpItem', r.id, `Item "${r.name}" → "${u.name}" ${amountText(u.amount, u.currency)} for ${u.allCountries ? 'all countries' : u.countries.join(', ')}${u.active ? '' : ' (not suggested any more)'}`);
+        await log(ctx, 'cmp.item.update', 'CmpItem', r.id, `Item "${r.name}" → "${u.name}" ${amountText(u.amount, u.currency)} for ${u.allCountries ? 'all countries' : u.countries.join(', ')}${u.active ? '' : ' (not suggested any more)'}`,
+            { changes: common.changes({ ...r, amount: Number(r.amount) }, { ...u, amount: Number(u.amount) }, { name: 'Name', code: 'Code', category: 'Category', unit: 'Unit', currency: 'Currency', amount: 'Price', countries: 'Countries', allCountries: 'All countries', active: 'In use' }) });
         return itemView(u);
     }
 
@@ -161,9 +171,10 @@ function createInvoices({ prisma, audit, common, now }) {
         const data = {};
         if (b.name !== undefined || b.rate !== undefined || b.allCountries !== undefined || b.countries !== undefined) Object.assign(data, cleanRate({ name: b.name ?? r.name, rate: b.rate ?? Number(r.rate), allCountries: b.allCountries ?? r.allCountries, countries: b.countries ?? r.countries }));
         if (b.active !== undefined) data.active = b.active === true;
+        Object.assign(data, rateExtra(b));
         // a new rate (the CA: a tax can have as many rates as it has; warned first, then both kept): the new rate is a tax of its own
         if (data.rate !== undefined && data.rate !== Number(r.rate) && b.keepOld === true) {
-            const n = await prisma.cmpTaxRate.create({ data: { tenantId: ctx.tenantId, name: data.name, rate: data.rate, allCountries: data.allCountries, countries: data.countries, createdBy: ctx.email } }).catch(e => { if (e.code === 'P2002') throw new CmpError(409, 'That tax with that rate is already there.'); throw e; });
+            const n = await prisma.cmpTaxRate.create({ data: { tenantId: ctx.tenantId, name: data.name, rate: data.rate, allCountries: data.allCountries, countries: data.countries, type: data.type ?? r.type, effectiveFrom: data.effectiveFrom ?? null, createdBy: ctx.email } }).catch(e => { if (e.code === 'P2002') throw new CmpError(409, 'That tax with that rate is already there.'); throw e; });
             await log(ctx, 'cmp.tax.create', 'CmpTaxRate', n.id, `Tax "${n.name}": another rate ${Number(n.rate)}% kept beside ${Number(r.rate)}%`);
             return rateView(n);
         }
@@ -173,15 +184,41 @@ function createInvoices({ prisma, audit, common, now }) {
     }
 
     /* ---------- advance payments (the CA's tracker: money received before the invoice, taken off it later) ---------- */
-    const advView = a => ({ id: a.id, clientId: a.clientId, occurrenceId: a.occurrenceId, receivedOn: ymd(a.receivedOn), description: a.description, currency: a.currency, amount: Number(a.amount), used: Number(a.used),
-        available: fromMinor(toMinor(a.amount, decimalsOf(a.currency)) - toMinor(a.used, decimalsOf(a.currency)), decimalsOf(a.currency)), createdBy: a.createdBy, createdAt: a.createdAt, voidedAt: a.voidedAt, voidReason: a.voidReason });
+    // An advance payment, with its numbered receipt (the CA, 24 Nov 2026: "it should have a receipt number"), how it was paid, whether
+    // its receipt was sent, and its status: Active (nothing taken off an invoice yet), Partly adjusted, Fully adjusted or Void
+    const advStatus = a => (a.voidedAt ? 'VOID' : Number(a.used) <= 0 ? 'ACTIVE' : toMinor(a.used, decimalsOf(a.currency)) >= toMinor(a.amount, decimalsOf(a.currency)) ? 'ADJUSTED' : 'PARTLY');
+    const advView = a => ({ id: a.id, clientId: a.clientId, occurrenceId: a.occurrenceId, number: a.number || '', receivedOn: ymd(a.receivedOn), description: a.description, currency: a.currency, amount: Number(a.amount), used: Number(a.used),
+        available: fromMinor(toMinor(a.amount, decimalsOf(a.currency)) - toMinor(a.used, decimalsOf(a.currency)), decimalsOf(a.currency)), method: a.method || 'BANK', reference: a.reference || '', sentAt: a.sentAt || null,
+        typeId: a.typeId || null, typeSnapshot: a.typeSnapshot || null, status: advStatus(a), createdBy: a.createdBy, createdAt: a.createdAt, voidedAt: a.voidedAt, voidedBy: a.voidedBy || null, voidReason: a.voidReason,
+        ...(a.client ? { client: { id: a.client.id, code: a.client.code, name: a.client.name, country: a.client.country, noWhatsApp: a.client.noWhatsApp } } : {}),
+        ...(a.occurrence ? { obligation: { id: a.occurrence.obligation.id, name: a.occurrence.obligation.name, occurrenceId: a.occurrence.id, periodStart: ymd(a.occurrence.periodStart), periodEnd: ymd(a.occurrence.periodEnd) } } : {}),
+        ...(a._count ? { sentCount: a._count.messages } : {}) });
+    const ADV_INCLUDE = { client: true, occurrence: { select: { id: true, periodStart: true, periodEnd: true, obligation: { select: { id: true, name: true } } } }, _count: { select: { messages: { where: { voidedAt: null, kind: 'ADVANCE' } } } } };
+    // ?clientId, ?occurrenceId, ?available=1 (something left to take off), ?status=all (the undone ones too), ?from/?to (day received), ?q
     async function listAdvances(ctx, q = {}) {
         const where = { tenantId: ctx.tenantId };
         if (q.clientId) where.clientId = String(q.clientId);
         if (q.occurrenceId) where.occurrenceId = String(q.occurrenceId);
         if (q.status !== 'all') where.voidedAt = null;
-        const rows = await prisma.cmpAdvance.findMany({ where, orderBy: [{ receivedOn: 'desc' }, { createdAt: 'desc' }], take: 2000 });
+        if (q.from || q.to) where.receivedOn = { ...(q.from ? { gte: dateOf(V.day(q.from, 'From')) } : {}), ...(q.to ? { lte: dateOf(V.day(q.to, 'To')) } : {}) };
+        const s = String(q.q || '').trim().slice(0, 100);
+        if (s) where.OR = [{ number: ciContains(s) }, { description: ciContains(s) }, { reference: ciContains(s) }, { client: { name: ciContains(s) } }, { client: { code: ciContains(s) } }];
+        const rows = await prisma.cmpAdvance.findMany({ where, orderBy: [{ receivedOn: 'desc' }, { createdAt: 'desc' }], take: Math.min(Number(q.limit) || 2000, 20000), include: ADV_INCLUDE });
         return rows.map(advView).filter(a => q.available !== '1' || a.available > 0);
+    }
+    // One advance with what its receipt says (the CA's automatic fields: document number, date, status, total advance amount, amount
+    // received, outstanding advance balance, created date and time) and the invoices it was taken off
+    async function getAdvance(ctx, id) {
+        const a = await prisma.cmpAdvance.findFirst({ where: { id: String(id || ''), tenantId: ctx.tenantId }, include: ADV_INCLUDE });
+        if (!a) throw new CmpError(404, 'Advance payment not found.');
+        const d = decimalsOf(a.currency);
+        // the client's advances in this currency up to this one (not undone): their total, and what of them is not taken off an invoice yet
+        const mine = await prisma.cmpAdvance.findMany({ where: { tenantId: ctx.tenantId, clientId: a.clientId, currency: a.currency, voidedAt: null, OR: [{ receivedOn: { lt: a.receivedOn } }, { receivedOn: a.receivedOn, createdAt: { lte: a.createdAt } }] } });
+        const totalMinor = mine.reduce((m, x) => m + toMinor(x.amount, d), 0), leftMinor = mine.reduce((m, x) => m + toMinor(x.amount, d) - toMinor(x.used, d), 0);
+        const invs = await prisma.cmpInvoice.findMany({ where: { tenantId: ctx.tenantId, clientId: a.clientId, status: { notIn: ['DRAFT', 'CANCELLED'] } }, select: { id: true, number: true, issueDate: true, advanceUse: true } });
+        const adjustments = invs.flatMap(i => (Array.isArray(i.advanceUse) ? i.advanceUse : []).filter(u => u.advanceId === a.id).map(u => ({ invoiceId: i.id, number: i.number, issueDate: ymd(i.issueDate), amount: Number(u.amount) })));
+        return { ...advView(a), clientTotal: fromMinor(totalMinor, d), clientOutstanding: fromMinor(leftMinor, d), adjustments, clientFields: await clientFieldValues(ctx.tenantId, a.clientId),
+            client: { ...advView(a).client, address: a.client.address, email: a.client.email, contactNumber: a.client.contactNumber, registrationNo: a.client.registrationNo, reference: a.client.reference } };
     }
     // the descriptions typed before, most used first (the CA: suggested again)
     async function advanceDescriptions(ctx) {
@@ -198,8 +235,22 @@ function createInvoices({ prisma, audit, common, now }) {
         const amount = money(b.amount, currency, 'Advance amount', { positive: true });
         const description = V.line(b.description, 200, 'Description', { required: true });
         const day = b.receivedOn ? V.day(b.receivedOn, 'Date received') : await today(ctx.tenantId);
-        const a = await prisma.cmpAdvance.create({ data: { tenantId: ctx.tenantId, clientId: client.id, occurrenceId: occ ? occ.id : null, receivedOn: dateOf(day), description, currency, amount, createdBy: ctx.email } });
-        await log(ctx, 'cmp.advance.create', 'CmpAdvance', a.id, `Advance payment from ${common.clientLabel(client)}: ${amountText(amount, currency)} on ${R.fmtDay(day)} (${description})${occ ? ` for ${occ.obligation.name} ${R.periodName(occ)}` : ''}`, { clientId: client.id, ...(occ ? { obligationId: occ.obligationId } : {}) });
+        const method = String(b.method || 'BANK').toUpperCase();
+        if (!METHODS[method] || method === 'CREDIT') throw bad('Choose how the advance was paid.');
+        const reference = V.line(b.reference, 120, 'Reference');
+        // its format: the one chosen, else the country's default advance payment format; frozen on it as it is now (like a receipt's)
+        const type = b.typeId ? await findType(ctx, b.typeId, client.country, 'ADVANCE')
+            : await prisma.cmpInvoiceType.findFirst({ where: { tenantId: ctx.tenantId, country: client.country, kind: 'ADVANCE', active: true }, orderBy: [{ isDefault: 'desc' }, { name: 'asc' }] });
+        // its number, in turn with every other advance of the firm (never twice); past the highest one already given, whatever the counter says
+        const a = await inTurn(ctx.tenantId, 'cmp-advance-no', async tx => {
+            const s = await tx.cmpSettings.upsert({ where: { tenantId: ctx.tenantId }, create: { tenantId: ctx.tenantId, advanceSeq: 1 }, update: { advanceSeq: { increment: 1 } } });
+            const top = (await tx.cmpAdvance.aggregate({ where: { tenantId: ctx.tenantId }, _max: { seqNo: true } }))._max.seqNo || 0;
+            const seq = Math.max(s.advanceSeq, top + 1);
+            if (seq !== s.advanceSeq) await tx.cmpSettings.update({ where: { tenantId: ctx.tenantId }, data: { advanceSeq: seq } });
+            return tx.cmpAdvance.create({ data: { tenantId: ctx.tenantId, clientId: client.id, occurrenceId: occ ? occ.id : null, receivedOn: dateOf(day), description, currency, amount, method, reference,
+                seqNo: seq, number: formatNo(s.advanceFormat || 'ADV-{YYYY}-{NNNN}', seq, day), typeId: type ? type.id : null, typeSnapshot: type ? { id: type.id, name: type.name, country: type.country, layout: type.layout } : undefined, createdBy: ctx.email } });
+        });
+        await log(ctx, 'cmp.advance.create', 'CmpAdvance', a.id, `Advance payment ${a.number} from ${common.clientLabel(client)}: ${amountText(amount, currency)} on ${R.fmtDay(day)} by ${METHODS[method].toLowerCase()} (${description})${occ ? ` for ${occ.obligation.name} ${R.periodName(occ)}` : ''}`, { clientId: client.id, ...(occ ? { obligationId: occ.obligationId } : {}) });
         return advView(a);
     }
     // changed (the CA: an advance must be editable): its date, description and amount; never less than what is already taken off
@@ -211,6 +262,8 @@ function createInvoices({ prisma, audit, common, now }) {
             const data = {};
             if (b.description !== undefined) data.description = V.line(b.description, 200, 'Description', { required: true });
             if (b.receivedOn !== undefined) data.receivedOn = dateOf(V.day(b.receivedOn, 'Date received'));
+            if (b.method !== undefined) { data.method = String(b.method || 'BANK').toUpperCase(); if (!METHODS[data.method] || data.method === 'CREDIT') throw bad('Choose how the advance was paid.'); }
+            if (b.reference !== undefined) data.reference = V.line(b.reference, 120, 'Reference');
             if (b.currency !== undefined && String(b.currency).toUpperCase() !== row.currency) {
                 if (Number(row.used) > 0) throw new CmpError(409, 'Part of it is taken off an invoice: its currency cannot change.');
                 data.currency = String(b.currency).toUpperCase();
@@ -229,7 +282,10 @@ function createInvoices({ prisma, audit, common, now }) {
         if (Number(upd.amount) !== Number(row.amount) || upd.currency !== row.currency) what.push(`${amountText(row.amount, row.currency)} → ${amountText(upd.amount, upd.currency)}`);
         if (upd.description !== row.description) what.push(`"${row.description}" → "${upd.description}"`);
         if (+upd.receivedOn !== +row.receivedOn) what.push(`${R.fmtDay(row.receivedOn)} → ${R.fmtDay(upd.receivedOn)}`);
-        if (what.length) await log(ctx, 'cmp.advance.update', 'CmpAdvance', row.id, `Advance payment from ${common.clientLabel(row.client)} changed: ${what.join(', ')}`, { clientId: row.clientId });
+        if (upd.method !== row.method) what.push(`paid by ${METHODS[row.method] || row.method} → ${METHODS[upd.method] || upd.method}`);
+        if (upd.reference !== row.reference) what.push('reference');
+        if (what.length) await log(ctx, 'cmp.advance.update', 'CmpAdvance', row.id, `Advance payment ${row.number || ''} from ${common.clientLabel(row.client)} changed: ${what.join(', ')}`.replace('  ', ' '),
+            { clientId: row.clientId, changes: common.changes(row, upd, { receivedOn: 'Date received', description: 'Description', currency: 'Currency', amount: 'Amount', method: 'Paid by', reference: 'Reference' }) });
         return advView(upd);
     }
     // undone (a mistake): only while none of it is taken off an issued invoice
@@ -279,7 +335,13 @@ function createInvoices({ prisma, audit, common, now }) {
             firmName: V.line(l.firmName, 200, 'Firm name'), firmAddress: V.multiline(l.firmAddress, 500, 'Address'), taxLabel: V.line(l.taxLabel, 40, 'The tax number\'s label'), taxNo: V.line(l.taxNo, 60, 'Tax registration number'),
             bankDetails: V.multiline(l.bankDetails, 800, 'Bank details'), footer: V.multiline(l.footer, 500, 'Footer'), receiptNote: V.multiline(l.receiptNote, 500, 'Receipt note'),
             showBank: l.showBank !== false, showClientTaxNo: l.showClientTaxNo !== false,
+            advanceTitle: V.line(l.advanceTitle, 40, 'The advance receipt title') || 'ADVANCE PAYMENT RECEIPT', advanceNote: V.multiline(l.advanceNote, 500, 'Advance receipt note'),
         };
+        // the client's details and the automatic information ticked to show on this format (the CA, 24 Nov 2026: a tick against each);
+        // absent = as before (the standard choice). Client details are keys (name, code, …) or "f:<field id>" for an additional field.
+        const keys = (v, max) => (Array.isArray(v) ? [...new Set(v.map(x => String(x || '').slice(0, 60)).filter(x => /^[a-zA-Z]+$|^f:[0-9a-f-]{36}$/.test(x)))].slice(0, max) : undefined);
+        if (l.clientFields !== undefined) out.clientFields = keys(l.clientFields, 80);
+        if (l.autoFields !== undefined) out.autoFields = keys(l.autoFields, 40);
         const blocks = Array.isArray(l.blocks) ? l.blocks : [];
         if (blocks.length > 40) throw bad('At most 40 pieces of information on one format.');
         out.blocks = blocks.map((b, i) => ({
@@ -294,17 +356,19 @@ function createInvoices({ prisma, audit, common, now }) {
     async function listTypes(ctx, q = {}) {
         const where = { tenantId: ctx.tenantId, ...(q.all === '1' ? {} : { active: true }) };
         if (q.country) where.country = V.country(q.country).code;
-        if (q.kind) where.kind = String(q.kind).toUpperCase() === 'RECEIPT' ? 'RECEIPT' : 'INVOICE';
+        if (q.kind) where.kind = kindOf(q.kind);
         return (await prisma.cmpInvoiceType.findMany({ where, orderBy: [{ kind: 'asc' }, { country: 'asc' }, { isDefault: 'desc' }, { name: 'asc' }] })).map(typeView);
     }
-    const typeTaken = e => { if (e && e.code === 'P2002') throw new CmpError(409, 'There is already an invoice type with that name.'); throw e; };
+    const typeTaken = e => { if (e && e.code === 'P2002') throw new CmpError(409, 'There is already a format with that name.'); throw e; };
+    const kindOf = k => (['RECEIPT', 'ADVANCE'].includes(String(k || '').toUpperCase()) ? String(k).toUpperCase() : 'INVOICE');
+    const KIND_NAME = { INVOICE: 'Invoice', RECEIPT: 'Receipt', ADVANCE: 'Advance payment' };
     async function saveType(ctx, id, b = {}) {
         const old = id ? await prisma.cmpInvoiceType.findFirst({ where: { id: String(id), tenantId: ctx.tenantId } }) : null;
         if (id && !old) throw new CmpError(404, 'Invoice type not found.');
         const data = {};
         if (!old || b.name !== undefined) data.name = V.line(b.name, 60, 'Name', { required: true });
         if (!old || b.country !== undefined) data.country = V.country(b.country).code;
-        if (!old) data.kind = String(b.kind || 'INVOICE').toUpperCase() === 'RECEIPT' ? 'RECEIPT' : 'INVOICE';
+        if (!old) data.kind = kindOf(b.kind);
         if (!old || b.layout !== undefined) data.layout = cleanLayout(b.layout || {});
         if (b.isDefault !== undefined) data.isDefault = b.isDefault === true;
         if (b.active !== undefined) data.active = b.active === true;
@@ -314,14 +378,27 @@ function createInvoices({ prisma, audit, common, now }) {
             if (row.isDefault) await tx.cmpInvoiceType.updateMany({ where: { tenantId: ctx.tenantId, country: row.country, kind: row.kind, id: { not: row.id } }, data: { isDefault: false } });
             return row;
         }).catch(typeTaken);
-        await log(ctx, old ? 'cmp.invtype.update' : 'cmp.invtype.create', 'CmpInvoiceType', t.id, `${t.kind === 'RECEIPT' ? 'Receipt' : 'Invoice'} format "${t.name}" (${common.countryName(t.country)}) ${old ? (data.active === false ? 'retired' : data.active === true ? 'back in use' : 'changed') : 'added'}${t.isDefault ? ', the default for its country' : ''}`);
+        await log(ctx, old ? 'cmp.invtype.update' : 'cmp.invtype.create', 'CmpInvoiceType', t.id, `${KIND_NAME[t.kind] || 'Invoice'} format "${t.name}" (${common.countryName(t.country)}) ${old ? (data.active === false ? 'retired' : data.active === true ? 'back in use' : 'changed') : 'added'}${t.isDefault ? ', the default for its country' : ''}`,
+            old ? { changes: common.changes({ ...old, layout: JSON.stringify(old.layout) }, { ...old, ...t, layout: JSON.stringify(t.layout) }, { name: 'Name', country: 'Country', isDefault: 'Default', active: 'In use', layout: 'Layout' }) } : undefined);
         return typeView(t);
+    }
+    // Deleted (the CA: "there should be an option to delete"): the documents already made keep the format as it was (frozen on each); a
+    // draft invoice that had it takes its country's default when it is issued
+    async function deleteType(ctx, id) {
+        const t = await prisma.cmpInvoiceType.findFirst({ where: { id: String(id || ''), tenantId: ctx.tenantId } });
+        if (!t) throw new CmpError(404, 'Format not found.');
+        await prisma.$transaction([
+            prisma.cmpInvoice.updateMany({ where: { tenantId: ctx.tenantId, typeId: t.id, status: 'DRAFT' }, data: { typeId: null } }),
+            prisma.cmpInvoiceType.delete({ where: { id: t.id } }),
+        ]);
+        await log(ctx, 'cmp.invtype.delete', 'CmpInvoiceType', t.id, `${KIND_NAME[t.kind] || 'Invoice'} format "${t.name}" (${common.countryName(t.country)}) deleted`);
+        return { ok: true };
     }
     async function findType(ctx, id, country, kind = 'INVOICE') {
         if (!id) return null;
         const t = await prisma.cmpInvoiceType.findFirst({ where: { id: String(id), tenantId: ctx.tenantId } });
         if (!t) throw bad('That format is not one of yours any more. Reload the page.');
-        if ((t.kind || 'INVOICE') !== kind) throw bad(`"${t.name}" is a${kind === 'RECEIPT' ? 'n invoice' : ' receipt'} format.`);
+        if ((t.kind || 'INVOICE') !== kind) throw bad(`"${t.name}" is not a${kind === 'INVOICE' ? 'n invoice' : kind === 'RECEIPT' ? ' receipt' : 'n advance payment'} format.`);
         if (country && t.country !== country) throw bad(`"${t.name}" is for ${common.countryName(t.country)} clients.`);
         return t;
     }
@@ -350,11 +427,11 @@ function createInvoices({ prisma, audit, common, now }) {
         occurrence: { select: { id: true, seq: true, periodStart: true, periodEnd: true, dueDate: true, obligation: { select: { id: true, name: true } } } } };
     const view = inv => ({
         id: inv.id, number: inv.number, status: inv.status, currency: inv.currency, issueDate: ymd(inv.issueDate), dueDate: ymd(inv.dueDate),
-        subtotal: Number(inv.subtotal), taxTotal: Number(inv.taxTotal), total: Number(inv.total), received: Number(inv.received),
+        subtotal: Number(inv.subtotal), discount: Number(inv.discount || 0), charges: Number(inv.charges || 0), taxTotal: Number(inv.taxTotal), total: Number(inv.total), received: Number(inv.received),
         advanceAdjusted: Number(inv.advanceAdjusted || 0), advanceUse: Array.isArray(inv.advanceUse) ? inv.advanceUse : [], net: Number(inv.total) - Number(inv.advanceAdjusted || 0),
         outstanding: fromMinor(owedMinor(inv), decimalsOf(inv.currency)), typeId: inv.typeId || null, typeSnapshot: inv.typeSnapshot || null,
         notes: inv.notes, issuedAt: inv.issuedAt, issuedBy: inv.issuedBy, sentAt: inv.sentAt, cancelledAt: inv.cancelledAt, cancelledBy: inv.cancelledBy, cancelReason: inv.cancelReason, createdBy: inv.createdBy, createdAt: inv.createdAt,
-        client: inv.client ? { id: inv.client.id, code: inv.client.code, name: inv.client.name, country: inv.client.country, address: inv.client.address, email: inv.client.email, contactNumber: inv.client.contactNumber, registrationNo: inv.client.registrationNo, noWhatsApp: inv.client.noWhatsApp } : undefined,
+        client: inv.client ? { id: inv.client.id, code: inv.client.code, name: inv.client.name, country: inv.client.country, address: inv.client.address, email: inv.client.email, contactNumber: inv.client.contactNumber, registrationNo: inv.client.registrationNo, reference: inv.client.reference, noWhatsApp: inv.client.noWhatsApp } : undefined,
         obligation: inv.occurrence ? { id: inv.occurrence.obligation.id, name: inv.occurrence.obligation.name, occurrenceId: inv.occurrence.id, periodStart: ymd(inv.occurrence.periodStart), periodEnd: ymd(inv.occurrence.periodEnd) } : null,
         lines: inv.lines ? inv.lines.map(l => ({ description: l.description, amount: Number(l.amount), occurrenceId: l.occurrenceId || null, bankName: l.bankName || '' })) : undefined,
         taxes: inv.taxes ? inv.taxes.map(t => ({ name: t.name, rate: Number(t.rate), amount: Number(t.amount) })) : undefined,
@@ -374,12 +451,35 @@ function createInvoices({ prisma, audit, common, now }) {
         for (const c of rows) { const d = decimalsOf(c.currency), left = toMinor(c.amount, d) - toMinor(c.used, d); if (left > 0) m.set(c.currency, (m.get(c.currency) || 0) + left); }
         return [...m.entries()].map(([currency, minor]) => ({ currency, remaining: fromMinor(minor, decimalsOf(currency)) }));
     }
-    // (and the advances taken off it, each with its whole amount: the CA wants both, "100 received, 50 adjusted here")
+    // The client's additional information with its values (a format can show any of them: the CA, 24 Nov 2026)
+    async function clientFieldValues(tenantId, clientId) {
+        const rows = await prisma.cmpFieldValue.findMany({ where: { tenantId, clientId, field: { active: true } }, include: { field: { select: { id: true, name: true, type: true } } } });
+        return rows.filter(r => r.value !== '').map(r => ({ id: r.field.id, name: r.field.name, value: r.field.type === 'DATE' ? R.fmtDay(r.value) : r.value }));
+    }
+    // (and the advances taken off it, each with its whole amount: the CA wants both, "100 received, 50 adjusted here"); each receipt with what
+    // its automatic fields say (the CA: payment status, the client's balance after the payment, the invoice it is for)
     const get = async (ctx, id) => {
         const inv = await find(ctx, id), use = Array.isArray(inv.advanceUse) ? inv.advanceUse : [];
         const advs = use.length ? await prisma.cmpAdvance.findMany({ where: { id: { in: use.map(u => u.advanceId) }, tenantId: ctx.tenantId } }) : [];
         const advanceDetails = use.map(u => { const a = advs.find(x => x.id === u.advanceId); return a ? { advanceId: a.id, adjusted: Number(u.amount), amount: Number(a.amount), used: Number(a.used), receivedOn: ymd(a.receivedOn), description: a.description } : null; }).filter(Boolean);
-        return { ...view(inv), advanceDetails, clientCredit: await creditOf(ctx.tenantId, inv.clientId) };
+        const out = { ...view(inv), advanceDetails, clientCredit: await creditOf(ctx.tenantId, inv.clientId), clientFields: await clientFieldValues(ctx.tenantId, inv.clientId) };
+        if (out.receipts && out.receipts.length) {
+            const d = decimalsOf(inv.currency);
+            const [invs, rcs] = await Promise.all([
+                prisma.cmpInvoice.findMany({ where: { tenantId: ctx.tenantId, clientId: inv.clientId, currency: inv.currency, status: { notIn: ['DRAFT', 'CANCELLED'] } }, select: { total: true, advanceAdjusted: true, issuedAt: true } }),
+                prisma.cmpReceipt.findMany({ where: { tenantId: ctx.tenantId, clientId: inv.clientId, voidedAt: null, settlement: '', invoice: { currency: inv.currency, status: { not: 'CANCELLED' } } }, select: { id: true, amount: true, createdAt: true, invoiceId: true } }),
+            ]);
+            const netOf = x => toMinor(x.total, d) - toMinor(x.advanceAdjusted || 0, d);
+            for (const r of out.receipts) {
+                const at = +new Date(r.createdAt), live = rcs.filter(x => +x.createdAt <= at);
+                const billed = invs.filter(x => x.issuedAt && +x.issuedAt <= at).reduce((m, x) => m + netOf(x), 0);
+                const paidHere = live.filter(x => x.invoiceId === inv.id).reduce((m, x) => m + toMinor(x.amount, d), 0);
+                r.paidToDate = fromMinor(paidHere, d);
+                r.paymentStatus = r.voidedAt ? 'VOID' : paidHere >= netOf(inv) ? 'PAID' : 'PARTLY';
+                r.clientBalanceAfter = fromMinor(Math.max(0, billed - live.reduce((m, x) => m + toMinor(x.amount, d), 0)), d);
+            }
+        }
+        return out;
     };
     // The status after any change of money or of "sent": issued → sent → partially received → received (cancelled and drafts stay)
     // (an advance taken off the invoice counts as paid: Gross − Advance = Net, and only the net is still owed)
@@ -445,6 +545,7 @@ function createInvoices({ prisma, audit, common, now }) {
             for (const [i, t] of body.taxes.entries()) await db.cmpInvoiceTax.updateMany({ where: { invoiceId: inv.id, sortOrder: i }, data: { amount: fromMinor(t.minor, body.d) } });
         }
         await log(ctx, 'cmp.invoice.create', 'CmpInvoice', inv.id, `Draft invoice for ${common.clientLabel(client)}${occ ? ` (${occ.obligation.name} ${R.periodName(occ)})` : ''}`, { clientId: client.id });
+        if (db === prisma) common.notify(ctx, 'INVOICE_CREATED', { invoiceId: inv.id }); // (inside a transaction: the caller's, once it is done)
         return inv;
     }
     // A new invoice: what was sent is checked first, so a refused one leaves no empty draft behind
@@ -452,7 +553,7 @@ function createInvoices({ prisma, audit, common, now }) {
         if (b.lines || b.taxes || b.currency) {
             const currency = String(b.currency || 'USD').toUpperCase();
             if (b.currency && !C.currencyOk(currency)) throw bad('Choose a currency from the list.');
-            if (b.lines || b.taxes) cleanBody({ lines: b.lines || [{ description: 'Fee', amount: 0 }], taxes: b.taxes || [] }, b.currency ? currency : 'USD');
+            if (b.lines || b.taxes) cleanBody({ lines: b.lines || [{ description: 'Fee', amount: 0 }], taxes: b.taxes || [], discount: b.discount, charges: b.charges }, b.currency ? currency : 'USD');
             if (!b.occurrenceId) await common.findClient(ctx.tenantId, b.clientId, { live: true });
         }
         const inv = await draftFor(ctx, { clientId: b.clientId, occurrenceId: b.occurrenceId });
@@ -465,7 +566,8 @@ function createInvoices({ prisma, audit, common, now }) {
         if (inv.status !== 'DRAFT') throw new CmpError(409, 'Only a draft invoice can be changed. Cancel this one and make a new one if it is wrong.');
         const currency = String(b.currency || inv.currency).toUpperCase();
         if (!C.currencyOk(currency)) throw bad('Choose a currency from the list.');
-        const body = cleanBody({ lines: b.lines ?? inv.lines.map(l => ({ description: l.description, amount: Number(l.amount) })), taxes: b.taxes ?? inv.taxes.map(t => ({ name: t.name, rate: Number(t.rate) })) }, currency);
+        const body = cleanBody({ lines: b.lines ?? inv.lines.map(l => ({ description: l.description, amount: Number(l.amount) })), taxes: b.taxes ?? inv.taxes.map(t => ({ name: t.name, rate: Number(t.rate) })),
+            discount: b.discount !== undefined ? b.discount : Number(inv.discount || 0), charges: b.charges !== undefined ? b.charges : Number(inv.charges || 0) }, currency);
         const issueDate = b.issueDate !== undefined ? (b.issueDate ? V.day(b.issueDate, 'Invoice date') : null) : ymd(inv.issueDate) || null;
         const dueDate = b.dueDate !== undefined ? (b.dueDate ? V.day(b.dueDate, 'Payment due') : null) : ymd(inv.dueDate) || null;
         if (issueDate && dueDate && dueDate < issueDate) throw bad('The payment due date cannot be before the invoice date.');
@@ -495,7 +597,7 @@ function createInvoices({ prisma, audit, common, now }) {
             const firstOcc = body.lines.find(l => l.occurrenceId);
             await tx.cmpInvoice.update({ where: { id: inv.id }, data: {
                 currency, issueDate: dateOf(issueDate), dueDate: dateOf(dueDate), notes, typeId,
-                subtotal: fromMinor(body.subMinor, body.d), taxTotal: fromMinor(body.taxMinor, body.d), total: fromMinor(body.totalMinor, body.d),
+                subtotal: fromMinor(body.subMinor, body.d), discount: fromMinor(body.discountMinor, body.d), charges: fromMinor(body.chargesMinor, body.d), taxTotal: fromMinor(body.taxMinor, body.d), total: fromMinor(body.totalMinor, body.d),
                 advanceAdjusted: fromMinor(adv.minor, body.d), advanceUse: adv.use,
                 ...(b.lines ? { occurrenceId: firstOcc ? firstOcc.occurrenceId : null } : {}),
                 lines: { create: body.lines.map(l => ({ description: l.description, amount: l.amount, sortOrder: l.sortOrder, occurrenceId: l.occurrenceId || null, bankName: l.bankName || '' })) },
@@ -505,6 +607,12 @@ function createInvoices({ prisma, audit, common, now }) {
             // kept in the price bank under the item's name, or the obligation's name for an obligation's line
             for (const l of body.lines.filter(x => x.save && x.amount > 0)) await rememberItem(tx, ctx, l.bankName || l.description, l.amount, currency, inv.client.country, issueDate || day);
         });
+        // what changed on the draft, field by field (the CA's Invoice History report)
+        const fresh = await prisma.cmpInvoice.findUnique({ where: { id: inv.id }, include: { lines: { orderBy: { sortOrder: 'asc' } }, taxes: { orderBy: { sortOrder: 'asc' } } } });
+        const flat = x => ({ currency: x.currency, issueDate: x.issueDate, dueDate: x.dueDate, notes: x.notes, typeId: x.typeId || '', discount: Number(x.discount || 0), charges: Number(x.charges || 0), total: Number(x.total), advanceAdjusted: Number(x.advanceAdjusted || 0),
+            lines: x.lines.map(l => `${l.description} ${Number(l.amount)}`).join('; '), taxes: x.taxes.map(t => `${t.name} ${Number(t.rate)}%`).join('; ') });
+        const changes = common.changes(flat(inv), flat(fresh), { currency: 'Currency', issueDate: 'Invoice date', dueDate: 'Payment due', lines: 'Lines', taxes: 'Taxes', discount: 'Discount', charges: 'Additional charges', total: 'Total', advanceAdjusted: 'Advance adjusted', typeId: 'Format', notes: 'Notes' });
+        if (changes.length) await log(ctx, 'cmp.invoice.update', 'CmpInvoice', inv.id, `Draft invoice for ${common.clientLabel(inv.client)} changed: ${changes.map(c => c.field.toLowerCase()).join(', ')}`, { clientId: inv.clientId, changes });
         const saved = body.taxes.filter(x => x.save), items = body.lines.filter(x => x.save && x.amount > 0);
         if (saved.length) await log(ctx, 'cmp.tax.remember', 'CmpInvoice', inv.id, `Kept for ${inv.client.country} clients: ${saved.map(t => `${t.name} ${t.rate}%`).join(', ')}`, { clientId: inv.clientId });
         if (items.length) await log(ctx, 'cmp.item.remember', 'CmpInvoice', inv.id, `Kept for ${inv.client.country} clients: ${items.map(l => `${l.bankName || l.description} ${amountText(l.amount, currency)}`).join(', ')}`, { clientId: inv.clientId });
@@ -544,6 +652,7 @@ function createInvoices({ prisma, audit, common, now }) {
         });
         const adv = Number(inv.advanceAdjusted || 0);
         await log(ctx, 'cmp.invoice.issue', 'CmpInvoice', inv.id, `Invoice ${done.number} issued to ${common.clientLabel(inv.client)}: ${amountText(inv.total, inv.currency)}${adv ? ` less advance ${amountText(adv, inv.currency)} = ${amountText(Number(inv.total) - adv, inv.currency)}` : ''}`, { clientId: inv.clientId });
+        common.notify(ctx, 'INVOICE_ISSUED', { invoiceId: inv.id });
         return get(ctx, inv.id);
     }
     async function markSent(ctx, id, how = 'marked by hand') {
@@ -668,6 +777,7 @@ function createInvoices({ prisma, audit, common, now }) {
             return row;
         });
         await log(ctx, 'cmp.receipt.create', 'CmpReceipt', r.id, `Receipt ${r.number}: ${amountText(amount, inv.currency)} received for invoice ${inv.number} from ${common.clientLabel(inv.client)} (${METHODS[method].toLowerCase()})`, { clientId: inv.clientId, invoiceId: inv.id });
+        common.notify(ctx, 'RECEIPT', { receiptId: r.id, invoiceId: inv.id });
         return { invoice: await get(ctx, inv.id), receiptId: r.id };
     }
     async function voidReceipt(ctx, id, reason) {
@@ -699,8 +809,14 @@ function createInvoices({ prisma, audit, common, now }) {
             settlement: r.settlement, settlementNote: r.settlementNote,
             invoice: { id: r.invoiceId, number: r.invoice.number, status: r.invoice.status }, client: { id: r.invoice.client.id, code: r.invoice.client.code, name: r.invoice.client.name, country: r.invoice.client.country }, createdBy: r.createdBy }));
     }
-    // What a message about an invoice or receipt can say ([Invoice Number], [Invoice Amount], [Receipt Number])
-    async function messageContext(ctx, { invoiceId, receiptId }) {
+    // What a message about an invoice, a receipt or an advance payment can say ([Invoice Number], [Receipt Number], [Advance Number] …), and
+    // the client and obligation period it is about
+    async function messageContext(ctx, { invoiceId, receiptId, advanceId }) {
+        if (advanceId) {
+            const a = await getAdvance(ctx, advanceId);
+            if (a.voidedAt) throw new CmpError(409, 'This advance payment is undone.');
+            return { advance: a, clientId: a.clientId, occurrenceId: a.occurrenceId || null, ctx: { advance: { number: a.number, date: a.receivedOn, amountText: amountText(a.amount, a.currency), description: a.description, balanceText: amountText(a.available, a.currency) } } };
+        }
         let inv = null, receipt = null;
         if (receiptId) {
             receipt = await prisma.cmpReceipt.findFirst({ where: { id: String(receiptId), tenantId: ctx.tenantId } });
@@ -709,13 +825,13 @@ function createInvoices({ prisma, audit, common, now }) {
         }
         if (invoiceId) inv = await find(ctx, invoiceId);
         if (inv && inv.status === 'DRAFT') throw new CmpError(409, 'Issue the invoice before sending it.');
-        return { inv, receipt, ctx: inv ? {
+        return { inv, receipt, clientId: inv ? inv.clientId : null, occurrenceId: inv ? inv.occurrenceId || (inv.lines.find(l => l.occurrenceId) || {}).occurrenceId || null : null, ctx: inv ? {
             invoice: { number: inv.number, amountText: amountText(Number(inv.total) - Number(inv.advanceAdjusted || 0), inv.currency), date: ymd(inv.issueDate), dueDate: ymd(inv.dueDate), outstandingText: amountText(fromMinor(owedMinor(inv), decimalsOf(inv.currency)), inv.currency) },
             receipt: receipt ? { number: receipt.number, date: ymd(receipt.receivedOn), amountText: amountText(receipt.amount, inv.currency) } : null } : {} };
     }
 
     return { METHODS, STATUSES, amountText, creditOf, listTaxRates, createTaxRate, updateTaxRate, listItems, createItem, updateItem, list, get, draftFor, create, update, remove, issue, markSent, unmarkSent, cancel, addReceipt, voidReceipt, listReceipts, messageContext, statusOf,
-        listAdvances, advanceDescriptions, addAdvance, updateAdvance, voidAdvance, listTypes, saveType, billable };
+        listAdvances, getAdvance, advanceDescriptions, addAdvance, updateAdvance, voidAdvance, listTypes, saveType, deleteType, billable };
 }
 
 module.exports = { createInvoices, formatNo, amountText, METHODS };

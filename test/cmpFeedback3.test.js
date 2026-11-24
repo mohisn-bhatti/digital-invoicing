@@ -238,7 +238,7 @@ run('the tracker shows the invoice created, issued (sent twice, one taken off) a
     let row = await rowOf();
     assert.deepStrictEqual([row.invoice.id, row.invoice.status, row.invoice.sentCount, row.invoice.advanceAdjusted], [W.inv.id, 'ISSUED', 0, 400]);
     assert.deepStrictEqual(row.advances.map(a => [a.amount, a.used]), [[1000, 400]]);
-    assert.deepStrictEqual(row.progress, { done: 4, total: 6 });
+    assert.deepStrictEqual(row.progress, { done: 5, total: 7 }); // (the advance counts when there is one: the CA, 24 Nov 2026)
     const listOf = async stage => (await A.call(`/api/cmp/invoices?stage=${stage}`, { token: A.owner.token })).json.invoices.map(i => i.id);
     assert.ok((await listOf('created')).includes(W.inv.id) && !(await listOf('issued')).includes(W.inv.id));
     // sent twice on WhatsApp
@@ -257,7 +257,7 @@ run('the tracker shows the invoice created, issued (sent twice, one taken off) a
     await A.call('/api/cmp/messages', { token: A.owner.token, method: 'POST', body: { kind: 'RECEIPT', receiptId: rc.receiptId, body: 'Receipt', phone: '+971501112233' } });
     row = await rowOf();
     assert.deepStrictEqual([row.invoice.status, row.invoice.receipts.length, row.invoice.receipts[0].sentCount], ['RECEIVED', 1, 1]);
-    assert.deepStrictEqual(row.progress, { done: 6, total: 6 });
+    assert.deepStrictEqual(row.progress, { done: 7, total: 7 });
     // cancelled (the money refunded): the advance taken off it can be used again
     const c = await A.call(`/api/cmp/invoices/${W.inv.id}/cancel`, { token: A.owner.token, method: 'POST', body: { reason: 'wrong period', settle: 'REFUND' } });
     assert.strictEqual(c.status, 200, c.text);

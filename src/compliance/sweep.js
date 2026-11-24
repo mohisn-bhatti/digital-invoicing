@@ -5,7 +5,7 @@
 // Safe to run twice at once: each year is noted once (a guarded update) and the database refuses a second copy of the same year.
 const R = require('../../public/cmp-rules');
 
-function createSweep({ prisma, audit, obligations, now }) {
+function createSweep({ prisma, audit, obligations, notify, now }) {
     // tenantId: only that firm (the tests); otherwise every firm
     async function sweep({ limit = 500, tenantId = null } = {}) {
         const at = now();
@@ -36,7 +36,10 @@ function createSweep({ prisma, audit, obligations, now }) {
             LIMIT ${limit}`;
         let made = 0;
         for (const r of rows) if (await obligations.ensureNext(r.id)) made++;
-        return { overdue, made };
+        // 3. the notifications whose day and hour have come (src/compliance/notify.js)
+        let notified = 0;
+        if (notify) { try { notified = (await notify.run({ tenantId, limit })).made || 0; } catch (err) { console.error('compliance notifications failed:', err.message); } }
+        return { overdue, made, notified };
     }
     return { sweep };
 }

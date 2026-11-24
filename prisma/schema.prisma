@@ -940,35 +940,52 @@ enum CmpStage {
 
 // The firm's choices for the module: one row per business, made the first time they are saved
 model CmpSettings {
-  tenantId      String   @id
-  tenant        Tenant   @relation(fields: [tenantId], references: [id])
-  timeZone      String   @default("Asia/Karachi") // the firm's own clock: the times in the logs
-  reminderHour  Int      @default(9) // reminders come due at this hour on the CLIENT's clock
-  amberDays     Int      @default(7) // an obligation turns amber this many days before its due date
-  autoNextYear  Boolean  @default(true) // make next year's copy of an obligation when this year's period ends
+  tenantId       String   @id
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  timeZone       String   @default("Asia/Karachi") // the firm's own clock: the times in the logs
+  reminderHour   Int      @default(9) // reminders come due at this hour on the CLIENT's clock
+  amberDays      Int      @default(7) // an obligation turns amber this many days before its due date
+  autoNextYear   Boolean  @default(true) // make next year's copy of an obligation when this year's period ends
   // The firm's own WhatsApp numbers that messages go from: [{ id, label, phone, open, isDefault }] (src/compliance/validate.js). A link
   // cannot choose the sender: WhatsApp sends from the account open where the link is opened, so each number says how to open it
   // (WhatsApp Web, the WhatsApp Business app, the WhatsApp app, or let the device ask).
-  waSenders     Json     @default("[]")
+  waSenders      Json     @default("[]")
   // Fee invoices and receipts (SRS 9): what they say about the firm, and their running numbers (taken when issued, never twice)
-  firmName      String   @default("")
-  firmAddress   String   @default("")
-  firmPhone     String   @default("")
-  firmEmail     String   @default("")
-  firmTaxNo     String   @default("") // the firm's own tax registration number (e.g. a TRN), printed on its invoices
-  bankDetails   String   @default("")
-  invoiceFooter String   @default("")
-  invoiceFormat String   @default("INV-{YYYY}-{NNNN}")
-  receiptFormat String   @default("RCT-{YYYY}-{NNNN}")
+  firmName       String   @default("")
+  firmAddress    String   @default("")
+  firmPhone      String   @default("")
+  firmEmail      String   @default("")
+  firmTaxNo      String   @default("") // the firm's own tax registration number (e.g. a TRN), printed on its invoices
+  bankDetails    String   @default("")
+  invoiceFooter  String   @default("")
+  invoiceFormat  String   @default("INV-{YYYY}-{NNNN}")
+  receiptFormat  String   @default("RCT-{YYYY}-{NNNN}")
   // The top of the firm's invoices and receipts (the CA): a logo (a small image, kept as a data: URL) and a header line or two
-  logo          String   @default("")
-  invoiceHeader String   @default("")
+  logo           String   @default("")
+  invoiceHeader  String   @default("")
   // or a full letterhead picture across the top instead (the CA): headerStyle LOGO (the logo and the header line) or LETTERHEAD
-  headerStyle   String   @default("LOGO")
-  letterhead    String   @default("")
-  invoiceSeq    Int      @default(0) // last invoice number handed out
-  receiptSeq    Int      @default(0) // last receipt number handed out
-  updatedAt     DateTime @updatedAt
+  headerStyle    String   @default("LOGO")
+  letterhead     String   @default("")
+  invoiceSeq     Int      @default(0) // last invoice number handed out
+  receiptSeq     Int      @default(0) // last receipt number handed out
+  // advance payment receipts get numbers too (the CA, 24 Nov 2026)
+  advanceFormat  String   @default("ADV-{YYYY}-{NNNN}")
+  advanceSeq     Int      @default(0) // last advance receipt number handed out
+  // Settings (the CA, 24 Nov 2026): how dates and numbers are written, the rest of the firm's profile, reminders on weekends and public
+  // holidays, the notifications (src/compliance/notify.js) and how long a session left alone stays signed in
+  dateFormat     String   @default("D MMM YYYY") // D MMM YYYY, DD/MM/YYYY, MM/DD/YYYY or YYYY-MM-DD
+  numberFormat   String   @default("1,234.56") // 1,234.56 / 1.234,56 / 1 234.56 / 12,34,567.89
+  firmCountry    String   @default("")
+  firmCity       String   @default("")
+  firmWebsite    String   @default("")
+  weekendDays    Int[]    @default([]) // 0 = Sunday … 6 = Saturday: a reminder that falls on one is moved (holidayMode)
+  holidayMode    String   @default("NONE") // NONE, BEFORE (to the working day before) or AFTER (to the next working day)
+  holidays       Json     @default("[]") // the firm's public holidays: [{ date: 'YYYY-MM-DD', name }]
+  notifyHour     Int      @default(9) // the hour (firm's clock) at which the day's notifications are made
+  notifyPrefs    Json     @default("{}") // which notifications are made (src/compliance/notify.js)
+  notifyRules    Json     @default("{}") // their days: after the due date, every so many days while billing is open, …
+  sessionMinutes Int      @default(30) // a session left alone this long signs out
+  updatedAt      DateTime @updatedAt
 }
 
 // A client of the firm (SRS 3.2). The portal password and PIN are encrypted with the application key (src/crypto.js) and never listed.
@@ -1045,32 +1062,33 @@ model CmpFieldValue {
 // An obligation of a client (SRS 4): its name, portal, how often and for how many years it comes back. Each period (a year, a quarter or
 // a month) is a CmpOccurrence; period 1 has the base dates.
 model CmpObligation {
-  id              String          @id @default(uuid())
+  id              String                  @id @default(uuid())
   tenantId        String
   clientId        String
-  client          CmpClient       @relation(fields: [clientId], references: [id])
+  client          CmpClient               @relation(fields: [clientId], references: [id])
   name            String
-  portalUrl       String          @default("")
-  frequency       String          @default("YEARLY") // YEARLY, QUARTERLY or MONTHLY: how often it comes back (public/cmp-rules.js)
+  portalUrl       String                  @default("")
+  frequency       String                  @default("YEARLY") // YEARLY, QUARTERLY or MONTHLY: how often it comes back (public/cmp-rules.js)
   yearsTotal      Int? // null = no end; otherwise for how many years in all, the first one included (a monthly one for 2 years = 24 periods)
-  basePeriodStart DateTime        @db.Date
-  basePeriodEnd   DateTime        @db.Date
-  baseDueDate     DateTime        @db.Date
-  baseSeq         Int             @default(1) // the period the base dates belong to: later periods are counted on from it (a change "for the periods after" moves it)
+  basePeriodStart DateTime                @db.Date
+  basePeriodEnd   DateTime                @db.Date
+  baseDueDate     DateTime                @db.Date
+  baseSeq         Int                     @default(1) // the period the base dates belong to: later periods are counted on from it (a change "for the periods after" moves it)
   // Set on each obligation (the CA: not one setting for the whole firm): when it turns amber, and whether the next period is prepared by itself
-  amberDays       Int             @default(7)
-  autoNext        Boolean         @default(true)
+  amberDays       Int                     @default(7)
+  autoNext        Boolean                 @default(true)
   // locked by the user once everything about it is entered (the CA, 20 Nov 2026): no change, archive or delete until unlocked
-  locked          Boolean         @default(false)
-  notes           String          @default("")
+  locked          Boolean                 @default(false)
+  notes           String                  @default("")
   assignedToId    String? // who does this obligation; if nobody, the client's person (SRS 10)
   archivedAt      DateTime?
   archivedBy      String?
-  createdBy       String          @default("")
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdBy       String                  @default("")
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
   occurrences     CmpOccurrence[]
   reminders       CmpReminder[]
+  docTemplates    CmpObligationTemplate[]
 
   @@index([tenantId, clientId])
   @@index([tenantId, name])
@@ -1118,36 +1136,64 @@ model CmpOccurrence {
 
 // A reminder of an obligation (SRS 5): so many days before (negative), on (0) or after the due date, every year, with its template
 model CmpReminder {
-  id           String        @id @default(uuid())
-  tenantId     String
-  obligationId String
-  obligation   CmpObligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
-  offsetDays   Int
+  id              String        @id @default(uuid())
+  tenantId        String
+  obligationId    String
+  obligation      CmpObligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+  offsetDays      Int
   // a saved template, or the reminder's own message (the CA, 16 Nov 2026: each obligation has its own message for each reminder)
-  templateId   String?
-  template     CmpTemplate?  @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  body         String?
-  createdAt    DateTime      @default(now())
-  messages     CmpMessage[]
+  templateId      String?
+  template        CmpTemplate?  @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  // with a template: null = its message as it is now; text = the message kept from an earlier version (the obligation was locked when
+  // the template changed, or the change was rejected). Without a template: the reminder's own message (written before 24 Nov 2026).
+  body            String?
+  templateVersion Int           @default(0) // the template's version this reminder has taken
+  rejectedVersion Int           @default(0) // a newer version the user said no to (no more asking about it)
+  createdAt       DateTime      @default(now())
+  messages        CmpMessage[]
 
   @@unique([obligationId, offsetDays])
 }
 
+// The template an obligation uses for its advance payment receipt, its invoice and its receipt messages (the CA, 24 Nov 2026), kept
+// like a reminder's (body null = the template as it is now; text = an earlier version kept for a locked obligation)
+model CmpObligationTemplate {
+  id              String        @id @default(uuid())
+  tenantId        String
+  obligationId    String
+  obligation      CmpObligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+  kind            String // ADVANCE, INVOICE or RECEIPT
+  templateId      String
+  template        CmpTemplate   @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  body            String?
+  templateVersion Int           @default(0)
+  rejectedVersion Int           @default(0)
+  createdAt       DateTime      @default(now())
+
+  @@unique([obligationId, kind])
+  @@index([templateId])
+}
+
 // A message template with [placeholders] (SRS 7)
 model CmpTemplate {
-  id        String        @id @default(uuid())
+  id        String                  @id @default(uuid())
   tenantId  String
-  tenant    Tenant        @relation(fields: [tenantId], references: [id])
+  tenant    Tenant                  @relation(fields: [tenantId], references: [id])
   name      String
-  purpose   String        @default("REMINDER") // REMINDER, DATA_COLLECTION, COMPLETION, INVOICE, RECEIPT or OTHER
+  // its category (the CA, 24 Nov 2026): REMINDER_1, REMINDER_2, REMINDER_3, ADVANCE, INVOICE, RECEIPT or OTHER. REMINDER is a template
+  // made before the reminders were told apart: it is offered for all three until its category is chosen.
+  purpose   String                  @default("REMINDER_1")
+  country   String                  @default("") // the country whose clients it is for ('' = every country)
+  version   Int                     @default(1) // goes up each time its message changes (a locked obligation keeps the version it has)
   body      String
-  active    Boolean       @default(true)
-  createdBy String        @default("")
-  updatedBy String        @default("")
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  active    Boolean                 @default(true)
+  createdBy String                  @default("")
+  updatedBy String                  @default("")
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
   reminders CmpReminder[]
   messages  CmpMessage[]
+  docLinks  CmpObligationTemplate[]
 
   @@unique([tenantId, name])
 }
@@ -1169,7 +1215,9 @@ model CmpMessage {
   invoice      CmpInvoice?    @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   receiptId    String?
   receipt      CmpReceipt?    @relation(fields: [receiptId], references: [id], onDelete: SetNull)
-  kind         String // REMINDER, DATA_COLLECTION, COMPLETION, INVOICE, RECEIPT or OTHER
+  advanceId    String?
+  advance      CmpAdvance?    @relation(fields: [advanceId], references: [id], onDelete: SetNull)
+  kind         String // REMINDER, ADVANCE, INVOICE, RECEIPT or OTHER (DATA_COLLECTION, COMPLETION: messages of before 24 Nov 2026)
   // WHATSAPP (opened in WhatsApp), or a reminder given another way and marked by hand (the CA): PHONE, EMAIL or OTHER
   channel      String         @default("WHATSAPP")
   templateName String         @default("") // as it was called when the message was sent
@@ -1191,17 +1239,19 @@ model CmpMessage {
 // A tax the firm adds to its fee invoices (the CA: VAT and others, as many as needed), kept for the countries it was used for and
 // suggested on the invoices of clients of those countries. The same name can have different rates (VAT 5% in the UAE, 15% in Saudi Arabia).
 model CmpTaxRate {
-  id           String   @id @default(uuid())
-  tenantId     String
-  tenant       Tenant   @relation(fields: [tenantId], references: [id])
-  name         String // e.g. VAT
-  rate         Decimal  @db.Decimal(7, 3) // per cent
-  allCountries Boolean  @default(false)
-  countries    String[] @default([])
-  active       Boolean  @default(true)
-  createdBy    String   @default("")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String    @id @default(uuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  name          String // e.g. VAT
+  rate          Decimal   @db.Decimal(7, 3) // per cent
+  type          String    @default("") // e.g. Output VAT, Excise (the CA's Tax Configuration report)
+  effectiveFrom DateTime? @db.Date // from when this rate applies (else from when it was recorded)
+  allCountries  Boolean   @default(false)
+  countries     String[]  @default([])
+  active        Boolean   @default(true)
+  createdBy     String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@unique([tenantId, name, rate])
 }
@@ -1214,6 +1264,9 @@ model CmpItem {
   tenant       Tenant   @relation(fields: [tenantId], references: [id])
   name         String
   key          String // the name in lower case with single spaces: what makes two items the same
+  code         String   @default("") // the firm's own code for it (the CA's Item Register)
+  category     String   @default("")
+  unit         String   @default("") // e.g. per return, per month, per hour
   currency     String
   amount       Decimal  @db.Decimal(14, 3)
   allCountries Boolean  @default(false)
@@ -1258,12 +1311,22 @@ model CmpAdvance {
   currency     String
   amount       Decimal        @db.Decimal(14, 3)
   used         Decimal        @default(0) @db.Decimal(14, 3)
+  // its numbered receipt for the client (the CA, 24 Nov 2026), how it was paid, when it was sent, and the format it is printed with
+  seqNo        Int?
+  number       String?
+  method       String         @default("BANK") // BANK, CASH, CHEQUE, CARD, ONLINE or OTHER
+  reference    String         @default("")
+  sentAt       DateTime?
+  typeId       String?
+  typeSnapshot Json?
   createdBy    String         @default("")
   createdAt    DateTime       @default(now())
   voidedAt     DateTime?
   voidedBy     String?
   voidReason   String         @default("")
+  messages     CmpMessage[]
 
+  @@unique([tenantId, number])
   @@index([tenantId, clientId])
   @@index([occurrenceId])
 }
@@ -1275,7 +1338,7 @@ model CmpInvoiceType {
   tenantId  String
   tenant    Tenant   @relation(fields: [tenantId], references: [id])
   name      String
-  kind      String   @default("INVOICE") // INVOICE or RECEIPT (the CA: invoice formats and receipt formats, each per country)
+  kind      String   @default("INVOICE") // INVOICE, RECEIPT or ADVANCE (the CA: invoice, receipt and advance payment formats, each per country)
   country   String
   isDefault Boolean  @default(false)
   layout    Json     @default("{}")
@@ -1325,6 +1388,9 @@ model CmpInvoice {
   issueDate        DateTime?        @db.Date
   dueDate          DateTime?        @db.Date
   subtotal         Decimal          @default(0) @db.Decimal(14, 3)
+  // taken off and added before the taxes (the CA's invoice: subtotal, discount, additional charges, tax, grand total)
+  discount         Decimal          @default(0) @db.Decimal(14, 3)
+  charges          Decimal          @default(0) @db.Decimal(14, 3)
   taxTotal         Decimal          @default(0) @db.Decimal(14, 3)
   total            Decimal          @default(0) @db.Decimal(14, 3)
   received         Decimal          @default(0) @db.Decimal(14, 3) // the receipts that are not voided
@@ -1417,4 +1483,31 @@ model CmpReceipt {
 
   @@unique([tenantId, number])
   @@index([invoiceId])
+}
+
+// An in-app notification for the firm's staff (the CA's "Deadline Tracker - Notification", 24 Nov 2026): made once for its trigger
+// (src/compliance/notify.js), at the firm's notification hour or at once when something happens (an obligation added, data received…)
+model CmpNotification {
+  id           String   @id @default(uuid())
+  tenantId     String
+  key          String // what makes it once only: the trigger, what it is about and its day, e.g. DUE:<occurrenceId>:2027-04-28
+  kind         String // the trigger
+  userId       String? // the staff member it is for (the one assigned); null = everyone in the firm who works on compliance
+  clientId     String?
+  obligationId String?
+  occurrenceId String?
+  invoiceId    String?
+  title        String
+  body         String   @default("")
+  forDay       DateTime @db.Date // the day it is about (a reminder's day, the due date, …)
+  createdAt    DateTime @default(now()) // when it was made
+  readBy       String[] @default([]) // the users who have read it
+  status       String   @default("DONE") // DONE, or FAILED (kept with its error; tried again at the next run)
+  attempts     Int      @default(1)
+  lastError    String   @default("")
+
+  @@unique([tenantId, key])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, forDay])
+  @@index([occurrenceId])
 }
