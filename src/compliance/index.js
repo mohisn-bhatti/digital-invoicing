@@ -10,6 +10,7 @@ const { createBulk } = require('./bulk');
 const { createReports } = require('./reports');
 const { createNotify } = require('./notify');
 const { createReportsCatalog } = require('./reportsCatalog');
+const { createDashboard } = require('./dashboard');
 
 function createCompliance({ prisma, audit, encrypt, decrypt, now = () => new Date() }) {
     const common = createCommon({ prisma });
@@ -23,8 +24,9 @@ function createCompliance({ prisma, audit, encrypt, decrypt, now = () => new Dat
     const notify = createNotify({ prisma, audit, common, clients, obligations, invoices, comms, now });
     common.hooks.notify = notify;
     const reportsCatalog = createReportsCatalog({ prisma, audit, common, clients, obligations, comms, invoices, reports, now });
+    const dashboard = createDashboard({ prisma, common, clients, obligations, now });
     const { sweep } = createSweep({ prisma, audit, obligations, notify, now });
-    return { common, clients, obligations, comms, invoices, bulk, reports, notify, reportsCatalog, sweep };
+    return { common, clients, obligations, comms, invoices, bulk, reports, notify, reportsCatalog, dashboard, sweep };
 }
 
 module.exports = { createCompliance };

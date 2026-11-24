@@ -529,6 +529,8 @@ function createObligations({ prisma, audit, common, now }) {
             DATA_COLLECTED: { stage: 'DATA_COLLECTED', dueAt: { gt: at } }, FILED: { stage: 'FILED', dueAt: { gt: at } }, PAID: { stage: 'PAID', dueAt: { gt: at } },
             PERIOD_CLOSED: { stage: 'OPEN', periodEndAt: { lte: at }, dueAt: { gt: at } }, UPCOMING: { stage: 'OPEN', periodEndAt: { gt: at } },
             CONFIRM: { datesConfirmed: false, stage: { not: 'COMPLETED' } }, PLANNED: {},
+            // the Dashboard's drill-downs (the CA, 24 Nov 2026): data still to collect; the task open (data in, not completed)
+            DATA_PENDING: { stage: 'OPEN' }, TASK_PENDING: { stage: { in: ['DATA_COLLECTED', 'FILED', 'PAID'] } },
         };
         if (!byStatus[status]) throw bad('Unknown status.');
         AND.push(byStatus[status]);

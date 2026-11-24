@@ -13,7 +13,8 @@ CMP_RESETS.push(() => Object.assign(CMP_OB, { status: 'ALL', country: '', client
 const cmpObQuery = () => cmpQs({ status: CMP_OB.status, country: CMP_OB.country, clientId: CMP_OB.clientId, q: CMP_OB.q, assignee: CMP_OB.assignee, archived: CMP_OB.archived ? '1' : '', ...cmpRangeDates('ob') });
 
 const CMP_OB_STATUSES = [['ALL', 'Everything'], ['OPEN', 'Open (not completed)'], ['OVERDUE', 'Overdue'], ['UPCOMING', 'Upcoming'], ['PERIOD_CLOSED', 'Period closed'], ['DATA_COLLECTED', 'Data collected'],
-  ['FILED', 'Filed'], ['PAID', 'Paid'], ['COMPLETED', 'Completed'], ['CONFIRM', 'Dates to confirm'], ['PLANNED', 'Planned (still to come)']];
+  ['FILED', 'Filed'], ['PAID', 'Paid'], ['COMPLETED', 'Completed'], ['CONFIRM', 'Dates to confirm'], ['PLANNED', 'Planned (still to come)'],
+  ['DATA_PENDING', 'Data collection pending'], ['TASK_PENDING', 'Task pending (data collected)']];
 // From the dashboard or the notifications: a status over all dates (an overdue period of last year is still overdue)
 function cmpObligationsFilter(over) {
   Object.assign(CMP_OB, over);
