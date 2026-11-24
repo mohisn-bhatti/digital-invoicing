@@ -688,25 +688,6 @@ function cmpLogoPick(input) {
   img.onerror = () => { URL.revokeObjectURL(url); toast('That picture could not be read.'); };
   img.src = url;
 }
-function cmpSenderRow(x = { label: 'Business WhatsApp', phone: '', open: 'WEB', isDefault: !document.querySelector('#cmSenders .cmSender') }, can = true) {
-  const dis = can ? '' : 'disabled';
-  $('#cmSenders').insertAdjacentHTML('beforeend', `<div class="cmSender flex flex-wrap items-end gap-2 bg-slate-50 border rounded-lg p-2" data-id="${esc(x.id || '')}">
-    <label class="flex-1 min-w-[9rem]"><span>Name</span><input class="snLabel" maxlength="60" value="${esc(x.label)}" ${dis}></label>
-    <label class="w-48"><span>Number (with country code)</span><input class="snPhone" maxlength="20" inputmode="tel" placeholder="+92 333 1234567" value="${esc(x.phone)}" ${dis}></label>
-    <label class="w-56"><span>Opens with</span><select class="snOpen" ${dis}>${Object.entries(CmpRules.SENDER_OPEN).map(([k, v]) => `<option value="${k}" ${x.open === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
-    <label class="flex items-center gap-1 text-sm min-h-[2.5rem]"><input type="radio" name="snDefault" class="snDefault" ${x.isDefault ? 'checked' : ''} ${dis}> Default</label>
-    ${can ? '<button type="button" class="px-2 min-h-[2.5rem] text-red-600" onclick="this.closest(\'.cmSender\').remove()" aria-label="Remove">✕</button>' : ''}</div>`);
-}
-async function cmpSettingsSave() {
-  const f = $('#cmGenForm');
-  try {
-    CMP.settings = await api('/api/cmp/settings', { method: 'PUT', body: { timeZone: f.timeZone.value, reminderHour: Number(f.reminderHour.value),
-      waSenders: [...document.querySelectorAll('#cmSenders .cmSender')].map(r => ({ id: r.dataset.id || undefined, label: r.querySelector('.snLabel').value, phone: r.querySelector('.snPhone').value, open: r.querySelector('.snOpen').value, isDefault: r.querySelector('.snDefault').checked })) } });
-    if (CMP.me) CMP.me.settings = CMP.settings;
-    PAGE_ENTER['cm-settings']();
-    toast('Settings saved', true);
-  } catch (err) { toast(err.message); }
-}
 // The standard format of invoices and receipts (Invoice and Receipt Format)
 async function cmpFmtStdSave() {
   const f = $('#cmSetForm');
