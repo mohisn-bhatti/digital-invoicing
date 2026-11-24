@@ -27,7 +27,35 @@
   const addDays = (ymd, n) => new Date(parse(ymd) + n * DAY).toISOString().slice(0, 10);
   const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / DAY);
   const lastDay = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate(); // m = 1..12
-  const fmtDay = v => { const s = ymdOf(v); if (!ymdOk(s)) return ''; const [y, m, d] = s.split('-').map(Number); return `${d} ${MONTHS[m - 1]} ${y}`; };
+  // How a day is written (the CA's Settings, 24 Nov 2026: the firm chooses). The browser sets the firm's choice once (setDayFormat); the
+  // server, shared by every firm, passes it where it matters (a message: ctx.dateFormat) and otherwise writes "3 Mar 2027".
+  const DAY_FORMATS = { 'D MMM YYYY': '25 Mar 2027', 'DD/MM/YYYY': '25/03/2027', 'MM/DD/YYYY': '03/25/2027', 'YYYY-MM-DD': '2027-03-25', 'DD-MMM-YYYY': '25-Mar-2027' };
+  let dayFormat = 'D MMM YYYY';
+  const setDayFormat = f => { dayFormat = DAY_FORMATS[f] ? f : 'D MMM YYYY'; };
+  const fmtDay = (v, fmt = dayFormat) => {
+    const s = ymdOf(v); if (!ymdOk(s)) return '';
+    const [y, m, d] = s.split('-').map(Number);
+    switch (fmt) {
+      case 'DD/MM/YYYY': return `${pad(d)}/${pad(m)}/${y}`;
+      case 'MM/DD/YYYY': return `${pad(m)}/${pad(d)}/${y}`;
+      case 'YYYY-MM-DD': return s;
+      case 'DD-MMM-YYYY': return `${pad(d)}-${MONTHS[m - 1]}-${y}`;
+      default: return `${d} ${MONTHS[m - 1]} ${y}`;
+    }
+  };
+  const fmtDayAs = (v, fmt) => fmtDay(v, fmt);
+  // How a number is written (the same settings): the thousands and decimal marks, and the Indian/Pakistani grouping (12,34,567.89)
+  const NUMBER_FORMATS = { '1,234.56': '1,234,567.89', '1.234,56': '1.234.567,89', '1 234.56': '1 234 567.89', "1'234.56": "1'234'567.89", '12,34,567.89': '12,34,567.89' };
+  let numberFormat = '1,234.56';
+  const setNumberFormat = f => { numberFormat = NUMBER_FORMATS[f] ? f : '1,234.56'; };
+  function fmtNum(n, decimals = 2, fmt = numberFormat) {
+    const v = Number(n || 0), neg = v < 0, [int, frac] = Math.abs(v).toFixed(decimals).split('.');
+    let g;
+    if (fmt === '12,34,567.89') g = int.length > 3 ? `${int.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',')},${int.slice(-3)}` : int;
+    else g = int.replace(/\B(?=(\d{3})+(?!\d))/g, { '1.234,56': '.', '1 234.56': ' ', "1'234.56": "'" }[fmt] || ',');
+    const dec = fmt === '1.234,56' ? ',' : '.';
+    return (neg ? '-' : '') + g + (frac ? dec + frac : '');
+  }
 
   /* ---------- time zones ---------- */
   const fmtCache = new Map();
@@ -68,7 +96,7 @@
   function fmtAt(t, tz) {
     if (t === null || t === undefined || !Number.isFinite(+t)) return '';
     const w = wall(tz, +t);
-    return `${w.d} ${MONTHS[w.m - 1]} ${w.y}, ${pad(w.h)}:${pad(w.mi)}`;
+    return `${fmtDay(`${w.y}-${pad(w.m)}-${pad(w.d)}`)}, ${pad(w.h)}:${pad(w.mi)}`;
   }
 
   /* ---------- one year of an obligation ---------- */
@@ -84,8 +112,19 @@
   function instants(occ, tz) {
     return { periodEndAt: zoned(addDays(ymdOf(occ.periodEnd), 1), 0, 0, tz), dueAt: zoned(addDays(ymdOf(occ.dueDate), 1), 0, 0, tz) };
   }
-  // A reminder comes due offsetDays from the due date (negative = before), at the firm's reminder hour on the client's clock
-  const fireAt = (dueYmd, offsetDays, hour, tz) => zoned(addDays(ymdOf(dueYmd), offsetDays), hour, 0, tz);
+  // A reminder comes due offsetDays from the due date (negative = before), at the firm's reminder hour on the client's clock. work (the CA's
+  // Settings, 24 Nov 2026): { weekend: [0 = Sunday … 6 = Saturday], holidays: ['YYYY-MM-DD'], mode: BEFORE | AFTER } moves a reminder that
+  // falls on a weekend day or a public holiday to the working day before (or after); mode NONE (or no work) leaves it where it is.
+  function reminderDay(dueYmd, offsetDays, work) {
+    let d = addDays(ymdOf(dueYmd), offsetDays);
+    if (!work || !['BEFORE', 'AFTER'].includes(work.mode)) return d;
+    const off = new Set(work.weekend || []), hol = work.holidaySet || new Set(work.holidays || []), step = work.mode === 'BEFORE' ? -1 : 1;
+    for (let i = 0; i < 31 && (off.has(new Date(parse(d)).getUTCDay()) || hol.has(d)); i++) d = addDays(d, step);
+    return d;
+  }
+  // The firm's settings → the work option above (once per request: the holidays as a set)
+  const workOf = st => (st && ['BEFORE', 'AFTER'].includes(st.holidayMode) ? { mode: st.holidayMode, weekend: st.weekendDays || [], holidaySet: new Set((st.holidays || []).map(h => h.date)) } : null);
+  const fireAt = (dueYmd, offsetDays, hour, tz, work) => zoned(reminderDay(dueYmd, offsetDays, work), hour, 0, tz);
 
   // Every reminder of one year, with its state (SRS 6):
   //   BLEAK        its time has not come: dimmed, no WhatsApp button
@@ -94,10 +133,10 @@
   //   SENT         a message was sent for it (this year)
   //   CLOSED       the year was closed without it
   // sent: Map reminderId → when it was sent (only messages that were not marked "not sent")
-  function reminderStates(occ, reminders, { tz, hour = 9, now = Date.now(), sent = new Map() } = {}) {
+  function reminderStates(occ, reminders, { tz, hour = 9, now = Date.now(), sent = new Map(), work = null } = {}) {
     const due = ymdOf(occ.dueDate), dueAt = +instants(occ, tz).dueAt, closed = occ.stage === 'COMPLETED';
     const list = [...(reminders || [])].sort((a, b) => a.offsetDays - b.offsetDays)
-      .map(r => ({ ...r, fireAt: +fireAt(due, r.offsetDays, hour, tz), sentAt: sent.get(r.id) || null }));
+      .map(r => ({ ...r, fireAt: +fireAt(due, r.offsetDays, hour, tz, work), sentAt: sent.get(r.id) || null }));
     list.forEach((r, i) => {
       const next = i + 1 < list.length ? list[i + 1].fireAt : Infinity;
       r.until = r.fireAt < dueAt ? Math.min(next, dueAt) : next;
@@ -111,9 +150,9 @@
 
   // Status, colour and reminders of one year. Overdue = not completed by the end of the due date (SRS 6), whatever step it is at.
   // Colours: green safe, amber approaching (a reminder to send, or the due date within amberDays), red overdue, 'done' completed.
-  function occurrenceView(occ, { tz, hour = 9, amberDays = 7, now = Date.now(), reminders = [], sent } = {}) {
+  function occurrenceView(occ, { tz, hour = 9, amberDays = 7, now = Date.now(), reminders = [], sent, work = null } = {}) {
     const { periodEndAt, dueAt } = instants(occ, tz);
-    const rs = reminderStates(occ, reminders, { tz, hour, now, sent });
+    const rs = reminderStates(occ, reminders, { tz, hour, now, sent, work });
     const completed = occ.stage === 'COMPLETED';
     const overdue = !completed && +now >= +dueAt;
     const status = completed ? 'COMPLETED' : overdue ? 'OVERDUE' : MANUAL.includes(occ.stage) ? occ.stage : +now >= +periodEndAt ? 'PERIOD_CLOSED' : 'UPCOMING';
@@ -211,9 +250,10 @@
   const PLACEHOLDER_GROUPS = [
     ['Client details', ['Client Name', 'Client Code', 'Registration No.', 'Contact Number', 'WhatsApp Number', 'Email', 'Address', 'Reference', 'Country']],
     ['Obligation', ['Obligation', 'Period Start', 'Period End', 'Due Date', 'Days Left', 'Portal Link']],
+    ['Advance payment', ['Advance Number', 'Advance Date', 'Advance Amount', 'Advance Description', 'Advance Balance']],
     ['Invoice', ['Invoice Number', 'Invoice Date', 'Invoice Amount', 'Payment Due', 'Amount Outstanding']],
     ['Receipt', ['Receipt Number', 'Receipt Date', 'Receipt Amount']],
-    ['Your firm', ['Firm Name', 'Firm Phone', 'Firm Email']],
+    ['Your firm', ['Firm Name', 'Firm Phone', 'Firm Email', 'Firm Address', 'Firm Website']],
   ];
   const PLACEHOLDERS = PLACEHOLDER_GROUPS.flatMap(g => g[1]);
   // A custom field may not take one of these names (nor the portal login's: those never go into a message). "WhatsApp Number" may: a
@@ -221,13 +261,15 @@
   const RESERVED = new Set([...PLACEHOLDERS.filter(n => n !== 'WhatsApp Number'), 'Username', 'User Name', 'Password', 'Pin Code', 'Pin'].map(keyOf));
 
   // Fills a template. ctx: { client, countryName, whatsapp, obligationName, portalUrl, daysLeft, occurrence, fields: { 'Trade License Number': '…' },
-  // invoice: { number, amountText, date, dueDate, outstandingText }, receipt: { number, date, amountText }, firm: { name, phone, email } }
+  // invoice: { number, amountText, date, dueDate, outstandingText }, receipt: { number, date, amountText }, advance: { number, date, amountText,
+  // description, balanceText }, firm: { name, phone, email, address, website }, dateFormat }
   // Returns the text, the [names] that are not known (left as typed) and the known ones that have no value (left empty).
   function render(body, ctx = {}) {
     const values = new Map();
     const put = (k, v) => { if (!values.has(keyOf(k))) values.set(keyOf(k), v === null || v === undefined ? '' : String(v)); };
     const c = ctx.client || {}, o = ctx.occurrence || {};
-    const inv = ctx.invoice || {}, rc = ctx.receipt || {}, firm = ctx.firm || {};
+    const inv = ctx.invoice || {}, rc = ctx.receipt || {}, adv = ctx.advance || {}, firm = ctx.firm || {};
+    const fmtDay = v => fmtDayAs(v, ctx.dateFormat || dayFormat);
     put('Client Name', c.name); put('Client Code', c.code); put('Registration No.', c.registrationNo); put('Email', c.email); put('Contact Number', c.contactNumber);
     put('WhatsApp Number', ctx.whatsapp || c.contactNumber); put('Address', c.address); put('Reference', c.reference); put('Country', ctx.countryName || c.country);
     put('Obligation', ctx.obligationName); put('Due Date', fmtDay(o.dueDate)); put('Period Start', fmtDay(o.periodStart)); put('Period End', fmtDay(o.periodEnd));
@@ -235,7 +277,8 @@
     put('Portal Link', ctx.portalUrl);
     put('Invoice Number', inv.number); put('Invoice Date', fmtDay(inv.date)); put('Invoice Amount', inv.amountText); put('Payment Due', fmtDay(inv.dueDate)); put('Amount Outstanding', inv.outstandingText);
     put('Receipt Number', rc.number); put('Receipt Date', fmtDay(rc.date)); put('Receipt Amount', rc.amountText);
-    put('Firm Name', firm.name); put('Firm Phone', firm.phone); put('Firm Email', firm.email);
+    put('Advance Number', adv.number); put('Advance Date', fmtDay(adv.date)); put('Advance Amount', adv.amountText); put('Advance Description', adv.description); put('Advance Balance', adv.balanceText);
+    put('Firm Name', firm.name); put('Firm Phone', firm.phone); put('Firm Email', firm.email); put('Firm Address', firm.address); put('Firm Website', firm.website);
     for (const [name, v] of Object.entries(ctx.fields || {})) put(name, v);
     const missing = [], empty = [];
     const text = String(body || '').replace(/\[([^[\]\n]{1,60})\]/g, (all, name) => {
@@ -288,9 +331,11 @@
   const sentTimes = n => (n === 1 ? 'Sent' : n === 2 ? 'Sent twice' : `Sent ${n} times`);
   // The overall status of a period: how many of its actions are done (the CA: "if 2 are done of 7, 2/7"). The actions: each reminder (a
   // reminder that was not needed because the task was done first does not count), the data collection, the task, and, unless the work
-  // is closed without an invoice, the invoice created, the invoice sent to the client and the money received in full.
+  // is closed without an invoice, the invoice created, the invoice sent to the client and the money received in full. The advance payment
+  // counts too when there is one (the CA, 24 Nov 2026: "if there is a value in advance then it would be counted"), as done.
   function progress(p) {
     const steps = [];
+    if (p.advance && Number(p.advance.amount) > 0) steps.push(true);
     for (const r of p.reminders || []) { const sent = (r.sentCount || 0) > 0 || r.state === 'SENT'; if (sent || r.state !== 'CLOSED') steps.push(sent); }
     steps.push(Boolean(p.dataCollectedOn), p.stage === 'COMPLETED');
     if (p.closeKind !== 'FREE') {
@@ -302,14 +347,22 @@
 
   // How a message or reminder went: on WhatsApp, or another way and marked by hand (the CA: clients with no WhatsApp)
   const CHANNELS ={ WHATSAPP: 'WhatsApp', PHONE: 'Phone call', EMAIL: 'Email', OTHER: 'Another way' };
-  const TEMPLATE_PURPOSES = { REMINDER: 'Reminder', DATA_COLLECTION: 'Data collection', COMPLETION: 'Obligation completed', INVOICE: 'Invoice', RECEIPT: 'Receipt', OTHER: 'Other' };
-  const MESSAGE_KINDS = TEMPLATE_PURPOSES;
+  // A template's category (the CA, 24 Nov 2026: "Used for" is written as Category, with only these). REMINDER: a template made before the
+  // reminders were told apart, offered for all three until its category is chosen.
+  const TEMPLATE_PURPOSES = { REMINDER_1: '1st Reminder', REMINDER_2: '2nd Reminder', REMINDER_3: '3rd Reminder', ADVANCE: 'Advance Payment', INVOICE: 'Invoice', RECEIPT: 'Receipt', OTHER: 'Others' };
+  const TEMPLATE_LEGACY = { REMINDER: 'Reminder (1st, 2nd or 3rd: choose)', DATA_COLLECTION: 'Others', COMPLETION: 'Others' };
+  const templateCategory = p => TEMPLATE_PURPOSES[p] || TEMPLATE_LEGACY[p] || p;
+  // The category a message of this kind takes its template from (a reminder: its place, 1st, 2nd or 3rd)
+  const categoryFor = (kind, n = 1) => (kind === 'REMINDER' ? `REMINDER_${Math.min(3, Math.max(1, n))}` : kind === 'ADVANCE' || kind === 'INVOICE' || kind === 'RECEIPT' ? kind : 'OTHER');
+  // Whether a template of category p (and country) may be used where category want is asked for, for a client of country cc
+  const templateFits = (t, want, cc) => (!t.country || !cc || t.country === cc) && (t.purpose === want || (t.purpose === 'REMINDER' && /^REMINDER_/.test(want)) || (want === 'OTHER' && ['DATA_COLLECTION', 'COMPLETION'].includes(t.purpose)));
+  const MESSAGE_KINDS = { REMINDER: 'Reminder', ADVANCE: 'Advance payment', INVOICE: 'Invoice', RECEIPT: 'Receipt', OTHER: 'Other', DATA_COLLECTION: 'Data collection', COMPLETION: 'Obligation completed' };
 
   return {
-    DAY, MONTHS, ymdOk, ymdOf, addDays, daysBetween, fmtDay, zoned, dayIn, fmtAt, offsetMs,
-    STAGES, MANUAL, STATUS, instants, fireAt, reminderStates, occurrenceView,
+    DAY, MONTHS, ymdOk, ymdOf, addDays, daysBetween, fmtDay, zoned, dayIn, fmtAt, offsetMs, DAY_FORMATS, setDayFormat, NUMBER_FORMATS, setNumberFormat, fmtNum,
+    STAGES, MANUAL, STATUS, instants, fireAt, reminderDay, workOf, reminderStates, occurrenceView,
     FREQUENCIES, freqOf, shiftMonths, shiftYears, periodDates, yearDates, projectPeriods, periodsAllowed, periodName, datesProblem, offsetLabel, yearsLabel, repeatsLabel, yearsShort,
-    keyOf, PLACEHOLDER_GROUPS, PLACEHOLDERS, RESERVED, render, waPhone, toE164, waUrl, SENDER_OPEN, waLink, CHANNELS, TEMPLATE_PURPOSES, MESSAGE_KINDS,
+    keyOf, PLACEHOLDER_GROUPS, PLACEHOLDERS, RESERVED, render, waPhone, toE164, waUrl, SENDER_OPEN, waLink, CHANNELS, TEMPLATE_PURPOSES, TEMPLATE_LEGACY, templateCategory, categoryFor, templateFits, MESSAGE_KINDS,
     ordinal, reminderButton, sentTimes, progress,
   };
 });

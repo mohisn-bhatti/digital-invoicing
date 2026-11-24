@@ -227,14 +227,17 @@ async function cmpAdvanceForm(at, refresh) {
       <div class="grid grid-cols-2 gap-3"><label><span>Received on</span><input name="receivedOn" type="date" required value="${CmpRules.dayIn(cmpTz())}"></label>
         <label><span>Currency</span><select name="currency">${CmpCountries.currencies.map(c => `<option value="${c.code}" ${c.code === cur ? 'selected' : ''}>${c.code}</option>`).join('')}</select></label></div>
       <label><span>Description</span><input name="description" required maxlength="200" list="cmAdvWords" autocomplete="off" placeholder="e.g. Advance for VAT return Q1"><datalist id="cmAdvWords">${words.map(w => `<option value="${esc(w)}"></option>`).join('')}</datalist></label>
-      <label><span>Amount</span><input name="amount" required inputmode="decimal" placeholder="0.00"></label>
+      <div class="grid grid-cols-2 gap-3"><label><span>Amount</span><input name="amount" required inputmode="decimal" placeholder="0.00"></label>
+        <label><span>Paid by</span><select name="method">${Object.entries(CMP_METHODS).filter(([k]) => k !== 'CREDIT').map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></label></div>
+      <label><span>Reference <span class="text-slate-400">(cheque or transfer no., optional)</span></span><input name="reference" maxlength="120"></label>
+      <p class="text-xs text-slate-500">It gets its own receipt number (the client's advance payment receipt), to print or send on WhatsApp.</p>
       <div class="flex justify-end gap-2">${cmpBtn('Cancel', 'cmpCloseSub()')}<button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save advance</button></div></form>`);
 }
 async function cmpAdvanceSave() {
   const { at, refresh } = CMP_OB.advance, f = $('#cmAdvForm');
   try {
-    const a = await api('/api/cmp/advances', { method: 'POST', body: { occurrenceId: at.occurrenceId || undefined, clientId: at.clientId, receivedOn: f.receivedOn.value, currency: f.currency.value, description: f.description.value, amount: f.amount.value } });
-    cmpCloseSub(); toast(`Advance of ${cmpMoney(a.amount, a.currency)} saved`, true);
+    const a = await api('/api/cmp/advances', { method: 'POST', body: { occurrenceId: at.occurrenceId || undefined, clientId: at.clientId, receivedOn: f.receivedOn.value, currency: f.currency.value, description: f.description.value, amount: f.amount.value, method: f.method.value, reference: f.reference.value } });
+    cmpCloseSub(); toast(`Advance ${a.number} of ${cmpMoney(a.amount, a.currency)} saved`, true);
     if (typeof refresh === 'function') refresh(a);
   } catch (err) { toast(err.message); }
 }
@@ -246,25 +249,27 @@ async function cmpTrkAdvances(occId, refresh) {
   if (more.length) { try { const all = await api('/api/cmp/advances?clientId=' + (CMP_ROWS.get(occId) || {}).client.id); list = [...list, ...all.filter(a => more.some(m => m.id === a.id))]; } catch { /* the period's own */ } }
   CMP_OB.advList = { occId, refresh }; CMP_OB.advCache = list;
   cmpShowSub(`${cmpSubHead('Advance payments', 'Received for this period. Taken off its invoice: gross amount, advance adjusted, net amount.')}
-    ${list.length ? `<table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Date</th><th>Description</th><th class="text-right">Amount</th><th class="text-right">Adjusted</th><th></th></tr></thead><tbody>
-      ${list.map(a => `<tr class="border-b last:border-0"><td class="py-1.5 whitespace-nowrap">${cmpDay(a.receivedOn)}</td><td>${esc(a.description)}</td><td class="text-right whitespace-nowrap">${cmpMoney(a.amount, a.currency)}</td>
-        <td class="text-right whitespace-nowrap">${cmpMoney(a.used, a.currency)}</td><td class="text-right whitespace-nowrap">${cmpLink('✎ change', `cmpAdvanceEdit('${a.id}', () => cmpTrkAdvances('${occId}', CMP_OB.advList.refresh).then(() => { if (typeof CMP_OB.advList.refresh === 'function') CMP_OB.advList.refresh(); }))`)} ${a.used > 0 ? '' : cmpLink('↶ undo', `cmpAdvanceVoid('${a.id}')`)}</td></tr>`).join('')}</tbody></table>` : cmpEmpty('None.')}
+    ${list.length ? `<table class="w-full text-sm"><thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Receipt</th><th>Date</th><th>Description</th><th class="text-right">Amount</th><th class="text-right">Adjusted</th><th></th></tr></thead><tbody>
+      ${list.map(a => `<tr class="border-b last:border-0"><td class="py-1.5 whitespace-nowrap">${esc(a.number || '')}</td><td class="whitespace-nowrap">${cmpDay(a.receivedOn)}</td><td>${esc(a.description)}</td><td class="text-right whitespace-nowrap">${cmpMoney(a.amount, a.currency)}</td>
+        <td class="text-right whitespace-nowrap">${cmpMoney(a.used, a.currency)}</td><td class="text-right whitespace-nowrap space-x-1">${cmpLink('Print', `cmpAdvancePrint('${a.id}')`)} ${cmpCan('WHATSAPP') ? cmpLink('WhatsApp', `cmpCloseSub(); cmpWhatsApp({ kind: 'ADVANCE', advanceId: '${a.id}' }, CMP_OB.advList.refresh)`) : ''} ${cmpLink('✎ change', `cmpAdvanceEdit('${a.id}', () => cmpTrkAdvances('${occId}', CMP_OB.advList.refresh).then(() => { if (typeof CMP_OB.advList.refresh === 'function') CMP_OB.advList.refresh(); }))`)} ${a.used > 0 ? '' : cmpLink('↶ undo', `cmpAdvanceVoid('${a.id}')`)}</td></tr>`).join('')}</tbody></table>` : cmpEmpty('None.')}
     <div class="flex justify-end mt-3">${cmpBtn('Close', 'cmpCloseSub()')}</div>`);
 }
 // An advance changed (the CA: editable): its date, description and amount (never less than what is already taken off an invoice)
 function cmpAdvanceEdit(id, after) {
-  const a = [...(CMP_OB.advCache || []), ...((CMP_INV.edit && CMP_INV.edit.advances) || [])].find(x => x.id === id); if (!a) return toast('Reload the page and try again.');
+  const a = [...(CMP_OB.advCache || []), ...((CMP_INV.edit && CMP_INV.edit.advances) || []), ...((typeof CMP_ADV !== 'undefined' && CMP_ADV.rows) || [])].find(x => x.id === id); if (!a) return toast('Reload the page and try again.');
   CMP_OB.advEdit = { id, after };
   cmpShowSub(`${cmpSubHead('Change the advance payment', a.used > 0 ? `${cmpMoney(a.used, a.currency)} of it is taken off an invoice: the amount cannot be less.` : '')}
     <form id="cmAdvEdit" onsubmit="event.preventDefault(); cmpAdvanceEditSave()" class="space-y-3">
       <div class="grid grid-cols-2 gap-3"><label><span>Received on</span><input name="receivedOn" type="date" required value="${esc(a.receivedOn)}"></label>
         <label><span>Amount (${esc(a.currency)})</span><input name="amount" required inputmode="decimal" value="${esc(String(a.amount))}"></label></div>
       <label><span>Description</span><input name="description" required maxlength="200" value="${esc(a.description)}"></label>
+      <div class="grid grid-cols-2 gap-3"><label><span>Paid by</span><select name="method">${Object.entries(CMP_METHODS).filter(([k]) => k !== 'CREDIT').map(([k, v]) => `<option value="${k}" ${k === (a.method || 'BANK') ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
+        <label><span>Reference</span><input name="reference" maxlength="120" value="${esc(a.reference || '')}"></label></div>
       <div class="flex justify-end gap-2">${cmpBtn('Cancel', 'cmpCloseSub()')}<button class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save</button></div></form>`);
 }
 async function cmpAdvanceEditSave() {
   const { id, after } = CMP_OB.advEdit, f = $('#cmAdvEdit');
-  try { await api(`/api/cmp/advances/${id}`, { method: 'PUT', body: { receivedOn: f.receivedOn.value, amount: f.amount.value, description: f.description.value } }); cmpCloseSub(); toast('Advance changed', true); if (typeof after === 'function') after(); }
+  try { await api(`/api/cmp/advances/${id}`, { method: 'PUT', body: { receivedOn: f.receivedOn.value, amount: f.amount.value, description: f.description.value, method: f.method.value, reference: f.reference.value } }); cmpCloseSub(); toast('Advance changed', true); if (typeof after === 'function') after(); }
   catch (err) { toast(err.message); }
 }
 async function cmpAdvanceVoid(id) {
@@ -340,9 +345,11 @@ async function cmpLoadObligations(offset) {
    its three dates, its 1st, 2nd and 3rd reminder (a day and its message), then its own settings (how many years, amber, by itself,
    portal, person, notes) and its lock — to change, add or delete at once. "+ Obligation", Edit on any row, a past, present or future
    period: all open this window, with that period's dates on the obligation's row. ---------- */
-const CMP_REM_DEFAULT = 'Dear [Client Name], this is a reminder that your [Obligation] for the period [Period Start] to [Period End] is due on [Due Date]. Kindly share the required documents.\n\nRegards,\n[Firm Name]';
-const cmpRemDefaultText = () => { const t = (CMP_OB.form && CMP_OB.form.templates || []).find(x => x.purpose === 'REMINDER'); return t ? t.body : CMP_REM_DEFAULT; };
-const CMP_OB_GRID = 'grid grid-cols-[minmax(11rem,1.6fr)_repeat(3,8.2rem)_repeat(3,8.6rem)_5.5rem_4.5rem_3.5rem_minmax(10rem,1fr)_9rem_2.75rem_2.75rem_2rem] gap-2';
+// (the CA, 24 Nov 2026: each reminder takes a template of its category — 1st, 2nd or 3rd reminder — chosen in a list, and the exact message
+// for this client shows under the row; after the 3rd reminder: the advance payment, invoice and receipt templates. The messages are written
+// only on Message Templates.)
+const CMP_DOC_KINDS = [['ADVANCE', 'Advance payment template'], ['INVOICE', 'Invoice template'], ['RECEIPT', 'Receipt template']];
+const CMP_OB_GRID = 'grid grid-cols-[minmax(11rem,1.6fr)_repeat(3,8.2rem)_repeat(3,10.5rem)_repeat(3,10rem)_5.5rem_4.5rem_3.5rem_minmax(10rem,1fr)_9rem_2.75rem_2.75rem_2rem] gap-2';
 // The period an obligation's row shows: the one clicked, else the first not completed, else the next one still to come, else the last
 function cmpObPeriodOf(ob, at = {}) {
   if (at.seq) { const d = CmpRules.projectPeriods(ob, at.seq, '2200-12-31', 1)[0]; if (d) return { ...d, planned: true }; }
@@ -363,26 +370,27 @@ async function cmpObligationForm(clientId, focusId = null, at = {}, { addRow = !
   if (client.archivedAt) return toast('This client is archived. Restore it first.');
   CMP_OB.form = { clientId, client, templates, suggestions, ctx, rowSeq: 0, rows: new Map() };
   const country = cmpCountry(client.country), can = cmpCan('OBLIGATION_EDIT');
-  const head = ['Obligation *', 'Period start *', 'Period end *', `Due date * <span class="text-slate-400 font-normal">(${esc(CmpCountries.zoneCity(client.timeZone))})</span>`, '1st reminder', '2nd reminder', '3rd reminder',
+  const head = ['Obligation *', 'Period start *', 'Period end *', `Due date * <span class="text-slate-400 font-normal">(${esc(CmpCountries.zoneCity(client.timeZone))})</span>`, '1st reminder', '2nd reminder', '3rd reminder', ...CMP_DOC_KINDS.map(k => k[1]),
     '<span title="Empty = unlimited">How many years</span>', '<span title="Turns amber this many days before the due date">Amber days</span>', '<span title="Prepare the next period by itself when this one ends">By itself</span>', 'Portal link', 'Assigned to', 'Notes', 'Lock', ''];
   cmpShowModal(`${cmpModalHead(`Obligations of ${esc(client.name)}`, `${country.flag} ${esc(client.code)} · ${obs.length} obligation${obs.length === 1 ? '' : 's'}${can ? ' · change any of them, add new ones, or delete (✕); 🔒 keeps one from being changed by mistake' : ''}`)}
     <form id="cmObForm" onsubmit="event.preventDefault(); cmpObligationSave()" class="space-y-3">
       <datalist id="cmObNames">${suggestions.map(x => `<option value="${esc(x.name)}"></option>`).join('')}</datalist>
       <datalist id="cmObPortals">${[...new Set(suggestions.map(x => x.portalUrl).filter(Boolean))].map(u => `<option value="${esc(u)}"></option>`).join('')}</datalist>
-      <div class="overflow-x-auto pb-2"><div class="min-w-[106rem]">
+      <div class="overflow-x-auto pb-2"><div class="min-w-[140rem]">
         <div class="${CMP_OB_GRID} text-xs font-medium text-slate-600 mb-1 sticky top-0 bg-white">${head.map((h, i) => `<span class="${i === 0 ? 'sticky left-0 bg-white z-10' : ''}">${h}</span>`).join('')}</div>
         <div id="cmObNew" class="space-y-2"></div></div></div>
       <div id="cmObHint"></div>
       <div class="flex flex-wrap items-center gap-4">${can ? '<button type="button" class="text-sm text-emerald-700 underline" onclick="cmpObRow()">+ Add another obligation</button>' : ''}
         <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="cmObFuture" checked> New dates also apply to the periods after the one shown</label></div>
-      <p class="text-xs text-slate-500">Each obligation comes back <b>every year on the same dates</b> (type them by hand; for quarterly VAT add four, Q1 to Q4: "+ Add another" proposes the next quarter). Each row shows one period (the one you clicked, else the next one to do); its dates and reminder days apply from that period on. Reminders: choose the day, then <b>✉</b> to write its message (it shows how it looks).</p>
+      <p class="text-xs text-slate-500">Each obligation comes back <b>every year on the same dates</b> (type them by hand; for quarterly VAT add four, Q1 to Q4: "+ Add another" proposes the next quarter). Each row shows one period (the one you clicked, else the next one to do); its dates and reminder days apply from that period on. Reminders: choose the day and the template (only the templates of that reminder's category for ${esc(country.name)} clients are offered); the exact message for ${esc(client.name)} shows under the row. Messages are written on <a href="#/cm-templates" class="underline text-emerald-700" onclick="cmpCloseModal()">Message Templates</a>.</p>
       <div class="flex flex-wrap justify-end gap-2">${cmpBtn('Cancel', 'cmpCloseModal()')}${can ? '<button id="cmObSave" class="needs-write px-4 min-h-[2.5rem] rounded-lg bg-emerald-700 text-white text-sm font-medium">Save</button>' : ''}</div>
     </form>`, { xl: true });
   const sorted = obs.map(ob => ({ ob, p: cmpObPeriodOf(ob, ob.id === focusId ? at : {}) })).filter(x => x.p).sort((a, b) => (a.p.dueDate < b.p.dueDate ? -1 : a.p.dueDate > b.p.dueDate ? 1 : 0) || a.ob.name.localeCompare(b.ob.name));
   for (const { ob, p } of sorted) {
     const rems = [...ob.reminders].sort((a, b) => a.offsetDays - b.offsetDays);
     cmpObRow({ ob, period: p, name: ob.name, start: p.periodStart, end: p.periodEnd, due: p.dueDate, years: ob.yearsTotal, amber: ob.amberDays, auto: ob.autoNext, portal: ob.portalUrl, assigned: ob.assignedToId, notes: ob.notes, locked: ob.locked, focus: ob.id === focusId,
-      extra: rems.slice(3), rems: rems.slice(0, 3).map(r => ({ date: CmpRules.addDays(p.dueDate, r.offsetDays), msg: r.body ? { body: r.body } : { templateId: r.templateId, templateName: r.templateName } })) });
+      extra: rems.slice(3), rems: rems.slice(0, 3).map(r => ({ date: CmpRules.addDays(p.dueDate, r.offsetDays), tpl: r.templateId || (r.own ? CMP_OWN : ''), link: r })),
+      docs: Object.fromEntries(CMP_DOC_KINDS.map(([k]) => [k, (ob.docTemplates || {})[k] ? ob.docTemplates[k].templateId : ''])), docLinks: ob.docTemplates || {} });
   }
   if (addRow || !sorted.length) cmpObRow(null, { focus: true });
   const f = document.querySelector('#cmObNew .cmObRow.ring-2'); if (f) f.scrollIntoView({ block: 'nearest' });
@@ -392,7 +400,8 @@ const cmpObState = row => CMP_OB.form.rows.get(row.dataset.key);
 function cmpObRowValues(row) {
   const g = c => row.querySelector(c), st = cmpObState(row);
   return { name: g('.obName').value.trim(), start: g('.obStart').value, end: g('.obEnd').value, due: g('.obDue').value,
-    rems: [...row.querySelectorAll('.cmRem')].map(c => ({ date: c.querySelector('.remDate').value, msg: c._msg ? { body: c._msg.body || null, templateId: c._msg.body ? null : c._msg.templateId || null } : null })),
+    rems: [...row.querySelectorAll('.cmRem')].map(c => ({ date: c.querySelector('.remDate').value, tpl: c.querySelector('.remTpl').value })),
+    docs: Object.fromEntries([...row.querySelectorAll('.docTpl')].map(el => [el.dataset.kind, el.value])),
     years: g('.obYears').value.trim(), amber: g('.obAmber').value, auto: g('.obAuto').checked, portal: g('.obPortal').value.trim(), assigned: g('.obWho').value, notes: st.notes, locked: st.locked };
 }
 // One obligation's row. A new row with nothing given proposes the next one after the last row: the name with the next quarter (Q1 → Q2),
@@ -400,7 +409,7 @@ function cmpObRowValues(row) {
 function cmpObRow(v, { focus = false } = {}) {
   const rows = document.querySelectorAll('#cmObNew .cmObRow'), prev = rows[rows.length - 1], can = cmpCan('OBLIGATION_EDIT');
   if (!v) {
-    v = { name: '', start: '', end: '', due: '', rems: [], years: null, amber: 7, auto: true, portal: '', assigned: '', notes: '', locked: false };
+    v = { name: '', start: '', end: '', due: '', rems: [], docs: {}, years: null, amber: 7, auto: true, portal: '', assigned: '', notes: '', locked: false };
     if (prev && !focus) {
       const pv = cmpObRowValues(prev), m = pv.name.match(/^(.*\bQ)([1-4])\b(.*)$/i);
       v.name = m ? `${m[1]}${Number(m[2]) % 4 + 1}${m[3]}` : '';
@@ -409,7 +418,8 @@ function cmpObRow(v, { focus = false } = {}) {
         for (const n of [1, 3, 6]) if (CmpRules.addDays(CmpRules.shiftMonths(pv.start, n, false), -1) === pv.end) k = n;
         v.start = CmpRules.shiftMonths(pv.start, k, false); v.end = CmpRules.shiftMonths(pv.end, k, true); v.due = CmpRules.shiftMonths(pv.due, k, false);
       }
-      v.rems = pv.rems.map(r => ({ date: r.date && v.due ? CmpRules.addDays(v.due, CmpRules.daysBetween(pv.due, r.date)) : '', msg: r.msg ? { ...r.msg } : null }));
+      v.rems = pv.rems.map(r => ({ date: r.date && v.due ? CmpRules.addDays(v.due, CmpRules.daysBetween(pv.due, r.date)) : '', tpl: r.tpl === CMP_OWN ? '' : r.tpl }));
+      v.docs = { ...pv.docs };
       Object.assign(v, { years: pv.years ? Number(pv.years) : null, amber: pv.amber, auto: pv.auto, portal: pv.portal, assigned: pv.assigned });
     }
   }
@@ -422,7 +432,9 @@ function cmpObRow(v, { focus = false } = {}) {
     <label><span class="sr-only">Period end *</span><input class="obEnd" type="date" required value="${v.end || ''}"></label>
     <label><span class="sr-only">Due date *</span><input class="obDue" type="date" required value="${v.due || ''}" data-prev="${v.due || ''}" onchange="cmpObDueMoved(this)"></label>
     ${[0, 1, 2].map(n => `<div class="cmRem space-y-1" data-n="${n}"><input class="remDate" type="date" aria-label="${CmpRules.ordinal(n + 1)} reminder" value="${(v.rems[n] && v.rems[n].date) || ''}" onchange="cmpRemDate(this)">
-      <button type="button" class="remMsg w-full text-left text-xs px-2 py-1 rounded border" onclick="cmpRemMessage(this)"></button></div>`).join('')}
+      <select class="remTpl text-xs" aria-label="${CmpRules.ordinal(n + 1)} reminder template" onchange="cmpObPreview(this)" onfocus="cmpObPreview(this)">${cmpTplOptions(`REMINDER_${n + 1}`, (v.rems[n] && v.rems[n].tpl) || '', v.rems[n] && v.rems[n].link)}</select>
+      <div class="tplNote"></div></div>`).join('')}
+    ${CMP_DOC_KINDS.map(([k, label]) => `<div class="cmDoc space-y-1" data-kind="${k}"><select class="docTpl text-xs" data-kind="${k}" aria-label="${esc(label)}" onchange="cmpObPreview(this)" onfocus="cmpObPreview(this)">${cmpTplOptions(k, (v.docs || {})[k] || '')}</select><div class="tplNote"></div></div>`).join('')}
     <label><span class="sr-only">How many years</span><input class="obYears" type="number" min="1" max="100" placeholder="∞" title="Empty = unlimited" value="${v.years || ''}"></label>
     <label><span class="sr-only">Amber days</span><input class="obAmber" type="number" min="0" max="90" value="${v.amber ?? 7}"></label>
     <label class="flex justify-center min-h-[2.5rem] items-center" title="Prepare the next period by itself when this one ends"><input class="obAuto" type="checkbox" ${v.auto !== false ? 'checked' : ''}></label>
@@ -431,13 +443,15 @@ function cmpObRow(v, { focus = false } = {}) {
     <button type="button" class="obNotesBtn min-h-[2.5rem] rounded border text-sm" title="Notes" onclick="cmpObNotes(this)">📝</button>
     <button type="button" class="obLockBtn min-h-[2.5rem] rounded border text-base" onclick="cmpObLock(this)"></button>
     <button type="button" class="obDel min-h-[2.5rem] text-red-600 disabled:opacity-25 disabled:cursor-not-allowed" title="${ob ? 'Delete this obligation' : 'Remove this row'}" onclick="cmpObDelete(this)" ${can ? '' : 'disabled'}>✕</button>
-    <div class="obWarn col-span-full hidden text-xs text-red-700 -mt-1"></div></div>`);
+    <div class="obWarn col-span-full hidden text-xs text-red-700 -mt-1"></div>
+    <div class="obPrev col-span-full hidden text-xs bg-[#efeae2] rounded-lg p-2 ml-[11.5rem] max-w-3xl"></div></div>`);
   const row = $('#cmObNew').lastElementChild;
-  row.querySelectorAll('.cmRem').forEach((c, n) => { c._msg = v.rems[n] && v.rems[n].msg ? v.rems[n].msg : null; });
+  row.querySelectorAll('.cmRem').forEach((c, n) => { c._link = v.rems[n] && v.rems[n].link ? v.rems[n].link : null; });
+  row.querySelectorAll('.cmDoc').forEach(c => { c._link = (v.docLinks || {})[c.dataset.kind] || null; });
   CMP_OB.form.rows.set(key, { ob, period: p, extra: v.extra || [], notes: v.notes || '', locked: Boolean(v.locked), wasLocked: Boolean(v.locked), deleted: false, delNote: '', initial: null });
   cmpRemLabels(row); cmpObRowLock(row);
   cmpObState(row).initial = JSON.stringify(cmpObRowValues(row));
-  if (!can) row.querySelectorAll('input, select, button.remMsg, .obNotesBtn, .obLockBtn').forEach(el => { el.disabled = true; });
+  if (!can) row.querySelectorAll('input, select, .obNotesBtn, .obLockBtn').forEach(el => { el.disabled = true; });
   cmpObNameCheck(row.querySelector('.obName'));
   if (focus || (!ob && rows.length)) row.querySelector('.obName').focus();
 }
@@ -454,8 +468,9 @@ function cmpObRowLock(row) {
   b.textContent = st.locked ? '🔒' : '🔓';
   b.title = st.locked ? 'Locked: click to unlock and change it' : 'Lock it when everything is entered (no change by mistake)';
   b.classList.toggle('bg-amber-50', st.locked); b.classList.toggle('border-amber-400', st.locked);
-  row.querySelectorAll('input, select, button.remMsg, .obNotesBtn, .obDel').forEach(el => { el.disabled = st.locked || st.deleted || !cmpCan('OBLIGATION_EDIT'); });
+  row.querySelectorAll('input, select, .obNotesBtn, .obDel').forEach(el => { el.disabled = st.locked || st.deleted || !cmpCan('OBLIGATION_EDIT'); });
   row.classList.toggle('opacity-70', st.locked && !st.deleted);
+  cmpTplNotes(row);
 }
 function cmpObLock(btn) {
   const row = btn.closest('.cmObRow'), st = cmpObState(row);
@@ -487,7 +502,7 @@ async function cmpObDelete(btn) {
   st.deleted = true; st.delNote = note;
   row.classList.add('line-through', 'bg-red-50'); btn.disabled = false; btn.textContent = '↶'; btn.title = 'Keep it';
   const w = row.querySelector('.obWarn'); w.textContent = 'Deleted with all its periods when you save (↶ keeps it).'; w.classList.remove('hidden');
-  row.querySelectorAll('input, select, button.remMsg, .obNotesBtn').forEach(el => { el.disabled = true; });
+  row.querySelectorAll('input, select, .obNotesBtn').forEach(el => { el.disabled = true; });
 }
 // The same name twice in the window (the CA: "created double")
 function cmpObNameCheck(input) {
@@ -497,84 +512,80 @@ function cmpObNameCheck(input) {
   box.textContent = twice ? `"${input.value.trim()}" is in this window twice: each obligation needs its own name (e.g. Q1, Q2), or delete the extra one (✕).` : '';
   box.classList.toggle('hidden', !box.textContent); input.classList.toggle('!border-red-500', Boolean(twice));
 }
-// The button under each reminder's date: whether it has its message, and how far it is from the due date
+// The options of a template list: the firm's templates of that category for this client's country (or every country). A reminder that
+// still has its own message from before templates were required keeps it as a choice; a template no longer in use stays shown while set.
+const CMP_OWN = '__own';
+function cmpTplOptions(category, selected, link) {
+  const f = CMP_OB.form, cc = f.client.country;
+  const list = (f.templates || []).filter(t => CmpRules.templateFits(t, category, cc));
+  if (selected && selected !== CMP_OWN && !list.some(t => t.id === selected)) { const t = (f.allTemplates || []).find(x => x.id === selected); list.unshift(t || { id: selected, name: (link && link.templateName) || 'a template no longer in use' }); }
+  return `<option value="">${list.length ? '— choose a template —' : '— no template of this category —'}</option>`
+    + (link && link.own ? `<option value="${CMP_OWN}" ${selected === CMP_OWN ? 'selected' : ''}>Its own message (written before)</option>` : '')
+    + list.map(t => `<option value="${t.id}" ${t.id === selected ? 'selected' : ''}>${esc(t.name)}${t.purpose === 'REMINDER' ? ' (reminder)' : ''}</option>`).join('');
+}
+// How far each reminder is from the due date, under its list
 function cmpRemLabels(row) {
   const due = row.querySelector('.obDue').value;
   row.querySelectorAll('.cmRem').forEach(c => {
-    const d = c.querySelector('.remDate').value, b = c.querySelector('.remMsg'), m = c._msg;
-    const when = d && due ? CmpRules.offsetLabel(CmpRules.daysBetween(due, d)).toLowerCase() : '';
-    b.className = `remMsg w-full text-left text-xs px-2 py-1 rounded border ${d ? (m ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-900') : 'text-slate-500'}`;
-    b.innerHTML = d ? `✉ ${m ? (m.body ? 'Message ✓' : esc(m.templateName || 'Template')) : 'Write the message'}${when ? `<span class="block text-[10px] text-slate-500">${esc(when)}</span>` : ''}` : '✉ Message';
+    const d = c.querySelector('.remDate').value, sel = c.querySelector('.remTpl');
+    sel.classList.toggle('!border-amber-400', Boolean(d && !sel.value));
+    sel.title = d && due ? CmpRules.offsetLabel(CmpRules.daysBetween(due, d)) : '';
   });
   cmpObNotesMark(row);
+  cmpTplNotes(row);
 }
-// A day chosen: the message starts as the firm's reminder template (or a standard one), to be read and changed with ✉
+// A template that changed while the obligation was locked (the CA): "the template of the 1st reminder is updated: unlock to accept, or
+// reject"; a rejected one can still be aligned with the template later (after unlocking)
+function cmpTplNotes(row) {
+  const st = cmpObState(row); if (!st) return;
+  row.querySelectorAll('.cmRem, .cmDoc').forEach(c => {
+    const l = c._link, box = c.querySelector('.tplNote'), sel = c.querySelector('select');
+    const same = l && l.templateId && sel.value === l.templateId;
+    if (!l || !same || !(l.pending || l.rejected) || st.deleted) { box.innerHTML = ''; return; }
+    const what = c.classList.contains('cmRem') ? `the ${CmpRules.ordinal(Number(c.dataset.n) + 1)} reminder` : `the ${CmpRules.templateCategory(c.dataset.kind).toLowerCase()} template`;
+    const target = c.classList.contains('cmRem') ? l.id : c.dataset.kind;
+    box.innerHTML = l.pending
+      ? `<div class="text-[10px] leading-tight rounded border border-amber-300 bg-amber-50 text-amber-900 p-1">"${esc(l.templateName)}" was updated.${st.locked ? ' Unlock 🔒 to accept it, or' : ''}
+          <span class="flex gap-1 mt-1">${st.locked ? '' : `<button type="button" class="px-1.5 py-0.5 rounded bg-emerald-700 text-white" onclick="cmpTplDecide(this, '${target}', true)" title="Use the updated template for ${esc(what)}">Accept</button>`}<button type="button" class="px-1.5 py-0.5 rounded border border-amber-500 bg-white" onclick="cmpTplDecide(this, '${target}', false)" title="Keep the earlier version">Reject</button></span></div>`
+      : `<div class="text-[10px] leading-tight text-slate-500">Earlier version kept.${st.locked ? '' : ` <button type="button" class="underline text-emerald-700" onclick="cmpTplDecide(this, '${target}', true)">Align with the template</button>`}</div>`;
+  });
+}
+async function cmpTplDecide(btn, target, accept) {
+  const row = btn.closest('.cmObRow'), st = cmpObState(row), ob = st.ob;
+  try {
+    if (accept && st.wasLocked) { await api(`/api/cmp/obligations/${ob.id}`, { method: 'PUT', body: { locked: false } }); st.wasLocked = false; }
+    const out = await api(`/api/cmp/obligations/${ob.id}/template-update`, { method: 'POST', body: { target, accept } });
+    // the reminders and templates as the server has them now
+    const rems = [...out.reminders].sort((a, b) => a.offsetDays - b.offsetDays);
+    row.querySelectorAll('.cmRem').forEach(c => { const l = c._link && rems.find(r => r.id === c._link.id); if (l) c._link = l; });
+    row.querySelectorAll('.cmDoc').forEach(c => { if (c._link) c._link = (out.docTemplates || {})[c.dataset.kind] || c._link; });
+    cmpTplNotes(row);
+    toast(accept ? 'The updated template is used now' + (st.locked ? '' : ' (lock it again when you are done)') : 'Update rejected: it keeps the earlier version', true);
+  } catch (err) { toast(err.message); }
+}
+// The exact message of the list just chosen (or looked at), for this client with this row's dates, shown under the row (the CA)
+function cmpObPreview(sel) {
+  const row = sel.closest('.cmObRow'), box = row.querySelector('.obPrev'), f = CMP_OB.form, g = c => row.querySelector(c).value;
+  const cell = sel.closest('.cmRem, .cmDoc'), l = cell._link, id = sel.value;
+  const label = cell.classList.contains('cmRem') ? `${CmpRules.ordinal(Number(cell.dataset.n) + 1)} reminder` : CmpRules.templateCategory(cell.dataset.kind);
+  if (cell.classList.contains('cmRem')) cmpRemLabels(row);
+  if (!id) { box.classList.add('hidden'); return; }
+  const t = (f.allTemplates || f.templates || []).find(x => x.id === id);
+  const body = id === CMP_OWN ? (l && l.body) || '' : l && l.templateId === id && l.body ? l.body : t ? t.body : '';
+  const due = g('.obDue'), on = cell.classList.contains('cmRem') ? cell.querySelector('.remDate').value : '', real = f.ctx && f.ctx.ctx;
+  const base = real || { client: { name: f.client.name, code: f.client.code, country: f.client.country }, countryName: cmpCountry(f.client.country).name, fields: {}, firm: { name: (CMP.settings || {}).firmName || '' } };
+  const r = CmpRules.render(body, { ...base, obligationName: g('.obName') || 'the obligation', occurrence: { periodStart: g('.obStart'), periodEnd: g('.obEnd'), dueDate: due },
+    daysLeft: due && on ? CmpRules.daysBetween(on, due) : null, portalUrl: g('.obPortal') || '' });
+  box.innerHTML = `<div class="text-[11px] text-slate-600 mb-1">${esc(label)} · ${esc(id === CMP_OWN ? 'its own message' : t ? t.name : 'template')}${l && l.templateId === id && l.body ? ' (the earlier version it keeps)' : ''} — as ${esc(f.client.name)} gets it${on ? ` on ${cmpDay(on)}` : ''}:</div>
+    <div class="whitespace-pre-wrap bg-[#d9fdd3] rounded-lg rounded-tr-none shadow px-3 py-2 text-sm">${esc(r.text) || '<span class="text-slate-400">(empty)</span>'}</div>`;
+  box.classList.remove('hidden');
+}
+// A day chosen with no template yet: the only template of that reminder's category is chosen by itself
 function cmpRemDate(input) {
-  const cell = input.closest('.cmRem');
-  if (input.value && !cell._msg) cell._msg = { body: cmpRemDefaultText() };
+  const cell = input.closest('.cmRem'), sel = cell.querySelector('.remTpl');
+  if (input.value && !sel.value) { const opts = [...sel.options].filter(o => o.value && o.value !== CMP_OWN); if (opts.length === 1) { sel.value = opts[0].value; cmpObPreview(sel); } }
   cmpRemLabels(cell.closest('.cmObRow'));
 }
-// The placeholders in groups (the CA: the client's details together…), with this client's real values as the tip
-function cmpRemGroups() {
-  const f = CMP_OB.form;
-  if (f.ctx && f.ctx.groups) return f.ctx.groups.filter(g => !['Invoice', 'Receipt'].includes(g.title) && g.items.length).map(g => [g.title, g.items]);
-  return CmpRules.PLACEHOLDER_GROUPS.filter(([t]) => !['Invoice', 'Receipt'].includes(t)).map(([t, names]) => [t, names.map(name => ({ name, value: '' }))]);
-}
-// The message of one reminder, in its own window over the obligations': a saved template to start from, the text, the placeholders in
-// groups, and how it looks for this client with this obligation's dates
-function cmpRemMessage(btn) {
-  const cell = btn.closest('.cmRem'), row = cell.closest('.cmObRow'), n = Number(cell.dataset.n), f = CMP_OB.form, m = cell._msg || {};
-  const body = m.body || (m.templateId ? ((f.templates.find(t => t.id === m.templateId) || {}).body || '') : '') || cmpRemDefaultText();
-  const name = row.querySelector('.obName').value.trim(), many = document.querySelectorAll('#cmObNew .cmObRow').length > 1;
-  CMP_OB.msgCell = cell;
-  cmpShowSub(`${cmpSubHead(`${CmpRules.ordinal(n + 1)} reminder${name ? ` · ${esc(name)}` : ''}`, `${cmpCountry(f.client.country).flag} ${esc(f.client.name)}`)}
-    <div class="grid lg:grid-cols-2 gap-4">
-      <div class="space-y-3 min-w-0">
-        <label><span>Reminder day</span><input id="cmMsgDate" type="date" value="${cell.querySelector('.remDate').value}" oninput="cmpRemPreview()"></label>
-        ${f.templates.length ? `<label><span>Start from a saved template</span><select onchange="if (this.value) { $('#cmMsgBody').value = (CMP_OB.form.templates.find(t => t.id === this.value) || {}).body || ''; cmpRemPreview(); }"><option value="">—</option>${f.templates.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></label>` : ''}
-        <label><span>Message</span><textarea id="cmMsgBody" rows="9" maxlength="4000" oninput="cmpRemPreview()">${esc(body)}</textarea></label>
-        <div><div class="text-xs text-slate-600 mb-1">Click to put in the message (each is replaced by the real details when it is sent):</div>
-          ${cmpRemGroups().map(([title, items]) => `<div class="mb-1.5"><div class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">${esc(title)}</div><div class="flex flex-wrap gap-1 mt-0.5">
-            ${items.map(i => `<button type="button" class="text-xs px-2 py-1 rounded border bg-slate-50 hover:border-emerald-600" title="${esc(i.value || '')}" onclick="cmpInsertAt('cmMsgBody', this.textContent)">[${esc(i.name)}]</button>`).join('')}</div></div>`).join('')}</div>
-        ${many ? `<label class="flex items-center gap-2 text-sm"><input type="checkbox" id="cmMsgAll"> Use this message for the ${CmpRules.ordinal(n + 1)} reminder of every obligation in this window that is not locked</label>` : ''}
-        ${cmpCan('SETUP') ? `<label class="flex items-center gap-2 text-sm flex-wrap"><input type="checkbox" id="cmMsgKeep" onchange="$('#cmMsgName').classList.toggle('hidden', !this.checked)"> Also keep it as a template <input id="cmMsgName" class="hidden !w-56 !py-1" maxlength="80" placeholder="Template name"></label>` : ''}
-      </div>
-      <div class="min-w-0"><div id="cmMsgFor" class="text-xs text-slate-600 mb-1"></div>
-        <div class="rounded-xl bg-[#efeae2] p-3"><div id="cmMsgPrev" class="whitespace-pre-wrap text-sm bg-[#d9fdd3] rounded-lg rounded-tr-none shadow px-3 py-2 ml-6 min-h-[6rem]"></div></div>
-        <div id="cmMsgWarn" class="text-xs text-amber-800 mt-2"></div></div>
-    </div>
-    <div class="flex flex-wrap justify-between gap-2 mt-4">${cmpBtn('Remove this reminder', 'cmpRemRemove()', 'danger')}
-      <div class="flex gap-2">${cmpBtn('Cancel', 'cmpCloseSub()')}${cmpBtn('Use this message', 'cmpRemUse()', 'primary')}</div></div>`, { wide: true });
-  cmpRemPreview();
-}
-function cmpRemPreview() {
-  const cell = CMP_OB.msgCell, row = cell.closest('.cmObRow'), f = CMP_OB.form, g = c => row.querySelector(c).value;
-  const due = g('.obDue'), on = $('#cmMsgDate').value, real = f.ctx && f.ctx.ctx;
-  const base = real || { client: { name: f.client.name, code: f.client.code, country: f.client.country }, countryName: cmpCountry(f.client.country).name, fields: {}, firm: { name: (CMP.settings || {}).firmName || '' } };
-  const ctx = { ...base, obligationName: g('.obName') || 'the obligation', occurrence: { periodStart: g('.obStart'), periodEnd: g('.obEnd'), dueDate: due },
-    daysLeft: due && on ? CmpRules.daysBetween(on, due) : null, portalUrl: g('.obPortal') || '' };
-  const r = CmpRules.render($('#cmMsgBody').value, ctx);
-  $('#cmMsgFor').textContent = `How it looks for ${f.client.name}${on ? ` on ${cmpDay(on)}${due ? ` (${CmpRules.offsetLabel(CmpRules.daysBetween(due, on)).toLowerCase()})` : ''}` : ''}`;
-  $('#cmMsgPrev').textContent = r.text;
-  $('#cmMsgWarn').innerHTML = [r.missing.length && `Not known, left as typed: ${r.missing.map(x => `[${esc(x)}]`).join(' ')}`, r.empty.length && `No value for this client yet: ${r.empty.map(x => `[${esc(x)}]`).join(' ')}`].filter(Boolean).join('<br>');
-}
-async function cmpRemUse() {
-  const cell = CMP_OB.msgCell, body = $('#cmMsgBody').value.trim(), on = $('#cmMsgDate').value, n = Number(cell.dataset.n);
-  if (!body) return toast('Write the message first.');
-  const keep = document.getElementById('cmMsgKeep');
-  if (keep && keep.checked) {
-    const name = $('#cmMsgName').value.trim(); if (!name) return toast('Give the template a name.');
-    try { await api('/api/cmp/templates', { method: 'POST', body: { name, purpose: 'REMINDER', body } }); CMP_OB.form.templates = await cmpTemplates(true); toast(`Template "${name}" kept`, true); } catch (err) { return toast(err.message); }
-  }
-  const all = document.getElementById('cmMsgAll');
-  const cells = all && all.checked ? [...document.querySelectorAll(`#cmObNew .cmRem[data-n="${n}"]`)].filter(c => { const st = cmpObState(c.closest('.cmObRow')); return !st.locked && !st.deleted; }) : [cell];
-  for (const c of cells) c._msg = { body };
-  cell.querySelector('.remDate').value = on;
-  cmpCloseSub();
-  document.querySelectorAll('#cmObNew .cmObRow').forEach(cmpRemLabels);
-  if (!on) toast('Now choose the day of this reminder.');
-}
-function cmpRemRemove() { const cell = CMP_OB.msgCell; cell.querySelector('.remDate').value = ''; cell._msg = null; cmpCloseSub(); cmpRemLabels(cell.closest('.cmObRow')); }
 function cmpInsertAt(id, text) {
   const ta = document.getElementById(id), a = ta.selectionStart ?? ta.value.length, b = ta.selectionEnd ?? ta.value.length;
   ta.value = ta.value.slice(0, a) + text + ta.value.slice(b); ta.focus(); ta.selectionStart = ta.selectionEnd = a + text.length;
@@ -597,9 +608,9 @@ function cmpObligationSuggest(i) {
   row.querySelector('.obStart').value = s.periodStart; row.querySelector('.obEnd').value = s.periodEnd; row.querySelector('.obDue').value = s.dueDate; row.querySelector('.obDue').dataset.prev = s.dueDate;
   row.querySelector('.obYears').value = s.yearsTotal || '';
   row.querySelectorAll('.cmRem').forEach((c, n) => {
-    const r = s.reminders[n];
+    const r = s.reminders[n], sel = c.querySelector('.remTpl');
     c.querySelector('.remDate').value = r ? CmpRules.addDays(s.dueDate, r.offsetDays) : '';
-    c._msg = r ? (r.body ? { body: r.body } : { templateId: r.templateId, templateName: r.templateName }) : null;
+    sel.value = r && r.templateId && [...sel.options].some(o => o.value === r.templateId) ? r.templateId : '';
   });
   cmpRemLabels(row);
   $('#cmObHint').innerHTML = '';
@@ -612,15 +623,18 @@ function cmpObCheck(row, i) {
   const problem = CmpRules.datesProblem(v.start, v.end, v.due); if (problem) throw new Error(`${label}: ${problem}`);
   if (v.years && !(Number.isInteger(Number(v.years)) && Number(v.years) >= 1 && Number(v.years) <= 100)) throw new Error(`${label}: how many years is a number from 1 to 100 (empty = unlimited).`);
   if (!(Number.isInteger(Number(v.amber)) && Number(v.amber) >= 0 && Number(v.amber) <= 90)) throw new Error(`${label}: amber days is a number from 0 to 90.`);
-  const reminders = [];
+  const reminders = [], cells = [...row.querySelectorAll('.cmRem')];
   v.rems.forEach((r, n) => {
     if (!r.date) return;
     const offsetDays = CmpRules.daysBetween(v.due, r.date);
     if (Math.abs(offsetDays) > 366) throw new Error(`${label}: the ${CmpRules.ordinal(n + 1)} reminder must be within a year of the due date.`);
     if (reminders.some(x => x.offsetDays === offsetDays)) throw new Error(`${label}: two reminders are on the same day.`);
-    reminders.push(r.msg && r.msg.templateId && !r.msg.body ? { offsetDays, templateId: r.msg.templateId } : { offsetDays, body: (r.msg && r.msg.body) || cmpRemDefaultText() });
+    if (!r.tpl) throw new Error(`${label}: choose the template of the ${CmpRules.ordinal(n + 1)} reminder (or clear its day).`);
+    const link = cells[n]._link;
+    reminders.push(r.tpl === CMP_OWN ? { offsetDays, body: (link && link.body) || '' } : { offsetDays, templateId: r.tpl });
   });
-  return { v, reminders, settings: { name: v.name, yearsTotal: v.years ? Number(v.years) : null, amberDays: Number(v.amber), autoNext: v.auto, portalUrl: v.portal, assignedToId: v.assigned || null, notes: v.notes } };
+  return { v, reminders, settings: { name: v.name, yearsTotal: v.years ? Number(v.years) : null, amberDays: Number(v.amber), autoNext: v.auto, portalUrl: v.portal, assignedToId: v.assigned || null, notes: v.notes,
+    docTemplates: Object.fromEntries(CMP_DOC_KINDS.map(([k]) => [k, v.docs[k] || null])) } };
 }
 // pastOk: the due date of a new obligation has passed (the CA: asked first; or moved to the next year that is still ahead)
 async function cmpObligationSave(pastOk) {
@@ -656,7 +670,7 @@ async function cmpObligationSave(pastOk) {
       if (moved && p.planned) await api(`/api/cmp/obligations/${ob.id}/pattern`, { method: 'PUT', body: { fromSeq: p.seq, periodStart: v.start, periodEnd: v.end, dueDate: v.due } }).catch(at);
       else if (moved) await api(`/api/cmp/occurrences/${p.id}`, { method: 'PUT', body: { periodStart: v.start, periodEnd: v.end, dueDate: v.due, applyFuture: future } }).catch(at);
       if (moved || JSON.stringify(init.rems) !== JSON.stringify(v.rems)) {
-        const extra = x.st.extra.map(r => (r.body ? { offsetDays: r.offsetDays, body: r.body } : { offsetDays: r.offsetDays, templateId: r.templateId }));
+        const extra = x.st.extra.map(r => (r.templateId ? { offsetDays: r.offsetDays, templateId: r.templateId } : { offsetDays: r.offsetDays, body: r.body }));
         await api(`/api/cmp/obligations/${ob.id}/reminders`, { method: 'PUT', body: { reminders: [...x.reminders, ...extra] } }).catch(at);
       }
       await api(`/api/cmp/obligations/${ob.id}`, { method: 'PUT', body: { ...x.settings, locked: x.st.locked } }).catch(at);
@@ -702,8 +716,8 @@ async function cmpNextPeriod(id, after) {
   catch (err) { toast(err.message); }
 }
 async function cmpObligationArchive(id, archive, after) {
-  if (archive && !confirm('Archive this obligation? Its periods leave the lists, dashboards and reminders. It can be restored (tick "Archived" on My Obligations, or on the client\'s page).')) return;
-  try { await api(`/api/cmp/obligations/${id}/${archive ? 'archive' : 'restore'}`, { method: 'POST' }); toast(archive ? 'Obligation archived' : 'Obligation restored', true); if (typeof after === 'function') after(); else if (S.page === 'cm-client') cmpLoadClient(); }
+  if (archive && !confirm('Archive this obligation with ALL its periods — past, current and future? They leave the lists, dashboards, reminders and notifications. It can be restored (tick "Archived" on My Obligations, or on the client\'s page).')) return;
+  try { await api(`/api/cmp/obligations/${id}/${archive ? 'archive' : 'restore'}`, { method: 'POST' }); toast(archive ? 'Obligation archived with all its periods' : 'Obligation restored with all its periods', true); if (typeof after === 'function') after(); else if (S.page === 'cm-client') cmpLoadClient(); }
   catch (err) { toast(err.message); }
 }
 // Deleted for good (the CA). Once a WhatsApp message was sent (or an invoice issued) for it: a warning, and a note saying why.
@@ -814,6 +828,6 @@ async function cmpPeriodCompleteGo(on) {
       ${next ? `<p>The next period (${esc(CmpRules.periodName(next))}, due ${esc(cmpDay(next.dueDate))}) is ready${next.datesConfirmed ? '' : ': check its dates when you can'}.</p>` : ''}
       <div class="flex flex-wrap gap-2">${cmpCan('INVOICE') ? cmpBtn('Create the invoice now', `cmpCloseModal(); cmpInvoiceDraft({ occurrenceId: '${c.p.id}' }, CMP_OB.period.refresh)`, 'primary', 'needs-write') : ''}
         ${cmpBtn('No invoice (free work)', `cmpCloseModal(); cmpTrkBilling('${c.p.id}', 'FREE', CMP_OB.period.refresh)`, 'plain', 'needs-write')}
-        ${wa ? cmpBtn(`${CMP_WA_ICON} Tell the client`, `cmpClientMessage('${c.ob.client.id}', '${c.p.id}', 'COMPLETION')`, 'wa', 'needs-write') : ''}${cmpBtn('Later', 'cmpCloseModal()')}</div>
+        ${wa ? cmpBtn(`${CMP_WA_ICON} Tell the client`, `cmpClientMessage('${c.ob.client.id}', '${c.p.id}')`, 'wa', 'needs-write') : ''}${cmpBtn('Later', 'cmpCloseModal()')}</div>
     </div>`);
 }

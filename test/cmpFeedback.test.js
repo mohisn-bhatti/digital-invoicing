@@ -42,7 +42,7 @@ test('feedback API: start a server, a firm with the module and its users', { tim
     const set = (email, cmpPerms) => A.prisma.user.update({ where: { email }, data: { cmpPerms } });
     await set(A.owner.email, ['FULL']);
     await set(A.manager.email, ['VIEW', 'CLIENT_EDIT', 'OBLIGATION_EDIT', 'WHATSAPP', 'COMPLETE', 'REPORTS']); // no archive, no invoices
-    W.tpl = (await A.call('/api/cmp/templates', { token: A.owner.token, method: 'POST', body: { name: 'Reminder', purpose: 'REMINDER', body: 'Dear [Client Name], [Obligation] is due on [Due Date].' } })).json;
+    W.tpl = (await A.call('/api/cmp/templates', { token: A.owner.token, method: 'POST', body: { name: 'Reminder', purpose: 'REMINDER_1', body: 'Dear [Client Name], [Obligation] is due on [Due Date].' } })).json;
     const mk = async (country, name, contactNumber, extra = {}) => (await A.call('/api/cmp/clients', { token: A.owner.token, method: 'POST', body: { country, name, contactNumber, portalUsername: 'u', portalPassword: 'secret-pw', ...extra } })).json.client;
     W.pk = await mk('PK', 'Zeta Traders', '03001112233');
     W.ae = await mk('AE', 'Alpha Trading LLC', '+971501112233');
@@ -143,7 +143,7 @@ run('the templates page: a client\'s real value for every placeholder, in groups
     const v = Object.fromEntries(r.json.groups.flatMap(g => g.items.map(i => [i.name, i.value])));
     assert.deepStrictEqual([v['Client Name'], v['Client Code'], v['Country'], v['Firm Name'], v['WhatsApp Number']], ['Alpha Trading LLC', W.ae.code, 'United Arab Emirates', 'MYCO', '+971501112233']);
     assert.ok(v.Obligation && v['Due Date'], 'its next open obligation');
-    assert.deepStrictEqual(r.json.groups.map(g => g.title), ['Client details', 'Additional information', 'Obligation', 'Invoice', 'Receipt', 'Your firm']);
+    assert.deepStrictEqual(r.json.groups.map(g => g.title), ['Client details', 'Additional information', 'Obligation', 'Advance payment', 'Invoice', 'Receipt', 'Your firm']);
     assert.ok(!JSON.stringify(r.json).includes('portalPassword') && !JSON.stringify(r.json).includes('secret-pw') && !/pinCode/.test(JSON.stringify(r.json)), 'no password, not even encrypted');
     assert.strictEqual((await A.call(`/api/cmp/templates/context?clientId=${W.ae.id}&occurrenceId=${W.itr.occurrences[0].id}`, { token: A.manager.token })).status, 400); // another client's period
     // a custom field may not take a new built-in name, but may be called WhatsApp Number

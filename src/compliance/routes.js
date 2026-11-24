@@ -64,6 +64,21 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     });
     route('get', '/api/cmp/settings', can('VIEW'), (req, ctx) => clients.getSettings(ctx));
     route('put', '/api/cmp/settings', can('FULL'), (req, ctx) => clients.putSettings(ctx, req.body || {}));
+    // Settings → Security (the CA, 24 Nov 2026): the login activity (the firm's users for full access, else one's own), and signing out
+    // one's other sessions (every token issued before stops working; this one is replaced)
+    route('get', '/api/cmp/security/logins', can('VIEW'), async (req, ctx) => {
+        const where = { tenantId: ctx.tenantId, action: { in: ['auth.login', 'auth.login_failed', 'auth.locked'] }, ...(ctx.perms.has('FULL') ? {} : { userEmail: ctx.email }) };
+        const tz = (await clients.getSettings(ctx)).timeZone;
+        const rows = await prisma.auditLog.findMany({ where, orderBy: { createdAt: 'desc' }, take: 200, select: { createdAt: true, userEmail: true, action: true, summary: true, ip: true } });
+        return { timeZone: tz, all: ctx.perms.has('FULL'), rows };
+    });
+    route('post', '/api/cmp/security/signout-others', can('VIEW'), async (req, ctx) => {
+        if (req.user.impersonatedBy) throw new HttpError(409, 'This is the administrator\'s workspace session: there is nothing to sign out here.');
+        const u = await prisma.user.update({ where: { id: req.user.id }, data: { tokenVersion: { increment: 1 } } });
+        const { signToken } = require('../auth');
+        await prisma.auditLog.create({ data: { tenantId: ctx.tenantId, userId: u.id, userEmail: ctx.email, action: 'cmp.security.signout', summary: 'Signed out of every other session', ip: req.ip || null } });
+        return { token: signToken(u) };
+    });
 
     // clients (SRS 3)
     route('get', '/api/cmp/clients', can('VIEW'), (req, ctx) => clients.list(ctx, req.query));
@@ -108,6 +123,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('get', '/api/cmp/obligations/:id', can('VIEW'), (req, ctx) => obligations.get(ctx, req.params.id));
     route('put', '/api/cmp/obligations/:id', can('OBLIGATION_EDIT'), (req, ctx) => obligations.update(ctx, req.params.id, req.body || {}));
     route('put', '/api/cmp/obligations/:id/reminders', can('OBLIGATION_EDIT'), (req, ctx) => obligations.setReminders(ctx, req.params.id, (req.body || {}).reminders));
+    // a template that changed while the obligation was locked: { target: reminder id | ADVANCE | INVOICE | RECEIPT, accept: true | false }
+    route('post', '/api/cmp/obligations/:id/template-update', can('OBLIGATION_EDIT'), (req, ctx) => obligations.templateUpdate(ctx, req.params.id, req.body || {}));
     // the dates of a period still to come (Planned): the pattern from that period on
     route('put', '/api/cmp/obligations/:id/pattern', can('OBLIGATION_EDIT'), (req, ctx) => obligations.setPattern(ctx, req.params.id, req.body || {}));
     route('post', '/api/cmp/obligations/:id/next', can('OBLIGATION_EDIT'), (req, ctx) => obligations.next(ctx, req.params.id));
@@ -196,6 +213,8 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     // advance payments (the CA's tracker), taken off an invoice later (Gross − Advance = Net)
     route('get', '/api/cmp/advances', can('INVOICE'), (req, ctx) => invoices.listAdvances(ctx, req.query));
     route('get', '/api/cmp/advances/descriptions', can('INVOICE'), (req, ctx) => invoices.advanceDescriptions(ctx));
+    // one advance with what its numbered receipt says (the CA, 24 Nov 2026)
+    route('get', '/api/cmp/advances/:id', can('INVOICE'), (req, ctx) => invoices.getAdvance(ctx, req.params.id));
     route('post', '/api/cmp/advances', can('INVOICE'), (req, ctx) => invoices.addAdvance(ctx, req.body || {}));
     route('put', '/api/cmp/advances/:id', can('INVOICE'), (req, ctx) => invoices.updateAdvance(ctx, req.params.id, req.body || {}));
     route('post', '/api/cmp/advances/:id/void', can('INVOICE'), (req, ctx) => invoices.voidAdvance(ctx, req.params.id, (req.body || {}).reason));
@@ -205,6 +224,7 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
     route('get', '/api/cmp/invoice-types', can('VIEW'), (req, ctx) => invoices.listTypes(ctx, req.query));
     route('post', '/api/cmp/invoice-types', can('FULL'), (req, ctx) => invoices.saveType(ctx, null, req.body || {}));
     route('put', '/api/cmp/invoice-types/:id', can('FULL'), (req, ctx) => invoices.saveType(ctx, req.params.id, req.body || {}));
+    route('delete', '/api/cmp/invoice-types/:id', can('FULL'), (req, ctx) => invoices.deleteType(ctx, req.params.id));
 
     // dashboard, calendar, reports and downloads (SRS 11, 13)
     route('get', '/api/cmp/dashboard', can('REPORTS'), (req, ctx) => reports.dashboard(ctx, req.query));
@@ -226,6 +246,11 @@ function registerCmpRoutes(app, { svc, authenticateToken, requireTenant, tenantM
         const settings = await clients.getSettings(ctx);
         await listAudit({ tenantId: ctx.tenantId }, req.query, res, req, { actionPrefix: 'cmp.', exportAction: 'cmp.log.export', timeZone: settings.timeZone, filename: 'compliance-activity-log' });
     });
+
+    // the notifications (the CA's notification sheet) and the reports catalogue (the CA's reports sheet) register their own routes, through
+    // the same route() so each still names its permission
+    svc.notify.registerRoutes({ route, can, base, HttpError, NO_PERM, prisma });
+    svc.reportsCatalog.registerRoutes({ route, can, base, HttpError, NO_PERM, prisma });
 
     return routes;
 }

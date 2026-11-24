@@ -58,9 +58,9 @@ run('module and permissions: closed to a firm without it; each route asks for it
 run('templates: the firm manages them with the setup permission', async () => {
     assert.strictEqual((await A.call('/api/cmp/templates', { token: A.manager.token, method: 'POST', body: { name: 'x', body: 'y' } })).status, 403);
     const mk = async (name, purpose, body) => { const r = await A.call('/api/cmp/templates', { token: A.owner.token, method: 'POST', body: { name, purpose, body } }); assert.strictEqual(r.status, 200, r.text); return r.json; };
-    W.tFirst = await mk('VAT first reminder', 'REMINDER', 'Dear [Client Name], your VAT return for [Period Start] to [Period End] is due on [Due Date]. TL: [Trade License Number]. Kindly share the documents.');
-    W.tLast = await mk('VAT last call', 'REMINDER', 'Last call: [Obligation] due [Due Date].');
-    W.tDone = await mk('Filed', 'COMPLETION', 'Dear [Client Name], your [Obligation] has been filed.');
+    W.tFirst = await mk('VAT first reminder', 'REMINDER_1', 'Dear [Client Name], your VAT return for [Period Start] to [Period End] is due on [Due Date]. TL: [Trade License Number]. Kindly share the documents.');
+    W.tLast = await mk('VAT last call', 'REMINDER_3', 'Last call: [Obligation] due [Due Date].');
+    W.tDone = await mk('Filed', 'OTHER', 'Dear [Client Name], your [Obligation] has been filed.');
     assert.strictEqual((await A.call('/api/cmp/templates', { token: A.owner.token, method: 'POST', body: { name: 'VAT last call', body: 'dup' } })).status, 409);
     assert.strictEqual((await A.call('/api/cmp/templates', { token: A.owner.token, method: 'POST', body: { name: 'Empty', body: '   ' } })).status, 400);
     const list = await A.call('/api/cmp/templates', { token: A.cashier.token });

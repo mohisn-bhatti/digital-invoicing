@@ -16,7 +16,8 @@ const CMP_METHODS = { BANK: 'Bank transfer', CASH: 'Cash', CHEQUE: 'Cheque', CAR
 const cmpSettleChip = r => (r.settlement ? `<span class="px-2 py-0.5 rounded-full text-[11px] font-medium ${r.settlement === 'REFUNDED' ? 'bg-rose-100 text-rose-800' : 'bg-sky-100 text-sky-800'}" title="${esc(r.settlementNote || '')}">${r.settlement === 'REFUNDED' ? 'Refunded' : 'Kept as credit'}</span>` : '');
 const cmpReceiptLive = r => !r.voidedAt && !r.settlement;
 const cmpInvChip = st => { const [t, c] = CMP_INV_STATUS[st] || [st, 'bg-slate-100']; return `<span class="px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${c}">${t}</span>`; };
-const cmpMoney = (n, cur) => `${esc(cur)} ${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: CmpCountries.currencyDecimals(cur), maximumFractionDigits: CmpCountries.currencyDecimals(cur) })}`;
+// (written the firm's way: the number format of Settings)
+const cmpMoney = (n, cur) => `${esc(cur)} ${CmpRules.fmtNum(n, CmpCountries.currencyDecimals(cur))}`;
 const cmpPayable = inv => ['ISSUED', 'SENT', 'PARTIAL'].includes(inv.status);
 
 /* ---------- the invoices pages (the CA, 16 Nov 2026: "Invoices Created" and "Invoices Issued"): the list, and the invoice beside it ---------- */
@@ -122,7 +123,7 @@ async function cmpInvoiceEdit(id, after) {
     inv = await api(`/api/cmp/invoices/${id}`);
     if (inv.status !== 'DRAFT') return cmpInvoiceOpen(id, after);
     [rates, items, billable, advances, types] = await Promise.all([api('/api/cmp/taxes?country=' + inv.client.country), api('/api/cmp/items?country=' + inv.client.country),
-      api(`/api/cmp/clients/${inv.client.id}/billable?` + cmpQs({ invoiceId: inv.id, currency: inv.currency })), api(`/api/cmp/advances?clientId=${inv.client.id}`), cmpInvoiceTypes(inv.client.country, true)]);
+      api(`/api/cmp/clients/${inv.client.id}/billable?` + cmpQs({ invoiceId: inv.id, currency: inv.currency })), api(`/api/cmp/advances?clientId=${inv.client.id}`), cmpInvoiceTypes(inv.client.country, true).then(list => list.filter(t => (t.kind || 'INVOICE') === 'INVOICE'))]);
   } catch (err) { return toast(err.message); }
   CMP_INV.edit = { inv, rates, items, billable, advances, types, after };
   const country = cmpCountry(inv.client.country);
@@ -140,7 +141,9 @@ async function cmpInvoiceEdit(id, after) {
       <section class="border rounded-lg p-3"><div class="flex items-center justify-between gap-2"><h3 class="text-sm font-semibold">Other items and services <span class="font-normal text-slate-500">— type to search the ones billed before (each price with its date) or a new one</span></h3>
         <button type="button" class="text-sm text-emerald-700 underline whitespace-nowrap" onclick="cmpInvoiceLine()">+ Add line</button></div>
         <div id="ciLines" class="space-y-2 mt-2"></div></section>
-      <div><div class="flex flex-wrap items-center justify-between gap-2 mb-1"><h3 class="text-sm font-medium">Taxes <span class="text-slate-400 font-normal">— each on the subtotal</span></h3>
+      <div class="grid grid-cols-2 gap-3 max-w-md"><label><span>Discount <span class="text-slate-400">(taken off the subtotal)</span></span><input id="ciDisc" inputmode="decimal" placeholder="0" value="${inv.discount ? esc(cmpFix(inv.discount, inv.currency)) : ''}"></label>
+        <label><span>Additional charges</span><input id="ciChg" inputmode="decimal" placeholder="0" value="${inv.charges ? esc(cmpFix(inv.charges, inv.currency)) : ''}"></label></div>
+      <div><div class="flex flex-wrap items-center justify-between gap-2 mb-1"><h3 class="text-sm font-medium">Taxes <span class="text-slate-400 font-normal">— each on the subtotal less the discount, plus the charges</span></h3>
         <div class="flex gap-2 items-center"><select id="ciSuggest" class="!w-auto !text-sm" onchange="cmpInvoiceSuggest(this)"><option value="">Add a saved tax…</option>${rates.map((r, i) => `<option value="${i}">${esc(r.name)} ${r.rate}%</option>`).join('')}</select>
           <button type="button" class="text-sm text-emerald-700 underline whitespace-nowrap" onclick="cmpInvoiceTax()">+ New tax</button></div></div>
         <div id="ciTaxes" class="space-y-2"></div></div>
@@ -292,14 +295,15 @@ async function cmpInvoiceAdvAdded() {
 function cmpInvoiceTotals(quiet) {
   const cur = $('#ciCur').value, d = CmpCountries.currencyDecimals(cur), minor = n => Math.round(cmpAmt(n) * 10 ** d);
   const sub = [...document.querySelectorAll('#ciEditor .ciAmt')].reduce((m, i) => m + minor(i.value), 0);
+  const disc = minor(($('#ciDisc') || {}).value), chg = minor(($('#ciChg') || {}).value), base = sub - disc + chg;
   const taxes = [...document.querySelectorAll('#ciTaxes .ciTax')].map(row => ({ name: row.querySelector('.ciTaxName').value || 'Tax', rate: Number(row.querySelector('.ciTaxRate').value) || 0 }))
-    .map(t => ({ ...t, minor: Math.round(sub * t.rate / 100) }));
-  const gross = sub + taxes.reduce((m, t) => m + t.minor, 0), f = m => cmpMoney(m / 10 ** d, cur);
+    .map(t => ({ ...t, minor: Math.round(base * t.rate / 100) }));
+  const gross = base + taxes.reduce((m, t) => m + t.minor, 0), f = m => cmpMoney(m / 10 ** d, cur);
   const advRows = [...document.querySelectorAll('#ciAdv .ciAdvRow')].filter(r => r.querySelector('.ciAdvOn').checked);
   const adv = advRows.reduce((m, r) => m + minor(r.querySelector('.ciAdvAmt').value), 0), advTotal = advRows.reduce((m, r) => m + minor(r.dataset.total), 0);
-  const out = { cur, d, sub, taxes, gross, adv, advTotal };
+  const out = { cur, d, sub, disc, chg, taxes, gross, adv, advTotal };
   if (quiet) return out;
-  $('#ciTotals').innerHTML = `<div class="flex justify-between"><span>Subtotal</span><span>${f(sub)}</span></div>${taxes.map(t => `<div class="flex justify-between text-slate-600"><span>${esc(t.name)} ${t.rate}%</span><span>${f(t.minor)}</span></div>`).join('')}
+  $('#ciTotals').innerHTML = `<div class="flex justify-between"><span>Subtotal</span><span>${f(sub)}</span></div>${disc ? `<div class="flex justify-between text-slate-600"><span>Discount</span><span>− ${f(disc)}</span></div>` : ''}${chg ? `<div class="flex justify-between text-slate-600"><span>Additional charges</span><span>${f(chg)}</span></div>` : ''}${disc > sub + chg ? '<div class="text-xs text-red-700">The discount is more than the subtotal.</div>' : ''}${taxes.map(t => `<div class="flex justify-between text-slate-600"><span>${esc(t.name)} ${t.rate}%</span><span>${f(t.minor)}</span></div>`).join('')}
     <div class="flex justify-between font-semibold border-t pt-1"><span>${adv ? 'Gross amount' : 'Total'}</span><span>${f(gross)}</span></div>
     ${adv ? `<div class="flex justify-between text-slate-600"><span>Advance received</span><span>${f(advTotal)}</span></div><div class="flex justify-between text-sky-800"><span>Advance payment adjustment</span><span>− ${f(adv)}</span></div>
       <div class="flex justify-between font-semibold border-t pt-1"><span>Net amount</span><span>${f(gross - adv)}</span></div>${adv > gross ? '<div class="text-xs text-red-700">The advance taken off is more than the gross amount.</div>' : ''}` : ''}`;
@@ -311,7 +315,7 @@ function cmpInvoiceDraftNow() {
   const lines = [...document.querySelectorAll('#ciObLines .ciLine'), ...document.querySelectorAll('#ciLines .ciLine')].map(r => ({ description: r.querySelector('.ciDesc').value, amount: cmpAmt(r.querySelector('.ciAmt').value) })).filter(l => l.description || l.amount);
   const advanceDetails = [...document.querySelectorAll('#ciAdv .ciAdvRow')].filter(r => r.querySelector('.ciAdvOn').checked).map(r => ({ adjusted: cmpAmt(r.querySelector('.ciAdvAmt').value), amount: Number(r.dataset.total), receivedOn: r.dataset.on, description: r.dataset.desc }));
   return { ...e.inv, currency: t.cur, issueDate: $('#ciDate').value, dueDate: $('#ciDue').value, notes: $('#ciNotes').value, typeId: $('#ciType').value || null, typeSnapshot: null, lines,
-    taxes: t.taxes.map(x => ({ name: x.name, rate: x.rate, amount: m(x.minor) })), subtotal: m(t.sub), total: m(t.gross), advanceAdjusted: m(t.adv), advanceDetails, received: 0, outstanding: m(t.gross - t.adv), status: 'DRAFT', number: null };
+    taxes: t.taxes.map(x => ({ name: x.name, rate: x.rate, amount: m(x.minor) })), subtotal: m(t.sub), discount: m(t.disc), charges: m(t.chg), total: m(t.gross), advanceAdjusted: m(t.adv), advanceDetails, received: 0, outstanding: m(t.gross - t.adv), status: 'DRAFT', number: null };
 }
 function cmpInvoicePreview() { const box = document.getElementById('ciPreview'); if (box && CMP_INV.edit) { box.innerHTML = cmpInvoiceDoc(cmpInvoiceDraftNow(), CMP.settings || {}); cmpFitDocs(box.parentElement); } }
 function cmpInvoicePreviewSoon() { clearTimeout(CMP_INV.prevTimer); CMP_INV.prevTimer = setTimeout(() => { cmpInvoiceTotals(); cmpInvoicePreview(); }, 120); }
@@ -337,6 +341,7 @@ async function cmpInvoiceSave(issue) {
   const e = CMP_INV.edit, line = r => ({ description: r.querySelector('.ciDesc').value, amount: r.querySelector('.ciAmt').value || '0', save: Boolean(r.querySelector('.ciSave') && r.querySelector('.ciSave').checked && !(r.querySelector('.ciSaveWrap') || { classList: { contains: () => false } }).classList.contains('invisible')),
     occurrenceId: r.dataset.occ || undefined, bankName: r.dataset.bank && (r.dataset.occ || CmpRules.keyOf(r.dataset.bank) === CmpRules.keyOf(r.querySelector('.ciDesc').value)) ? r.dataset.bank : undefined });
   const body = { currency: $('#ciCur').value, issueDate: $('#ciDate').value, dueDate: $('#ciDue').value, notes: $('#ciNotes').value, typeId: $('#ciType').value || null,
+    discount: ($('#ciDisc').value || '0').replace(/[,\s]/g, ''), charges: ($('#ciChg').value || '0').replace(/[,\s]/g, ''),
     lines: [...[...document.querySelectorAll('#ciObLines .ciLine')].map(line), ...[...document.querySelectorAll('#ciLines .ciLine')].map(line)],
     taxes: [...document.querySelectorAll('#ciTaxes .ciTax')].map(r => ({ name: r.querySelector('.ciTaxName').value, rate: r.querySelector('.ciTaxRate').value, save: Boolean(r.querySelector('.ciTaxSave') && r.querySelector('.ciTaxSave').checked) })),
     advances: [...document.querySelectorAll('#ciAdv .ciAdvRow')].filter(r => r.querySelector('.ciAdvOn').checked).map(r => ({ advanceId: r.dataset.id, amount: r.querySelector('.ciAdvAmt').value || '0' })) };
@@ -357,8 +362,10 @@ async function cmpInvoiceDelete(id) {
    anywhere by drag and drop). The page is A4 less the print margins, so what is placed on the screen prints at the same place. ---------- */
 const CMP_PAGE = { w: 178, h: 265 }; // mm
 // The page drawn to fit the box it is in (beside the list, the draft's preview, the settings' preview): never larger than itself
-function cmpFitDocs(root = document) {
+// (and once more on the next frame: a window's columns settle only after it is first drawn, which can leave the page too wide)
+function cmpFitDocs(root = document, again = true) {
   root.querySelectorAll('.cmpDocFit').forEach(el => { const w = el.parentElement.clientWidth - 18; if (w > 0) el.style.zoom = String(Math.min(1, Math.max(0.3, w / (CMP_PAGE.w * 96 / 25.4)))); });
+  if (again && typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(() => cmpFitDocs(root, false), 30));
 }
 window.addEventListener('resize', () => cmpFitDocs());
 // The layout a document is printed with: a receipt's own receipt format (frozen when it was made), else the invoice's format
@@ -368,26 +375,61 @@ function cmpDocLayout(inv, receipt) {
   const t = inv.typeId && (CMP_INV.types || []).find(x => x.id === inv.typeId);
   return t ? t.layout : null;
 }
-// an extra block's text with its [placeholders] filled in (unknown ones stay as typed)
-function cmpDocText(text, inv, s, receipt) {
-  const net = Number(inv.total) - Number(inv.advanceAdjusted || 0), c = inv.client || {};
+// The client's details a format can show and the automatic information of each document (the CA, 24 Nov 2026: a tick against each one;
+// a format made before has none ticked and shows what it always did)
+const CMP_CLIENT_KEYS = [['name', 'Client name'], ['code', 'Client code'], ['registrationNo', 'Registration No.'], ['contactNumber', 'Contact number'], ['email', 'Email'], ['address', 'Address'], ['reference', 'Reference'], ['country', 'Country']];
+const CMP_CLIENT_DEFAULT = ['name', 'address', 'country', 'registrationNo'];
+const CMP_AUTO = {
+  ADVANCE: [['number', 'Document number'], ['date', 'Document date'], ['status', 'Document status'], ['totalAdvance', 'Total advance amount'], ['amount', 'Amount received'], ['outstanding', 'Outstanding advance balance'], ['createdAt', 'Created date and time']],
+  INVOICE: [['number', 'Invoice number'], ['date', 'Invoice date'], ['dueDate', 'Payment due'], ['status', 'Document status'], ['subtotal', 'Subtotal'], ['discount', 'Discount amount'], ['charges', 'Additional charges'], ['tax', 'Tax amount'], ['total', 'Grand total'],
+    ['advance', 'Advance payment adjustment'], ['outstanding', 'Outstanding balance'], ['paymentStatus', 'Payment status'], ['createdAt', 'Created date and time']],
+  RECEIPT: [['number', 'Receipt number'], ['date', 'Receipt date'], ['status', 'Document status'], ['amount', 'Total amount received'], ['allocated', 'Allocated amount'], ['unallocated', 'Unallocated amount'], ['balance', 'Customer outstanding balance after payment'],
+    ['paymentStatus', 'Payment status'], ['invoiceRefs', 'Related invoice references'], ['createdAt', 'Created date and time']],
+};
+const CMP_AUTO_DEFAULT = { ADVANCE: ['number', 'date', 'amount', 'totalAdvance', 'outstanding'], INVOICE: ['number', 'date', 'dueDate', 'subtotal', 'discount', 'charges', 'tax', 'total', 'advance', 'outstanding'], RECEIPT: ['number', 'date', 'amount', 'invoiceRefs', 'balance'] };
+const CMP_DOC_STATUS = { DRAFT: 'Draft', ISSUED: 'Issued', SENT: 'Sent', PARTIAL: 'Issued', RECEIVED: 'Issued', CANCELLED: 'Cancelled', VOID: 'Void', ACTIVE: 'Active', PARTLY: 'Partly adjusted', ADJUSTED: 'Fully adjusted' };
+const CMP_PAY_STATUS = { DRAFT: '—', ISSUED: 'Unpaid', SENT: 'Unpaid', PARTIAL: 'Partly paid', RECEIVED: 'Paid', CANCELLED: 'Cancelled', PAID: 'Paid in full', PARTLY: 'Partly paid', VOID: 'Void' };
+// an extra block's text with its [placeholders] filled in (unknown ones stay as typed); d: the invoice (or { inv, receipt }, or an advance)
+function cmpDocText(text, kind, d, s) {
+  const inv = kind === 'ADVANCE' ? null : d.inv || d, receipt = kind === 'RECEIPT' ? d.receipt : null, a = kind === 'ADVANCE' ? d : null, c = (inv || a).client || {};
+  const net = inv ? Number(inv.total) - Number(inv.advanceAdjusted || 0) : 0;
   return CmpRules.render(text, { client: c, countryName: cmpCountry(c.country).name,
-    invoice: { number: inv.number || 'DRAFT', date: inv.issueDate, dueDate: inv.dueDate, amountText: cmpMoney(net, inv.currency), outstandingText: cmpMoney(inv.outstanding, inv.currency) },
-    receipt: receipt ? { number: receipt.number, date: receipt.receivedOn, amountText: cmpMoney(receipt.amount, inv.currency) } : {}, firm: { name: s.firmName || '', phone: s.firmPhone || '', email: s.firmEmail || '' } }).text;
+    invoice: inv ? { number: inv.number || 'DRAFT', date: inv.issueDate, dueDate: inv.dueDate, amountText: cmpMoney(net, inv.currency), outstandingText: cmpMoney(inv.outstanding, inv.currency) } : {},
+    receipt: receipt ? { number: receipt.number, date: receipt.receivedOn, amountText: cmpMoney(receipt.amount, inv.currency) } : {},
+    advance: a ? { number: a.number, date: a.receivedOn, amountText: cmpMoney(a.amount, a.currency), description: a.description, balanceText: cmpMoney(a.available, a.currency) } : {},
+    fields: Object.fromEntries(((inv || a).clientFields || []).map(f => [f.name, f.value])),
+    firm: { name: s.firmName || '', phone: s.firmPhone || '', email: s.firmEmail || '', address: s.firmAddress || '', website: s.firmWebsite || '' } }).text;
 }
-function cmpDocBlocks(L, inv, s, receipt, { edit = false } = {}) {
-  return (L.blocks || []).filter(b => (b.doc || 'INVOICE') === (receipt ? 'RECEIPT' : 'INVOICE')).map(b => `<div data-block="${esc(b.id)}" style="position:absolute;left:${(CMP_PAGE.w * b.x / 100).toFixed(1)}mm;top:${(CMP_PAGE.h * b.y / 100).toFixed(1)}mm;width:${(CMP_PAGE.w * b.w / 100).toFixed(1)}mm;font-size:${b.size}px;font-weight:${b.bold ? 700 : 400};text-align:${b.align};white-space:pre-wrap;line-height:1.35;${b.border ? 'border:1px solid #94a3b8;padding:1.5mm;' : ''}${edit ? 'cursor:move;outline:1px dashed #10b981;background:rgba(236,253,245,.55);touch-action:none;' : ''}">${esc(cmpDocText(b.text, inv, s, receipt))}</div>`).join('');
+function cmpDocBlocks(L, kind, d, s, { edit = false } = {}) {
+  return (L.blocks || []).filter(b => (b.doc || 'INVOICE') === kind).map(b => `<div data-block="${esc(b.id)}" style="position:absolute;left:${(CMP_PAGE.w * b.x / 100).toFixed(1)}mm;top:${(CMP_PAGE.h * b.y / 100).toFixed(1)}mm;width:${(CMP_PAGE.w * b.w / 100).toFixed(1)}mm;font-size:${b.size}px;font-weight:${b.bold ? 700 : 400};text-align:${b.align};white-space:pre-wrap;line-height:1.35;${b.border ? 'border:1px solid #94a3b8;padding:1.5mm;' : ''}${edit ? 'cursor:move;outline:1px dashed #10b981;background:rgba(236,253,245,.55);touch-action:none;' : ''}">${esc(cmpDocText(b.text, kind, d, s))}</div>`).join('');
 }
-function cmpInvoiceDoc(inv, s, receipt, { layout, edit = false } = {}) {
-  const L = layout || cmpDocLayout(inv, receipt) || {}, c = inv.client || {}, cur = inv.currency;
+// The invoice, or a receipt of it (kept for the callers of before)
+function cmpInvoiceDoc(inv, s, receipt, opts = {}) { return receipt ? cmpDocRender('RECEIPT', { inv, receipt }, s, opts) : cmpDocRender('INVOICE', inv, s, opts); }
+const cmpAdvanceDoc = (a, s, opts = {}) => cmpDocRender('ADVANCE', a, s, opts);
+// One document on an A4 page: its format (frozen on it, else the one chosen, else the standard), the top (title only, letterhead, or logo
+// and the firm's details), the client's details ticked on the format, the body, the automatic information ticked, and the extra blocks
+function cmpDocRender(kind, d, s, { layout, edit = false } = {}) {
+  const inv = kind === 'ADVANCE' ? null : d.inv || d, receipt = kind === 'RECEIPT' ? d.receipt : null, a = kind === 'ADVANCE' ? d : null;
+  const L = layout || (a ? (a.typeSnapshot && a.typeSnapshot.layout) || null : cmpDocLayout(inv, receipt)) || {}, c = (inv || a).client || {}, cur = (inv || a).currency;
+  const on = k => (L.autoFields || CMP_AUTO_DEFAULT[kind]).includes(k);
   const firm = L.firmName || s.firmName || S.company || '', addr = L.firmAddress || s.firmAddress || '';
   const taxNo = L.taxNo || s.firmTaxNo || '', taxLine = taxNo ? `${esc(L.taxLabel || 'Tax registration no.')}: ${esc(taxNo)}` : '';
   const bank = L.showBank === false ? '' : (L.bankDetails || s.bankDetails || ''), footer = L.footer || s.invoiceFooter || '';
   const style = L.headerStyle && L.headerStyle !== 'DEFAULT' ? L.headerStyle : (s.headerStyle === 'LETTERHEAD' ? 'LETTERHEAD' : 'LOGO');
-  const title = `<div style="text-align:right"><div style="font-size:22px;font-weight:700;letter-spacing:.05em">${esc(receipt ? (L.receiptTitle || 'RECEIPT') : (L.invoiceTitle || 'INVOICE'))}</div>
-        <div style="font-size:13px"><b>${esc(receipt ? receipt.number : inv.number || 'DRAFT')}</b></div>
-        <div style="font-size:12px">Date: ${esc(CmpRules.fmtDay(receipt ? receipt.receivedOn : inv.issueDate) || '—')}</div>
-        ${!receipt && inv.dueDate ? `<div style="font-size:12px">Payment due: ${esc(CmpRules.fmtDay(inv.dueDate))}</div>` : ''}${receipt ? `<div style="font-size:12px">For invoice ${esc(inv.number)}</div>` : ''}</div>`;
+  const titleText = kind === 'ADVANCE' ? (L.advanceTitle || 'ADVANCE PAYMENT RECEIPT') : kind === 'RECEIPT' ? (L.receiptTitle || 'RECEIPT') : (L.invoiceTitle || 'INVOICE');
+  const number = kind === 'ADVANCE' ? a.number : kind === 'RECEIPT' ? receipt.number : inv.number || 'DRAFT';
+  const day = kind === 'ADVANCE' ? a.receivedOn : kind === 'RECEIPT' ? receipt.receivedOn : inv.issueDate;
+  const status = kind === 'ADVANCE' ? a.status : kind === 'RECEIPT' ? (receipt.voidedAt ? 'VOID' : receipt.settlement || 'VALID') : inv.status;
+  const statusText = { VALID: 'Valid', REFUNDED: 'Refunded', CREDITED: 'Kept as credit' }[status] || CMP_DOC_STATUS[status] || status;
+  const created = (kind === 'ADVANCE' ? a : kind === 'RECEIPT' ? receipt : inv).createdAt;
+  const small = t => `<div style="font-size:12px">${t}</div>`;
+  const title = `<div style="text-align:right"><div style="font-size:22px;font-weight:700;letter-spacing:.05em">${esc(titleText)}</div>
+        ${on('number') ? `<div style="font-size:13px"><b>${esc(number || '')}</b></div>` : ''}
+        ${on('date') ? small(`Date: ${esc(CmpRules.fmtDay(day) || '—')}`) : ''}
+        ${kind === 'INVOICE' && on('dueDate') && inv.dueDate ? small(`Payment due: ${esc(CmpRules.fmtDay(inv.dueDate))}`) : ''}
+        ${kind === 'RECEIPT' && on('invoiceRefs') ? small(`For invoice ${esc(inv.number)}`) : ''}
+        ${on('status') ? small(`Status: ${esc(statusText)}`) : ''}
+        ${on('createdAt') && created ? small(`Created: ${esc(cmpAt(created))}`) : ''}</div>`;
   // the top: nothing but the title, a full letterhead picture (the CA), or the logo, the header line and the firm's details
   const top = style === 'NONE' ? `<div style="display:flex;justify-content:space-between;gap:24px;align-items:flex-start"><div style="font-size:12px">${taxLine}</div>${title}</div>`
     : style === 'LETTERHEAD' && s.letterhead
@@ -397,29 +439,56 @@ function cmpInvoiceDoc(inv, s, receipt, { layout, edit = false } = {}) {
     <div style="display:flex;justify-content:space-between;gap:24px;align-items:flex-start">
       <div style="display:flex;gap:12px;align-items:flex-start">${s.logo ? `<img src="${esc(s.logo)}" alt="" style="max-height:64px;max-width:160px;object-fit:contain">` : ''}
         <div><div style="font-size:20px;font-weight:700">${esc(firm)}</div><div style="white-space:pre-wrap;font-size:12px;color:#334155">${esc(addr)}</div>
-        <div style="font-size:12px;color:#334155">${[s.firmPhone, s.firmEmail].filter(Boolean).map(esc).join(' · ')}</div>${taxLine ? `<div style="font-size:12px">${taxLine}</div>` : ''}</div></div>
+        <div style="font-size:12px;color:#334155">${[s.firmPhone, s.firmEmail, s.firmWebsite].filter(Boolean).map(esc).join(' · ')}</div>${taxLine ? `<div style="font-size:12px">${taxLine}</div>` : ''}</div></div>
       ${title}</div>`;
+  // the client's details ticked on the format (its additional information too), else the usual ones
+  const keys = L.clientFields || (L.showClientTaxNo === false ? CMP_CLIENT_DEFAULT.filter(k => k !== 'registrationNo') : CMP_CLIENT_DEFAULT);
+  const extra = (inv || a).clientFields || [], label = Object.fromEntries(CMP_CLIENT_KEYS);
+  const lines = keys.filter(k => k !== 'name').map(k => {
+    if (k.startsWith('f:')) { const f = extra.find(x => x.id === k.slice(2)); return f ? `${esc(f.name)}: ${esc(f.value)}` : ''; }
+    const v = k === 'country' ? cmpCountry(c.country).name : c[k];
+    return v ? (['address', 'country'].includes(k) ? `<span style="white-space:pre-wrap">${esc(v)}</span>` : `${esc(label[k])}: ${esc(v)}`) : '';
+  }).filter(Boolean);
   const head = `${top}
-    <div style="margin:18px 0 12px;font-size:13px"><div style="color:#64748b;font-size:11px;text-transform:uppercase">${receipt ? 'Received from' : 'Bill to'}</div><b>${esc(c.name)}</b>
-      <div style="white-space:pre-wrap">${esc(c.address || '')}</div><div>${esc(cmpCountry(c.country).name)}${c.registrationNo && L.showClientTaxNo !== false ? ` · Registration No. ${esc(c.registrationNo)}` : ''}</div></div>`;
-  const td = 'padding:6px 8px;border-bottom:1px solid #e2e8f0', tr = (a, b, bold, color) => `<tr><td style="${td};text-align:right;${bold ? 'font-weight:700;' : ''}${color ? `color:${color};` : ''}">${a}</td><td style="${td};text-align:right;white-space:nowrap;${bold ? 'font-weight:700;' : ''}${color ? `color:${color};` : ''}">${b}</td></tr>`;
-  const adv = Number(inv.advanceAdjusted || 0), net = Number(inv.total) - adv, det = inv.advanceDetails || [], advTotal = det.reduce((m, a) => m + Number(a.amount), 0);
-  const page = inner => `<div class="cmpDoc" style="position:relative;width:${CMP_PAGE.w}mm;min-height:${CMP_PAGE.h}mm;box-sizing:border-box;font-family:system-ui,sans-serif;color:#0f172a">${inner}${cmpDocBlocks(L, inv, s, receipt, { edit })}</div>`;
-  if (receipt) {
+    <div style="margin:18px 0 12px;font-size:13px"><div style="color:#64748b;font-size:11px;text-transform:uppercase">${kind === 'INVOICE' ? 'Bill to' : 'Received from'}</div>${keys.includes('name') ? `<b>${esc(c.name)}</b>` : ''}
+      ${lines.map(x => `<div>${x}</div>`).join('')}</div>`;
+  const td = 'padding:6px 8px;border-bottom:1px solid #e2e8f0', tr = (x, y, bold, color) => `<tr><td style="${td};text-align:right;${bold ? 'font-weight:700;' : ''}${color ? `color:${color};` : ''}">${x}</td><td style="${td};text-align:right;white-space:nowrap;${bold ? 'font-weight:700;' : ''}${color ? `color:${color};` : ''}">${y}</td></tr>`;
+  const page = inner => `<div class="cmpDoc" style="position:relative;width:${CMP_PAGE.w}mm;min-height:${CMP_PAGE.h}mm;box-sizing:border-box;font-family:system-ui,sans-serif;color:#0f172a">${inner}${cmpDocBlocks(L, kind, d, s, { edit })}</div>`;
+  if (kind === 'ADVANCE') {
+    const rows = [on('totalAdvance') && tr('Total advance received (to date)', cmpMoney(a.clientTotal ?? a.amount, cur)), on('amount') && tr('Amount received (this receipt)', cmpMoney(a.amount, cur), true),
+      on('outstanding') && tr('Outstanding advance balance (not yet adjusted)', cmpMoney(a.clientOutstanding ?? a.available, cur))].filter(Boolean).join('');
+    return page(`${head}
+      <p style="font-size:14px;margin:16px 0">Received with thanks the sum of <b>${cmpMoney(a.amount, cur)}</b> as an advance payment${a.description ? ` for ${esc(a.description)}` : ''}, by ${esc((CMP_METHODS[a.method] || a.method || '').toLowerCase())}${a.reference ? ` (ref. ${esc(a.reference)})` : ''}. It will be adjusted against our invoice${a.obligation ? ` for ${esc(a.obligation.name)}` : ''}.</p>
+      ${L.advanceNote ? `<p style="font-size:12px;white-space:pre-wrap;margin:0 0 12px">${esc(L.advanceNote)}</p>` : ''}
+      ${rows ? `<table style="margin-left:auto;border-collapse:collapse;font-size:13px;min-width:90mm">${rows}</table>` : ''}
+      ${a.voidedAt ? `<p style="color:#b91c1c;font-weight:700;margin-top:12px">VOID: ${esc(a.voidReason)}</p>` : ''}
+      <div style="margin-top:40px;font-size:12px;color:#475569;white-space:pre-wrap">${esc(footer)}</div>`);
+  }
+  const adv = Number(inv.advanceAdjusted || 0), net = Number(inv.total) - adv, det = inv.advanceDetails || [], advTotal = det.reduce((m, x) => m + Number(x.amount), 0);
+  if (kind === 'RECEIPT') {
+    const rows = [adv && tr('Gross amount', cmpMoney(inv.total, cur)), adv && tr('Advance adjusted', `− ${cmpMoney(adv, cur)}`), tr(adv ? 'Net amount' : 'Invoice total', cmpMoney(adv ? net : inv.total, cur)),
+      on('amount') && tr('Amount received (this receipt)', cmpMoney(receipt.amount, cur), true), on('allocated') && tr(`Allocated to invoice ${esc(inv.number)}`, cmpMoney(receipt.amount, cur)), on('unallocated') && tr('Unallocated', cmpMoney(0, cur)),
+      tr('Received to date', cmpMoney(receipt.paidToDate ?? inv.received, cur)), tr('Still owed on this invoice', cmpMoney(receipt.paidToDate !== undefined ? Math.max(0, net - receipt.paidToDate) : inv.outstanding, cur), true),
+      on('paymentStatus') && tr('Payment status', esc(CMP_PAY_STATUS[receipt.paymentStatus] || CMP_PAY_STATUS[inv.status] || '')),
+      on('balance') && receipt.clientBalanceAfter !== undefined && tr('Your balance with us after this payment', cmpMoney(receipt.clientBalanceAfter, cur))].filter(Boolean).join('');
     return page(`${head}
       <p style="font-size:14px;margin:16px 0">Received with thanks the sum of <b>${cmpMoney(receipt.amount, cur)}</b> by ${esc((CMP_METHODS[receipt.method] || receipt.method).toLowerCase())}${receipt.reference ? ` (ref. ${esc(receipt.reference)})` : ''}, against invoice ${esc(inv.number)} of ${cmpMoney(adv ? net : inv.total, cur)}.</p>
       ${L.receiptNote ? `<p style="font-size:12px;white-space:pre-wrap;margin:0 0 12px">${esc(L.receiptNote)}</p>` : ''}
-      <table style="width:100%;border-collapse:collapse;font-size:13px">${adv ? tr('Gross amount', cmpMoney(inv.total, cur)) + tr('Advance adjusted', `− ${cmpMoney(adv, cur)}`) : ''}${tr(adv ? 'Net amount' : 'Invoice total', cmpMoney(adv ? net : inv.total, cur))}${tr('Received to date', cmpMoney(inv.received, cur))}${tr('Still owed', cmpMoney(inv.outstanding, cur), true)}</table>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">${rows}</table>
       ${receipt.voidedAt ? `<p style="color:#b91c1c;font-weight:700;margin-top:12px">VOID: ${esc(receipt.voidReason)}</p>` : ''}
       <div style="margin-top:40px;font-size:12px;color:#475569;white-space:pre-wrap">${esc(footer)}</div>`);
   }
+  const disc = Number(inv.discount || 0), chg = Number(inv.charges || 0);
+  const totals = [on('subtotal') && tr('Subtotal', cmpMoney(inv.subtotal, cur)), on('discount') && disc && tr('Discount', `− ${cmpMoney(disc, cur)}`), on('charges') && chg && tr('Additional charges', cmpMoney(chg, cur)),
+    on('tax') && (inv.taxes || []).map(t => tr(`${esc(t.name)} ${t.rate}%`, cmpMoney(t.amount, cur))).join(''), on('total') && tr(adv && on('advance') ? 'Gross amount' : 'Grand total', cmpMoney(inv.total, cur), true),
+    on('advance') && adv && `${advTotal ? tr('Advance received', cmpMoney(advTotal, cur)) : ''}${tr('Advance payment adjustment', `− ${cmpMoney(adv, cur)}`, false, '#075985')}${tr('Net amount', cmpMoney(net, cur), true)}`,
+    on('outstanding') && inv.received && tr('Received', cmpMoney(inv.received, cur)) + tr('Outstanding', cmpMoney(inv.outstanding, cur), true),
+    on('paymentStatus') && tr('Payment status', esc(CMP_PAY_STATUS[inv.status] || ''))].filter(Boolean).join('');
   return page(`${head}
     <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#f1f5f9"><th style="${td};text-align:left">Description</th><th style="${td};text-align:right">Amount (${esc(cur)})</th></tr></thead><tbody>
       ${(inv.lines || []).map(l => `<tr><td style="${td}">${esc(l.description)}</td><td style="${td};text-align:right;white-space:nowrap">${cmpMoney(l.amount, cur)}</td></tr>`).join('')}</tbody></table>
-    <table style="margin-left:auto;margin-top:8px;border-collapse:collapse;font-size:13px;min-width:75mm">${tr('Subtotal', cmpMoney(inv.subtotal, cur))}${(inv.taxes || []).map(t => tr(`${esc(t.name)} ${t.rate}%`, cmpMoney(t.amount, cur))).join('')}${tr(adv ? 'Gross amount' : 'Total', cmpMoney(inv.total, cur), true)}
-      ${adv ? `${advTotal ? tr('Advance received', cmpMoney(advTotal, cur)) : ''}${tr('Advance payment adjustment', `− ${cmpMoney(adv, cur)}`, false, '#075985')}${tr('Net amount', cmpMoney(net, cur), true)}` : ''}
-      ${inv.received ? tr('Received', cmpMoney(inv.received, cur)) + tr('Outstanding', cmpMoney(inv.outstanding, cur), true) : ''}</table>
-    ${adv && advTotal > adv + 1e-9 ? `<p style="font-size:11px;color:#475569;text-align:right;margin-top:4px">Advance not taken off here (kept for later): ${cmpMoney(det.reduce((m, a) => m + Number(a.amount) - Number(a.used ?? a.adjusted), 0), cur)}</p>` : ''}
+    ${totals ? `<table style="margin-left:auto;margin-top:8px;border-collapse:collapse;font-size:13px;min-width:75mm">${totals}</table>` : ''}
+    ${on('advance') && adv && advTotal > adv + 1e-9 ? `<p style="font-size:11px;color:#475569;text-align:right;margin-top:4px">Advance not taken off here (kept for later): ${cmpMoney(det.reduce((m, x) => m + Number(x.amount) - Number(x.used ?? x.adjusted), 0), cur)}</p>` : ''}
     ${inv.status === 'CANCELLED' ? `<p style="color:#b91c1c;font-weight:700;margin-top:12px">CANCELLED: ${esc(inv.cancelReason)}</p>` : ''}
     ${inv.notes ? `<p style="font-size:12px;margin-top:16px;white-space:pre-wrap">${esc(inv.notes)}</p>` : ''}
     ${bank ? `<div style="margin-top:16px;font-size:12px"><div style="color:#64748b;font-size:11px;text-transform:uppercase">Payment details</div><div style="white-space:pre-wrap">${esc(bank)}</div></div>` : ''}
@@ -506,11 +575,11 @@ function cmpReceiptPrint(id) {
   const inv = CMP_INV.open.inv, s = CMP.settings || {}, r = inv.receipts.find(x => x.id === id);
   cmpPrintDoc(cmpInvoiceDoc(inv, s, r), `Receipt ${r.number} · ${s.firmName || S.company || ''}`, `#/cm-receipts/${encodeURIComponent(r.number)}`);
 }
+// (the template is the one set on the obligation for invoices or receipts, else the first of that category for the client's country: the
+// server chooses, and the window offers only that category's templates)
 async function cmpInvoiceWhatsApp(what) {
-  let t = [];
-  try { t = await cmpTemplates(true); } catch { /* the message starts empty */ }
-  const purpose = what.receiptId ? 'RECEIPT' : 'INVOICE', pref = t.find(x => x.purpose === purpose);
-  cmpWhatsApp({ ...what, kind: purpose, templateId: pref ? pref.id : undefined }, () => { if (CMP_INV.open) cmpInvoiceRedraw(); });
+  try { await cmpTemplates(true); } catch { /* the list in the window stays as it was */ }
+  cmpWhatsApp({ ...what, kind: what.receiptId ? 'RECEIPT' : 'INVOICE' }, () => { if (CMP_INV.open) cmpInvoiceRedraw(); });
 }
 async function cmpInvoiceAct(what) {
   const o = CMP_INV.open;
@@ -660,7 +729,7 @@ CMP_PAGES.push({
 });
 async function cmpLoadTaxes() {
   try { CMP_INV.rates = await api('/api/cmp/taxes' + ($('#cmTaxAll').checked ? '?all=1' : '')); } catch (err) { return toast(err.message); }
-  $('#cmTaxRows').innerHTML = CMP_INV.rates.map(r => `<tr class="border-b last:border-0 ${r.active ? '' : 'opacity-60'}"><td class="py-2 font-medium">${esc(r.name)}${r.active ? '' : ' <span class="text-xs text-slate-500">(retired)</span>'}</td><td class="text-right">${r.rate}%</td>
+  $('#cmTaxRows').innerHTML = CMP_INV.rates.map(r => `<tr class="border-b last:border-0 ${r.active ? '' : 'opacity-60'}"><td class="py-2 font-medium">${esc(r.name)}${r.active ? '' : ' <span class="text-xs text-slate-500">(retired)</span>'}${r.type || r.effectiveFrom ? `<div class="text-xs text-slate-500 font-normal">${[r.type, r.effectiveFrom && `from ${cmpDay(r.effectiveFrom)}`].filter(Boolean).map(esc).join(' · ')}</div>` : ''}</td><td class="text-right">${r.rate}%</td>
     <td>${r.allCountries ? 'All countries' : r.countries.map(c => `${cmpCountry(c).flag} ${esc(c)}`).join(' ')}</td>
     <td class="text-right whitespace-nowrap"><button class="needs-write text-emerald-700 underline mr-2" onclick="cmpTaxForm('${r.id}')">Edit</button><button class="needs-write ${r.active ? 'text-red-600' : 'text-emerald-700'} underline" onclick="cmpTaxActive('${r.id}', ${!r.active})">${r.active ? 'Retire' : 'Use again'}</button></td></tr>`).join('')
     || `<tr><td colspan="4">${cmpEmpty('No taxes yet. Add one here, or on an invoice.')}</td></tr>`;
@@ -673,6 +742,8 @@ function cmpTaxForm(id) {
     <form id="ctForm" onsubmit="event.preventDefault(); cmpTaxSave()" class="space-y-3">
       <div class="grid grid-cols-3 gap-3"><label class="col-span-2"><span>Name</span><input name="name" required maxlength="60" placeholder="e.g. VAT" value="${r ? esc(r.name) : ''}"></label>
         <label><span>Rate %</span><input name="rate" required inputmode="decimal" value="${r ? r.rate : ''}"></label></div>
+      <div class="grid grid-cols-2 gap-3"><label><span>Type <span class="text-slate-400">(optional)</span></span><input name="type" maxlength="60" placeholder="e.g. Output VAT" value="${r ? esc(r.type || '') : ''}"></label>
+        <label><span>Effective from <span class="text-slate-400">(optional)</span></span><input name="effectiveFrom" type="date" value="${r ? esc(r.effectiveFrom || '') : ''}"></label></div>
       <div class="text-sm space-y-1"><label class="flex items-center gap-2"><input type="checkbox" name="allCountries" ${r && r.allCountries ? 'checked' : ''} onchange="$('#ctCountries').disabled = this.checked"> All countries</label>
         ${cmpCountryPicker('ctCountries', r ? r.countries : [])}
         <p class="text-xs text-slate-500">Hold Ctrl (or ⌘ on a Mac) to choose several.</p></div>
@@ -681,7 +752,7 @@ function cmpTaxForm(id) {
 }
 async function cmpTaxSave() {
   const f = $('#ctForm'), id = CMP_INV.taxEdit;
-  const body = { name: f.name.value, rate: f.rate.value, allCountries: f.allCountries.checked, countries: [...$('#ctCountries').selectedOptions].map(o => o.value) };
+  const body = { name: f.name.value, rate: f.rate.value, type: f.type.value, effectiveFrom: f.effectiveFrom.value, allCountries: f.allCountries.checked, countries: [...$('#ctCountries').selectedOptions].map(o => o.value) };
   // another rate of a tax (the CA: warned, then both rates are kept)
   const same = CMP_INV.rates.filter(x => x.name.toLowerCase() === body.name.trim().toLowerCase() && x.id !== id);
   const old = id && CMP_INV.rates.find(x => x.id === id);
@@ -696,7 +767,7 @@ async function cmpTaxActive(id, active) {
 }
 async function cmpLoadItems() {
   try { CMP_INV.items = await api('/api/cmp/items' + ($('#cmItemAll').checked ? '?all=1' : '')); } catch (err) { return toast(err.message); }
-  $('#cmItemRows').innerHTML = CMP_INV.items.map(r => `<tr class="border-b last:border-0 ${r.active ? '' : 'opacity-60'}"><td class="py-2 font-medium">${esc(r.name)}${r.active ? '' : ' <span class="text-xs text-slate-500">(retired)</span>'}</td><td class="text-right whitespace-nowrap">${(r.prices && r.prices.length ? r.prices : [{ amount: r.amount, lastOn: '' }]).map(p => `<div>${cmpMoney(p.amount, r.currency)}${p.lastOn ? ` <span class="text-xs text-slate-500">${esc(cmpDay(p.lastOn))}</span>` : ''}</div>`).join('')}</td>
+  $('#cmItemRows').innerHTML = CMP_INV.items.map(r => `<tr class="border-b last:border-0 ${r.active ? '' : 'opacity-60'}"><td class="py-2 font-medium">${esc(r.name)}${r.active ? '' : ' <span class="text-xs text-slate-500">(retired)</span>'}${r.code || r.category || r.unit ? `<div class="text-xs text-slate-500 font-normal">${[r.code, r.category, r.unit && `per ${r.unit.replace(/^per\s+/i, '')}`].filter(Boolean).map(esc).join(' · ')}</div>` : ''}</td><td class="text-right whitespace-nowrap">${(r.prices && r.prices.length ? r.prices : [{ amount: r.amount, lastOn: '' }]).map(p => `<div>${cmpMoney(p.amount, r.currency)}${p.lastOn ? ` <span class="text-xs text-slate-500">${esc(cmpDay(p.lastOn))}</span>` : ''}</div>`).join('')}</td>
     <td>${r.allCountries ? 'All countries' : r.countries.map(c => `${cmpCountry(c).flag} ${esc(c)}`).join(' ')}</td>
     <td class="text-right whitespace-nowrap"><button class="needs-write text-emerald-700 underline mr-2" onclick="cmpItemForm('${r.id}')">Edit</button><button class="needs-write ${r.active ? 'text-red-600' : 'text-emerald-700'} underline" onclick="cmpItemActive('${r.id}', ${!r.active})">${r.active ? 'Retire' : 'Use again'}</button></td></tr>`).join('')
     || `<tr><td colspan="4">${cmpEmpty('No items yet. Add one here, or keep a line typed on an invoice.')}</td></tr>`;
@@ -707,6 +778,9 @@ function cmpItemForm(id) {
   cmpShowModal(`${cmpModalHead(r ? `Edit ${esc(r.name)}` : 'Add an item or service')}
     <form id="cmItForm" onsubmit="event.preventDefault(); cmpItemSave()" class="space-y-3">
       <label><span>Item or service</span><input name="name" required maxlength="300" placeholder="e.g. VAT return filing (quarter)" value="${r ? esc(r.name) : ''}"></label>
+      <div class="grid grid-cols-3 gap-3"><label><span>Code <span class="text-slate-400">(optional)</span></span><input name="code" maxlength="40" value="${r ? esc(r.code || '') : ''}"></label>
+        <label><span>Category</span><input name="category" maxlength="60" placeholder="e.g. Tax filing" value="${r ? esc(r.category || '') : ''}"></label>
+        <label><span>Unit</span><input name="unit" maxlength="40" placeholder="e.g. return, month" value="${r ? esc(r.unit || '') : ''}"></label></div>
       <div class="grid grid-cols-2 gap-3"><label><span>Currency</span><select name="currency">${CmpCountries.currencies.map(c => `<option value="${c.code}" ${(r ? r.currency : 'AED') === c.code ? 'selected' : ''}>${c.code} · ${esc(c.name)}</option>`).join('')}</select></label>
         <label><span>Price</span><input name="amount" required inputmode="decimal" value="${r ? r.amount : ''}"></label></div>
       <div class="text-sm space-y-1"><label class="flex items-center gap-2"><input type="checkbox" name="allCountries" ${r && r.allCountries ? 'checked' : ''} onchange="$('#citCountries').disabled = this.checked"> All countries</label>
@@ -717,7 +791,7 @@ function cmpItemForm(id) {
 }
 async function cmpItemSave() {
   const f = $('#cmItForm'), id = CMP_INV.itemEdit;
-  const body = { name: f.name.value, currency: f.currency.value, amount: f.amount.value, allCountries: f.allCountries.checked, countries: [...$('#citCountries').selectedOptions].map(o => o.value) };
+  const body = { name: f.name.value, code: f.code.value, category: f.category.value, unit: f.unit.value, currency: f.currency.value, amount: f.amount.value, allCountries: f.allCountries.checked, countries: [...$('#citCountries').selectedOptions].map(o => o.value) };
   // the same item in that currency (the CA: warned, then its new price is kept beside the earlier ones, each with its date)
   const known = !id && CMP_INV.items.find(x => x.currency === body.currency && CmpRules.keyOf(x.name) === CmpRules.keyOf(body.name));
   if (known) {

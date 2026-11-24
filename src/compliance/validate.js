@@ -181,14 +181,17 @@ function cleanReminders(list) {
         return { offsetDays, templateId, body: body || null };
     }).sort((a, b) => a.offsetDays - b.offsetDays);
 }
-function cleanTemplate(b, { partial = false } = {}) {
+// A template: its name, its category (the CA, 24 Nov 2026: 1st/2nd/3rd reminder, advance payment, invoice, receipt or others; a template
+// made before keeps "REMINDER" until its category is chosen), the country whose clients it is for ('' = every country) and its message
+function cleanTemplate(b, { partial = false, was = null } = {}) {
     const out = {};
     if (!partial || b.name !== undefined) out.name = line(b.name, 80, 'Template name', { required: true });
     if (!partial || b.purpose !== undefined) {
-        const purpose = String(b.purpose || 'REMINDER').toUpperCase();
-        if (!R.TEMPLATE_PURPOSES[purpose]) throw bad('Choose what the template is for.');
+        const purpose = String(b.purpose || 'REMINDER_1').toUpperCase();
+        if (!R.TEMPLATE_PURPOSES[purpose] && !(was && purpose === was)) throw bad('Choose the template\'s category: 1st, 2nd or 3rd reminder, advance payment, invoice, receipt or others.');
         out.purpose = purpose;
     }
+    if (!partial || b.country !== undefined) out.country = b.country ? country(b.country).code : '';
     if (!partial || b.body !== undefined) out.body = multiline(b.body, 4000, 'Message', { required: true });
     if (b.active !== undefined) out.active = b.active === true;
     return out;
@@ -215,11 +218,44 @@ function cleanSettings(b) {
             if (seen.has(phone)) throw bad(`${phone} is there twice.`);
             seen.add(phone);
             return { id: /^[a-f0-9]{10}$/.test(String((x && x.id) || '')) ? x.id : crypto.randomBytes(5).toString('hex'), label, phone,
-                open: R.SENDER_OPEN[x && x.open] ? x.open : 'ANY', isDefault: Boolean(x && x.isDefault) };
+                open: R.SENDER_OPEN[x && x.open] ? x.open : 'ANY', isDefault: Boolean(x && x.isDefault), active: !(x && x.active === false) };
         });
-        const first = out.waSenders.findIndex(s => s.isDefault);
-        out.waSenders.forEach((s, i) => { s.isDefault = i === (first < 0 ? 0 : first); });
+        // the default is one that is active (the CA: each number Active or Inactive; an inactive one is not offered in the send window)
+        const first = out.waSenders.findIndex(s => s.isDefault && s.active), firstActive = out.waSenders.findIndex(s => s.active);
+        out.waSenders.forEach((s, i) => { s.isDefault = i === (first >= 0 ? first : firstActive >= 0 ? firstActive : 0); });
     }
+    // the CA's Settings (24 Nov 2026): how dates and numbers are written, the rest of the firm's profile, weekends and public holidays,
+    // the advance receipt numbers, and how long a session left alone stays signed in
+    if (b.dateFormat !== undefined) { if (!R.DAY_FORMATS[b.dateFormat]) throw bad('Choose a date format from the list.'); out.dateFormat = b.dateFormat; }
+    if (b.numberFormat !== undefined) { if (!R.NUMBER_FORMATS[b.numberFormat]) throw bad('Choose a number format from the list.'); out.numberFormat = b.numberFormat; }
+    if (b.firmCountry !== undefined) out.firmCountry = b.firmCountry ? country(b.firmCountry).code : '';
+    if (b.firmCity !== undefined) out.firmCity = line(b.firmCity, 80, 'City');
+    if (b.firmWebsite !== undefined) {
+        const w = line(b.firmWebsite, 200, 'Website');
+        if (w && !/^(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i.test(w)) throw bad('Enter the website like www.yourfirm.com.');
+        out.firmWebsite = w;
+    }
+    if (b.weekendDays !== undefined) {
+        if (!Array.isArray(b.weekendDays) || b.weekendDays.length > 6) throw bad('Choose up to six weekend days.');
+        out.weekendDays = [...new Set(b.weekendDays.map(d => int(d, 0, 6, 'A weekend day')))].sort();
+    }
+    if (b.holidayMode !== undefined) { out.holidayMode = String(b.holidayMode || 'NONE').toUpperCase(); if (!['NONE', 'BEFORE', 'AFTER'].includes(out.holidayMode)) throw bad('Choose what happens to a reminder on a weekend or holiday.'); }
+    if (b.holidays !== undefined) {
+        if (!Array.isArray(b.holidays) || b.holidays.length > 200) throw bad('Up to 200 public holidays.');
+        const seen = new Set();
+        out.holidays = b.holidays.map((h, i) => {
+            const date = day(h && h.date, `Holiday ${i + 1}: date`);
+            if (seen.has(date)) throw bad(`${R.fmtDay(date)} is there twice.`);
+            seen.add(date);
+            return { date, name: line(h && h.name, 80, `Holiday ${i + 1}: name`) };
+        }).sort((a, x) => (a.date < x.date ? -1 : 1));
+    }
+    if (b.notifyHour !== undefined) out.notifyHour = int(b.notifyHour, 0, 23, 'The notification hour');
+    if (b.sessionMinutes !== undefined) out.sessionMinutes = int(b.sessionMinutes, 5, 720, 'The session timeout (minutes)');
+    // which notifications are made, and their days (src/compliance/notify.js checks them and fills what is left out)
+    const N = require('./notify');
+    if (b.notifyPrefs !== undefined) out.notifyPrefs = N.cleanPrefs ? N.cleanPrefs(b.notifyPrefs) : (b.notifyPrefs && typeof b.notifyPrefs === 'object' ? b.notifyPrefs : {});
+    if (b.notifyRules !== undefined) out.notifyRules = N.cleanRules ? N.cleanRules(b.notifyRules) : (b.notifyRules && typeof b.notifyRules === 'object' ? b.notifyRules : {});
     if (b.invoiceHeader !== undefined) out.invoiceHeader = multiline(b.invoiceHeader, 300, 'Header');
     // the logo: a small picture as a data: URL (the screen shrinks it before it is sent), PNG, JPEG or WebP, at most 300 KB
     if (b.logo !== undefined) {
@@ -239,7 +275,7 @@ function cleanSettings(b) {
         if (l.length > 1200000) throw bad('The letterhead picture is too large: choose a smaller one.');
         out.letterhead = l;
     }
-    for (const k of ['invoiceFormat', 'receiptFormat']) {
+    for (const k of ['invoiceFormat', 'receiptFormat', 'advanceFormat']) {
         if (b[k] === undefined) continue;
         const f = line(b[k], 40, 'Number format');
         if (!/\{N+\}/.test(f)) throw bad('A number format must contain {NNNN} (the running number), e.g. INV-{YYYY}-{NNNN}.');
