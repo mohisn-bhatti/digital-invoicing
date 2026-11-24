@@ -132,14 +132,15 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
             ...(f.obligation ? { occurrence: { obligation: { name: { equals: f.obligation, mode: 'insensitive' } } } } : {}) }, select: { channel: true, voidedAt: true } });
 
         // the clients (the CA's FR-011, FR-012): not archived; with missing additional information as the Clients page counts it
-        const [activeClients, missingList] = await Promise.all([
+        const [activeClients, newClients, missingList] = await Promise.all([
             prisma.cmpClient.count({ where: clientWhere(ctx, f) }),
+            prisma.cmpClient.count({ where: { ...clientWhere(ctx, f, { live: false }), createdAt: { gte: pFrom, lt: pTo } } }), // (8.3: the date the client was added)
             clients.list(ctx, { missing: '1', ...(f.country ? { country: f.country } : {}), ...(f.assignee ? { assignee: f.assignee } : {}) }),
         ]);
         const missing = (missingList.clients || []).filter(c => !f.clientId || c.id === f.clientId);
 
         const kpis = {
-            activeClients, missingInfo: missing.length, open: open.length, overdue: overdue.length, upcoming: upcoming.length, remindersDue: remCount('DUE') + remCount('MISSED') + remCount('MARKED_NOT_SENT'),
+            activeClients, newClients, missingInfo: missing.length, open: open.length, overdue: overdue.length, upcoming: upcoming.length, remindersDue: remCount('DUE') + remCount('MISSED') + remCount('MARKED_NOT_SENT'),
             dataPending: dataPending.length, taskPending: taskPending.length,
         };
         const workflow = {
@@ -205,7 +206,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         if (money) out.finance = await finance(ctx, f, P, today);
 
         // the activity timeline (FR-065 to FR-080): only for those who may see the logs
-        if (logs) out.activity = await activity(ctx, f, pFrom, pTo, tz);
+        if (logs) { out.activity = await activity(ctx, f, pFrom, pTo, tz); out.communication = await communication(ctx, f, pFrom, pTo); }
 
         // the alerts to act on (FR-081 to FR-087): worked out now, never stored
         const failed = ctx.perms.has('FULL') ? await prisma.cmpNotification.count({ where: { tenantId: ctx.tenantId, status: 'FAILED' } }) : 0;
@@ -227,7 +228,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         const obl = f.obligation ? { occurrence: { obligation: { name: { equals: f.obligation, mode: 'insensitive' } } } } : {};
         const [advs, invs, rcs] = await Promise.all([
             prisma.cmpAdvance.findMany({ where: { tenantId: ctx.tenantId, voidedAt: null, ...mc, ...obl }, take: 20000, select: { id: true, number: true, receivedOn: true, currency: true, amount: true, used: true, client: { select: { id: true, code: true, name: true, country: true } } } }),
-            prisma.cmpInvoice.findMany({ where: { tenantId: ctx.tenantId, ...mc, ...obl }, take: 20000, select: { id: true, number: true, status: true, currency: true, issueDate: true, total: true, advanceAdjusted: true, received: true, sentAt: true,
+            prisma.cmpInvoice.findMany({ where: { tenantId: ctx.tenantId, ...mc, ...obl }, take: 20000, select: { id: true, number: true, status: true, currency: true, issueDate: true, total: true, advanceAdjusted: true, received: true, sentAt: true, createdAt: true,
                 client: { select: { id: true, code: true, name: true, country: true } } } }),
             prisma.cmpReceipt.findMany({ where: { tenantId: ctx.tenantId, receivedOn: { gte: dateOf(P.from), lte: dateOf(P.to) }, ...(Object.keys(mc).length || f.obligation ? { invoice: { ...(mc.client ? { client: mc.client } : {}), ...obl } } : {}) },
                 take: 20000, select: { amount: true, method: true, voidedAt: true, settlement: true, invoice: { select: { currency: true } } } }),
@@ -248,6 +249,10 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         // invoices: drafts now; those issued in the dates chosen by their status now; invoiced (gross) and net; outstanding now
         const counts = { DRAFT: 0, ISSUED: 0, SENT: 0, PARTIAL: 0, RECEIVED: 0, CANCELLED: 0 };
         const outstanding = [];
+        // (8.3) invoices created in the dates chosen, by the day they were created, drafts included
+        const pFrom = R.zoned(P.from, 0, 0, (await common.settings(ctx.tenantId)).timeZone), pTo = R.zoned(R.addDays(P.to, 1), 0, 0, (await common.settings(ctx.tenantId)).timeZone);
+        const createdInPeriod = invs.filter(i => +i.createdAt >= +pFrom && +i.createdAt < +pTo);
+        const created = { count: createdInPeriod.length, drafts: createdInPeriod.filter(i => i.status === 'DRAFT').length };
         for (const i of invs) {
             if (i.status === 'DRAFT') { counts.DRAFT++; continue; }
             const x = cur(i.currency), issued = inP(i.issueDate);
@@ -270,7 +275,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         }
         const fix = (x, n) => n / 10 ** x.d;
         return {
-            counts,
+            counts, created,
             currencies: [...per.values()].sort((a, b) => a.currency.localeCompare(b.currency)).map(x => ({ currency: x.currency,
                 advances: { received: fix(x, x.adv.received), receivedCount: x.adv.receivedCount, adjusted: fix(x, x.adv.adjusted), unallocated: fix(x, x.adv.unallocated), count: x.adv.count },
                 invoices: { invoiced: fix(x, x.inv.invoiced), net: fix(x, x.inv.net), outstanding: fix(x, x.inv.outstanding), unpaid: x.inv.unpaid },
@@ -281,9 +286,38 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         };
     }
 
+    // The communication log (the CA's 3.4.3, COM-01 to COM-08): every message of the dates chosen — reminders, advance receipts,
+    // invoices, receipts and others — with its template, how it went (WhatsApp, or another way), whether it was marked not sent, what it
+    // is about and who sent it
+    async function communication(ctx, f, pFrom, pTo) {
+        const mc = moneyClient(ctx, f);
+        const where = { tenantId: ctx.tenantId, createdAt: { gte: pFrom, lt: pTo }, ...mc };
+        if (f.obligation) where.OR = [{ occurrence: { obligation: { name: { equals: f.obligation, mode: 'insensitive' } } } }, { invoice: { occurrence: { obligation: { name: { equals: f.obligation, mode: 'insensitive' } } } } }];
+        const rows = await prisma.cmpMessage.findMany({ where, orderBy: { createdAt: 'desc' }, take: LIMIT,
+            select: { id: true, createdAt: true, kind: true, channel: true, templateName: true, voidedAt: true, userEmail: true, clientId: true, occurrenceId: true, invoiceId: true, advanceId: true,
+                client: { select: { id: true, code: true, name: true, country: true } }, occurrence: { select: { seq: true, periodStart: true, periodEnd: true, obligationId: true, obligation: { select: { name: true } } } },
+                invoice: { select: { number: true } }, receipt: { select: { number: true, invoiceId: true } }, advance: { select: { number: true } } } });
+        const total = await prisma.cmpMessage.count({ where });
+        return { total, rows: rows.map(m => ({ id: m.id, at: m.createdAt, kind: m.kind, channel: m.channel, templateName: m.templateName, user: m.userEmail, client: m.client,
+            status: m.voidedAt ? 'MARKED_NOT_SENT' : m.channel === 'WHATSAPP' ? 'SENT' : 'OTHER_WAY',
+            related: m.receipt ? `Receipt ${m.receipt.number}` : m.invoice ? `Invoice ${m.invoice.number}` : m.advance ? `Advance ${m.advance.number}` : m.occurrence ? `${m.occurrence.obligation.name} · ${R.periodName(m.occurrence)}` : '',
+            link: m.receipt ? { invoice: m.receipt.invoiceId } : m.invoiceId ? { invoice: m.invoiceId } : m.advanceId ? { advance: m.advanceId } : m.occurrence ? { period: [m.occurrence.obligationId, m.occurrenceId] } : { client: m.clientId } })) };
+    }
+
     async function activity(ctx, f, pFrom, pTo, tz) {
         const filtered = f.country || f.clientId || f.assignee;
         const allowed = filtered ? new Set((await prisma.cmpClient.findMany({ where: clientWhere(ctx, f, { live: false }), select: { id: true }, take: 20000 })).map(c => c.id)) : null;
+        // the Obligation filter (FR-010): the obligations of that name, and the invoices, receipts and advances of their periods
+        let obIds = null, docIds = null;
+        if (f.obligation) {
+            const obs = await prisma.cmpObligation.findMany({ where: { tenantId: ctx.tenantId, name: { equals: f.obligation, mode: 'insensitive' } }, select: { id: true }, take: 5000 });
+            obIds = new Set(obs.map(o => o.id));
+            const occ = { occurrence: { obligationId: { in: [...obIds] } } };
+            const [invs, advs] = await Promise.all([prisma.cmpInvoice.findMany({ where: { tenantId: ctx.tenantId, ...occ }, select: { id: true }, take: 5000 }), prisma.cmpAdvance.findMany({ where: { tenantId: ctx.tenantId, ...occ }, select: { id: true }, take: 5000 })]);
+            docIds = new Set([...invs.map(i => i.id), ...advs.map(a => a.id)]);
+        }
+        const aboutOb = (r, d) => !obIds || (d.obligationId && obIds.has(d.obligationId)) || (r.entityType === 'CmpObligation' && obIds.has(r.entityId))
+            || (['CmpInvoice', 'CmpAdvance'].includes(r.entityType) && docIds.has(r.entityId)) || (r.entityType === 'CmpReceipt' && d.invoiceId && docIds.has(d.invoiceId));
         const [rows, msgs] = await Promise.all([
             prisma.auditLog.findMany({ where: { tenantId: ctx.tenantId, action: { in: Object.keys(ACTIVITY) }, createdAt: { gte: pFrom, lt: pTo } }, orderBy: { createdAt: 'desc' }, take: 600,
                 select: { id: true, createdAt: true, action: true, summary: true, userEmail: true, entityType: true, entityId: true, details: true } }),
@@ -297,6 +331,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         for (const r of rows) {
             const d = r.details || {}, clientId = d.clientId || (r.entityType === 'CmpClient' ? r.entityId : null);
             if (allowed && !(clientId && allowed.has(clientId))) continue;
+            if (!aboutOb(r, d)) continue;
             const [type, label] = ACTIVITY[r.action];
             const link = r.entityType === 'CmpInvoice' ? { invoice: r.entityId } : r.entityType === 'CmpReceipt' && d.invoiceId ? { invoice: d.invoiceId } : r.entityType === 'CmpAdvance' ? { advance: r.entityId }
                 : r.entityType === 'CmpOccurrence' && d.obligationId ? { period: [d.obligationId, r.entityId] } : clientId ? { client: clientId } : null;
@@ -307,6 +342,7 @@ function createDashboard({ prisma, common, clients, obligations, now }) {
         }
         for (const m of msgs) {
             if (allowed && !allowed.has(m.clientId)) continue;
+            if (obIds && !(m.occurrence && obIds.has(m.occurrence.obligationId)) && !(m.advanceId && docIds.has(m.advanceId))) continue;
             const what = { REMINDER: ['Reminder', 'Reminder sent on WhatsApp'], ADVANCE: ['Advance', 'Advance receipt sent on WhatsApp'], RECEIPT: ['Receipt', 'Receipt sent on WhatsApp'] }[m.kind];
             items.push({ at: m.createdAt, type: what[0], label: what[1] + (m.voidedAt ? ' (later marked not sent)' : ''), summary: [m.occurrence ? m.occurrence.obligation.name : '', m.templateName].filter(Boolean).join(' · '),
                 user: m.userEmail, client: `${m.client.name} (${m.client.code})`, link: m.occurrence ? { period: [m.occurrence.obligationId, m.occurrenceId] } : m.advanceId ? { advance: m.advanceId } : { client: m.clientId } });

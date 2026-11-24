@@ -45,9 +45,10 @@ const ACTIONS = { create: 'Created', update: 'Changed', delete: 'Deleted', archi
     remember: 'Kept for later invoices', price: 'Another price kept', retire: 'Retired', next_period: 'Next periods prepared', assign: 'Assigned', export: 'Downloaded', template: 'Message template changed', signout: 'Signed out of other sessions' };
 const ENTITY_LABEL = { CmpClient: 'Client', CmpObligation: 'Obligation', CmpOccurrence: 'Obligation period', CmpInvoice: 'Invoice', CmpReceipt: 'Receipt', CmpAdvance: 'Advance payment',
     CmpTemplate: 'Template', CmpFieldDef: 'Field', CmpTaxRate: 'Tax', CmpItem: 'Item', CmpInvoiceType: 'Format', CmpMessage: 'Message', CmpSettings: 'Settings', Export: 'Download' };
-const CATEGORIES = [['clients', 'Clients'], ['obligations', 'Obligations'], ['reminders', 'Reminders'], ['advances', 'Advance Payments'], ['created', 'Invoices Created'],
-    ['issued', 'Invoices Issued'], ['receipts', 'Receipts'], ['receivables', 'Receivables'], ['items', 'Items & Taxes'], ['info', 'Additional Information'],
-    ['templates', 'Message Templates'], ['formats', 'Invoice & Receipt Formats'], ['audit', 'Audit & Activity'], ['quality', 'Data Quality']];
+// (Compliance, Data Collection, Tasks and Staff: the reports of the CA's Comprehensive Dashboard SRS, section 5, 24 Nov 2026)
+const CATEGORIES = [['clients', 'Clients'], ['obligations', 'Obligations'], ['compliance', 'Compliance'], ['reminders', 'Reminders'], ['data', 'Data Collection'], ['tasks', 'Tasks'],
+    ['advances', 'Advance Payments'], ['created', 'Invoices Created'], ['issued', 'Invoices Issued'], ['receipts', 'Receipts'], ['receivables', 'Receivables'], ['staff', 'Staff'],
+    ['items', 'Items & Taxes'], ['info', 'Additional Information'], ['templates', 'Message Templates'], ['formats', 'Invoice & Receipt Formats'], ['audit', 'Audit & Activity'], ['quality', 'Data Quality']];
 const NO_PERM_DEFAULT = { REPORTS: 'see the notifications and reports', INVOICE: 'issue invoices and receipts', LOGS: 'see the message and activity logs', EXPORT: 'export data', SETUP: 'manage templates and custom fields' };
 // the kinds of record whose names the history reports look up (the others are named by their kind only)
 const LOOKED_UP = new Set(['CmpClient', 'CmpObligation', 'CmpOccurrence', 'CmpInvoice', 'CmpReceipt', 'CmpAdvance', 'CmpTemplate', 'CmpFieldDef', 'CmpTaxRate', 'CmpItem', 'CmpInvoiceType']);
@@ -384,6 +385,20 @@ function createReportsCatalog({ prisma, audit, common, obligations, invoices, re
     const occRow = (r, nm, d = r.view.daysLeft) => ({ dueDate: r.dueDate, client: cl(r.client), country: countryName(r.client.country), obligation: r.obligation.name, period: R.periodName(r),
         status: R.STATUS[r.view.status] || r.view.status, days: r.view.status === 'COMPLETED' ? null : d, assignedTo: who(nm, r.assignedToId), _link: { period: [r.obligation.id, r.id] } });
     const occQ = f => ({ ...(f.country ? { country: f.country } : {}), ...(f.clientId ? { clientId: f.clientId } : {}) });
+    // the periods not completed (with their reminders' states), as the tracker works them out; and those completed in the dates chosen
+    const openRows = async f => (await obligations.listOccurrences({ tenantId: f.tenantId, perms: f.perms }, { money: '0', status: 'OPEN', limit: 20000, ...occQ(f) })).rows;
+    const taskOpen = r => ['DATA_COLLECTED', 'FILED', 'PAID'].includes(r.stage);
+    const completedIn = f => prisma.cmpOccurrence.findMany({ where: { tenantId: f.tenantId, stage: 'COMPLETED', obligation: liveOb(f), ...(f.clientId ? { clientId: f.clientId } : {}), ...(f.from || f.to ? { OR: [{ completedOn: days(f) }, { completedOn: null, closedAt: moments(f) }] } : {}) },
+        take: TAKE * 4, select: { id: true, obligation: { select: { assignedToId: true, client: { select: { assignedToId: true } } } } } });
+    async function staffTasks(f) {
+        const nm = await team(f), [open, done] = await Promise.all([openRows(f), completedIn(f)]);
+        const by = new Map(), get = k => { if (!by.has(k)) by.set(k, { person: k ? who(nm, k) : 'Nobody', pending: 0, today: 0, overdue: 0, completed: 0 }); return by.get(k); };
+        for (const r of open.filter(taskOpen)) { const x = get(r.assignedToId || ''); x.pending++; if (r.view.daysLeft === 0) x.today++; if (r.view.overdue) x.overdue++; }
+        for (const o of done) get(o.obligation.assignedToId || o.obligation.client.assignedToId || '').completed++;
+        const rows = [...by.values()].sort((a, b) => b.pending - a.pending || a.person.localeCompare(b.person));
+        const columns = [col('person', 'Person'), col('pending', 'Tasks pending', 'number', { sum: true }), col('today', 'Due today', 'number', { sum: true }), col('overdue', 'Overdue', 'number', { sum: true }), col('completed', f.from || f.to ? 'Completed in the dates' : 'Completed (all time)', 'number', { sum: true })];
+        return { columns, rows, totals: totalsOf(columns, rows, ['person', 'people']), note: 'A task is an obligation\'s work: open once its data is collected, until it is marked done.' };
+    }
 
     const DEFS = [
         /* ----- Clients ----- */
@@ -1128,6 +1143,143 @@ function createReportsCatalog({ prisma, audit, common, obligations, invoices, re
             run: async f => {
                 const list = (await quality(f)).filter(x => x.kind === 'Configuration');
                 return { columns: [col('area', 'Area'), col('check', 'Issue'), col('record', 'Record'), col('detail', 'Details', 'text', { wide: true })], rows: issueRows(list) };
+            } },
+
+        /* ----- the CA's Comprehensive Dashboard SRS, section 5 (24 Nov 2026): country and person summaries, annual compliance, data
+           collection, tasks (each obligation's Task step: open once its data is collected) and staff ----- */
+        { key: 'clients-by-country', cat: 'clients', title: 'Country-wise Client Summary', info: 'Clients, new clients and their obligations, country by country', need: [REP], filters: { range: 'client added on' },
+            note: 'Active = not archived. New = added in the dates chosen. Open and overdue obligations are those of the active clients.',
+            run: async f => {
+                const [cls, open] = await Promise.all([prisma.cmpClient.findMany({ where: { tenantId: f.tenantId }, select: { country: true, archivedAt: true, createdAt: true }, take: 20000 }), openRows(f)]);
+                const by = new Map(), get = k => { if (!by.has(k)) by.set(k, { country: countryName(k), active: 0, archived: 0, added: 0, open: 0, overdue: 0 }); return by.get(k); };
+                for (const c of cls) { const x = get(c.country); if (c.archivedAt) x.archived++; else x.active++; if (inRange(f, dayIn(f, c.createdAt))) x.added++; }
+                for (const r of open) { const x = get(r.client.country); x.open++; if (r.view.overdue) x.overdue++; }
+                const rows = [...by.values()].sort((a, b) => a.country.localeCompare(b.country));
+                const columns = [col('country', 'Country'), col('active', 'Active clients', 'number', { sum: true }), col('archived', 'Archived', 'number', { sum: true }), col('added', f.from || f.to ? 'New in the dates' : 'Added (all time)', 'number', { sum: true }),
+                    col('open', 'Open obligations', 'number', { sum: true }), col('overdue', 'Overdue', 'number', { sum: true })];
+                return { columns, rows, totals: totalsOf(columns, rows, ['country', 'countries']) };
+            } },
+        { key: 'clients-by-person', cat: 'clients', title: 'Assigned-user-wise Client Summary', info: 'Clients and their obligations, person by person', need: [REP], filters: { country: 1 },
+            note: 'A client counts for the person it is assigned to ("Nobody" when none). Open and overdue obligations count for the obligation\'s own person, else the client\'s.',
+            run: async f => {
+                const nm = await team(f);
+                const [cls, open] = await Promise.all([prisma.cmpClient.findMany({ where: { tenantId: f.tenantId, ...(f.country ? { country: f.country } : {}) }, select: { assignedToId: true, archivedAt: true }, take: 20000 }), openRows(f)]);
+                const by = new Map(), get = k => { if (!by.has(k)) by.set(k, { person: k ? who(nm, k) : 'Nobody', active: 0, archived: 0, open: 0, overdue: 0 }); return by.get(k); };
+                for (const c of cls) { const x = get(c.assignedToId || ''); if (c.archivedAt) x.archived++; else x.active++; }
+                for (const r of open) { const x = get(r.assignedToId || ''); x.open++; if (r.view.overdue) x.overdue++; }
+                const rows = [...by.values()].sort((a, b) => b.active - a.active || a.person.localeCompare(b.person));
+                const columns = [col('person', 'Person'), col('active', 'Active clients', 'number', { sum: true }), col('archived', 'Archived clients', 'number', { sum: true }), col('open', 'Open obligations', 'number', { sum: true }), col('overdue', 'Overdue', 'number', { sum: true })];
+                return { columns, rows, totals: totalsOf(columns, rows, ['person', 'people']) };
+            } },
+        { key: 'deadlines-by-country', cat: 'compliance', title: 'Country-wise Statutory Deadlines', info: 'Deadlines due soon (and overdue), country by country', need: [REP], filters: { days: 1, country: 1, client: 1 },
+            note: 'Every period not completed whose due date is within the window (overdue ones included), by country then due date; each on its client\'s own calendar.',
+            run: async f => {
+                const nm = await team(f);
+                const list = (await openRows(f)).filter(r => r.view.daysLeft <= f.days).sort((a, b) => countryName(a.client.country).localeCompare(countryName(b.client.country)) || (a.dueDate < b.dueDate ? -1 : 1));
+                const cards = {}; for (const r of list) cards[countryName(r.client.country)] = (cards[countryName(r.client.country)] || 0) + 1;
+                return { columns: [col('country', 'Country'), col('dueDate', 'Due date', 'day'), col('client', 'Client'), col('obligation', 'Obligation'), col('period', 'Period'), col('days', 'Days left', 'number'), col('status', 'Status'), col('assignedTo', 'Assigned to')],
+                    rows: list.map(r => ({ ...occRow(r, nm), country: countryName(r.client.country) })), cards: Object.entries(cards).map(([label, value]) => ({ label, value })) };
+            } },
+        { key: 'annual-compliance', cat: 'compliance', title: 'Annual Compliance Status', info: 'Periods due in the year: completed on time, late, open, overdue; compliance rate', need: [REP],
+            filters: { range: 'due date', country: 1, client: 1, group: [['client', 'By client'], ['obligation', 'By obligation'], ['country', 'By country']] },
+            note: 'The periods whose due date is in the dates chosen (this calendar year when none are chosen). On time = completed on or before its due date. Rate = on time ÷ the periods whose due date has passed.',
+            run: async f => {
+                const y = f.today.slice(0, 4), from = f.from || `${y}-01-01`, to = f.to || `${y}-12-31`, at = now();
+                const list = await prisma.cmpOccurrence.findMany({ where: { tenantId: f.tenantId, obligation: liveOb(f), dueDate: { gte: dateOf(from), lte: dateOf(to) }, ...(f.clientId ? { clientId: f.clientId } : {}) }, take: TAKE * 4,
+                    select: { stage: true, dueDate: true, dueAt: true, completedOn: true, closedAt: true, obligation: { select: { name: true, client: { select: { id: true, code: true, name: true, country: true } } } } } });
+                const keyOf = o => (f.group === 'obligation' ? o.obligation.name.trim() : f.group === 'country' ? countryName(o.obligation.client.country) : cl(o.obligation.client));
+                const by = new Map();
+                for (const o of list) {
+                    const k = keyOf(o); if (!by.has(k)) by.set(k, { name: k, due: 0, onTime: 0, late: 0, open: 0, overdue: 0, passed: 0 });
+                    const x = by.get(k), done = o.stage === 'COMPLETED', passed = +o.dueAt <= +at;
+                    x.due++; if (passed) x.passed++;
+                    if (done) { const day = o.completedOn ? ymd(o.completedOn) : dayIn(f, o.closedAt); if (day && day > ymd(o.dueDate)) x.late++; else x.onTime++; }
+                    else if (passed) x.overdue++; else x.open++;
+                }
+                const rows = [...by.values()].map(x => ({ ...x, rate: x.passed ? `${Math.round(x.onTime / x.passed * 100)}%` : '—' })).sort((a, b) => a.name.localeCompare(b.name));
+                const all = rows.reduce((m, x) => ({ due: m.due + x.due, onTime: m.onTime + x.onTime, passed: m.passed + x.passed }), { due: 0, onTime: 0, passed: 0 });
+                const columns = [col('name', f.group === 'obligation' ? 'Obligation' : f.group === 'country' ? 'Country' : 'Client'), col('due', 'Periods due', 'number', { sum: true }), col('onTime', 'On time', 'number', { sum: true }),
+                    col('late', 'Late', 'number', { sum: true }), col('open', 'Open (not due yet)', 'number', { sum: true }), col('overdue', 'Overdue', 'number', { sum: true }), col('rate', 'Compliance rate')];
+                return { columns, rows, totals: totalsOf(columns, rows), cards: [{ label: `${R.fmtDay(from, f.settings.dateFormat)} – ${R.fmtDay(to, f.settings.dateFormat)}`, value: `${all.due} due` }, { label: 'Compliance rate', value: all.passed ? `${Math.round(all.onTime / all.passed * 100)}%` : '—' }] };
+            } },
+        { key: 'data-pending', cat: 'data', title: 'Pending Data Collection', info: 'Periods whose data is not collected yet, with the day it is expected by', need: [REP], filters: { country: 1, client: 1 },
+            note: 'Expected by = the last reminder\'s day (else the due date); late once that day has passed on the client\'s calendar. "Partially collected" needs a list of the documents of each obligation, which the module does not keep.',
+            run: async f => {
+                const nm = await team(f), at = now();
+                const list = (await openRows(f)).filter(r => r.stage === 'OPEN');
+                let late = 0;
+                const rows = list.map(r => {
+                    const by = r.view.reminders.reduce((m, x) => (x.date > m ? x.date : m), '') || r.dueDate, lateBy = R.daysBetween(by, R.dayIn(r.client.timeZone, at));
+                    if (lateBy > 0) late++;
+                    return { dueDate: r.dueDate, client: cl(r.client), country: countryName(r.client.country), obligation: r.obligation.name, period: R.periodName(r), expectedBy: by, late: lateBy > 0 ? lateBy : null,
+                        sent: r.view.reminders.reduce((m, x) => m + (x.sentCount || 0), 0), assignedTo: who(nm, r.assignedToId), _link: { period: [r.obligation.id, r.id] } };
+                }).sort((a, b) => (a.expectedBy < b.expectedBy ? -1 : 1));
+                return { columns: [col('expectedBy', 'Expected by', 'day'), col('client', 'Client'), col('country', 'Country'), col('obligation', 'Obligation'), col('period', 'Period'), col('dueDate', 'Due date', 'day'),
+                    col('late', 'Days late', 'number'), col('sent', 'Reminders sent', 'number'), col('assignedTo', 'Assigned to')], rows, cards: [{ label: 'Pending', value: rows.length }, { label: 'Late', value: late }] };
+            } },
+        { key: 'data-completed', cat: 'data', title: 'Completed Data Collection', info: 'Periods whose data was collected in the dates chosen', need: [REP], filters: { range: 'collection date', country: 1, client: 1 },
+            run: async f => {
+                const list = await prisma.cmpOccurrence.findMany({ where: { tenantId: f.tenantId, obligation: liveOb(f), dataCollectedOn: days(f) || { not: null }, ...(f.clientId ? { clientId: f.clientId } : {}) }, take: TAKE, orderBy: { dataCollectedOn: 'desc' },
+                    select: { id: true, seq: true, periodStart: true, periodEnd: true, dueDate: true, dataCollectedOn: true, dataCollectedBy: true, dataNote: true, obligation: { select: { id: true, name: true, client: { select: { id: true, code: true, name: true, country: true } } } } } });
+                return { columns: [col('collectedOn', 'Collected on', 'day'), col('client', 'Client'), col('country', 'Country'), col('obligation', 'Obligation'), col('period', 'Period'), col('dueDate', 'Due date', 'day'),
+                    col('before', 'Days before the due date', 'number'), col('by', 'Marked by'), col('note', 'Note')],
+                    rows: list.map(o => ({ collectedOn: ymd(o.dataCollectedOn), client: cl(o.obligation.client), country: countryName(o.obligation.client.country), obligation: o.obligation.name, period: R.periodName(o), dueDate: ymd(o.dueDate),
+                        before: R.daysBetween(ymd(o.dataCollectedOn), ymd(o.dueDate)), by: o.dataCollectedBy || '', note: o.dataNote || '', _link: { period: [o.obligation.id, o.id] } })) };
+            } },
+        { key: 'tasks-pending', cat: 'tasks', title: 'Pending Tasks', info: 'Tasks open (data collected, not completed)', need: [REP], filters: { country: 1, client: 1 },
+            note: 'A task is an obligation\'s work: open once its data is collected, until it is marked done.',
+            run: async f => {
+                const nm = await team(f), list = (await openRows(f)).filter(taskOpen).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
+                return { columns: [...occCols('Days left').slice(0, 5), col('dataCollectedOn', 'Data collected', 'day'), col('days', 'Days left', 'number'), col('assignedTo', 'Assigned to')],
+                    rows: list.map(r => ({ ...occRow(r, nm), dataCollectedOn: r.dataCollectedOn })), cards: [{ label: 'Pending', value: list.length }, { label: 'Due today', value: list.filter(r => r.view.daysLeft === 0).length }, { label: 'Overdue', value: list.filter(r => r.view.overdue).length }] };
+            } },
+        { key: 'tasks-completed', cat: 'tasks', title: 'Completed Tasks', info: 'Tasks completed in the dates chosen, on time or late', need: [REP], filters: { range: 'completion date', country: 1, client: 1 },
+            run: async f => DEFS.find(d => d.key === 'obligations-completed').run(f) },
+        { key: 'tasks-overdue', cat: 'tasks', title: 'Overdue Tasks', info: 'Open tasks whose due date has passed', need: [REP], filters: { country: 1, client: 1 },
+            note: 'Open tasks (data collected) past the due date. Periods still waiting for their data are in Pending Data Collection.',
+            run: async f => {
+                const nm = await team(f), list = (await openRows(f)).filter(r => taskOpen(r) && r.view.overdue).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
+                return { columns: [...occCols('Days overdue').slice(0, 5), col('dataCollectedOn', 'Data collected', 'day'), col('days', 'Days overdue', 'number'), col('assignedTo', 'Assigned to')],
+                    rows: list.map(r => ({ ...occRow(r, nm, -r.view.daysLeft), dataCollectedOn: r.dataCollectedOn })) };
+            } },
+        { key: 'tasks-by-staff', cat: 'tasks', title: 'Staff-wise Task Summary', info: 'Tasks pending, due today, overdue and completed, person by person', need: [REP], filters: { range: 'completion date', country: 1 }, run: async f => staffTasks(f) },
+        { key: 'staff-clients', cat: 'staff', title: 'Staff-wise Client Allocation', info: 'Each person\'s clients, with their open and overdue obligations', need: [REP], filters: { country: 1 },
+            run: async f => {
+                const nm = await team(f);
+                const [cls, open] = await Promise.all([prisma.cmpClient.findMany({ where: { tenantId: f.tenantId, archivedAt: null, ...(f.country ? { country: f.country } : {}) }, select: { id: true, code: true, name: true, country: true, assignedToId: true }, take: 20000 }), openRows(f)]);
+                const ob = new Map(); for (const r of open) { const x = ob.get(r.client.id) || { open: 0, overdue: 0 }; x.open++; if (r.view.overdue) x.overdue++; ob.set(r.client.id, x); }
+                const rows = cls.map(c => ({ person: c.assignedToId ? who(nm, c.assignedToId) : 'Nobody', client: cl(c), country: countryName(c.country), open: (ob.get(c.id) || {}).open || 0, overdue: (ob.get(c.id) || {}).overdue || 0, _link: { client: c.id } }))
+                    .sort((a, b) => a.person.localeCompare(b.person) || a.client.localeCompare(b.client));
+                const columns = [col('person', 'Person'), col('client', 'Client'), col('country', 'Country'), col('open', 'Open obligations', 'number', { sum: true }), col('overdue', 'Overdue', 'number', { sum: true })];
+                return { columns, rows, totals: totalsOf(columns, rows, ['client', 'clients']) };
+            } },
+        { key: 'staff-obligations', cat: 'staff', title: 'Staff-wise Obligation Summary', info: 'Obligations open, overdue, due soon and completed, person by person', need: [REP], filters: { range: 'completion date', days: 1, country: 1 },
+            note: 'An obligation counts for its own person, else its client\'s ("Nobody" when neither has one).',
+            run: async f => {
+                const nm = await team(f), [open, done] = await Promise.all([openRows(f), completedIn(f)]);
+                const by = new Map(), get = k => { if (!by.has(k)) by.set(k, { person: k ? who(nm, k) : 'Nobody', open: 0, overdue: 0, soon: 0, completed: 0 }); return by.get(k); };
+                for (const r of open) { const x = get(r.assignedToId || ''); x.open++; if (r.view.overdue) x.overdue++; else if (r.view.daysLeft <= f.days) x.soon++; }
+                for (const o of done) get(o.obligation.assignedToId || o.obligation.client.assignedToId || '').completed++;
+                const rows = [...by.values()].sort((a, b) => b.open - a.open || a.person.localeCompare(b.person));
+                const columns = [col('person', 'Person'), col('open', 'Open', 'number', { sum: true }), col('overdue', 'Overdue', 'number', { sum: true }), col('soon', `Due in ${f.days} days`, 'number', { sum: true }), col('completed', f.from || f.to ? 'Completed in the dates' : 'Completed (all time)', 'number', { sum: true })];
+                return { columns, rows, totals: totalsOf(columns, rows, ['person', 'people']) };
+            } },
+        { key: 'staff-tasks', cat: 'staff', title: 'Staff-wise Task Summary', info: 'Tasks pending, due today, overdue and completed, person by person', need: [REP], filters: { range: 'completion date', country: 1 }, run: async f => staffTasks(f) },
+        { key: 'staff-workload', cat: 'staff', title: 'Staff Workload Summary', info: 'What each person has on hand: clients, obligations, data to collect, tasks, reminders to send', need: [REP], filters: { country: 1 },
+            note: 'Reminders to send: due, or not sent after their day. An obligation counts for its own person, else its client\'s.',
+            run: async f => {
+                const nm = await team(f), [cls, open] = await Promise.all([prisma.cmpClient.findMany({ where: { tenantId: f.tenantId, archivedAt: null, ...(f.country ? { country: f.country } : {}) }, select: { assignedToId: true }, take: 20000 }), openRows(f)]);
+                const by = new Map(), get = k => { if (!by.has(k)) by.set(k, { person: k ? who(nm, k) : 'Nobody', clients: 0, open: 0, overdue: 0, week: 0, data: 0, tasks: 0, reminders: 0 }); return by.get(k); };
+                for (const c of cls) get(c.assignedToId || '').clients++;
+                for (const r of open) {
+                    const x = get(r.assignedToId || ''); x.open++; if (r.view.overdue) x.overdue++; else if (r.view.daysLeft <= 7) x.week++;
+                    if (r.stage === 'OPEN') x.data++; else x.tasks++;
+                    x.reminders += r.view.reminders.filter(m => m.state === 'HIGHLIGHTED' || m.state === 'MISSED').length;
+                }
+                const rows = [...by.values()].sort((a, b) => b.open - a.open || a.person.localeCompare(b.person));
+                const columns = [col('person', 'Person'), col('clients', 'Clients', 'number', { sum: true }), col('open', 'Open obligations', 'number', { sum: true }), col('overdue', 'Overdue', 'number', { sum: true }), col('week', 'Due in 7 days', 'number', { sum: true }),
+                    col('data', 'Data to collect', 'number', { sum: true }), col('tasks', 'Tasks open', 'number', { sum: true }), col('reminders', 'Reminders to send', 'number', { sum: true })];
+                return { columns, rows, totals: totalsOf(columns, rows, ['person', 'people']) };
             } },
     ];
     const UNDONE = ['cmp.receipt.void', 'cmp.advance.void'];

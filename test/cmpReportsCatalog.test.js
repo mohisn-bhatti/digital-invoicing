@@ -116,9 +116,10 @@ run('a firm with clients, obligations, reminders, an advance, invoices, receipts
 run('every report of the catalogue answers with its columns, with and without filters', async () => {
     const cat = await must(A.call('/api/cmp/catalog', { token: A.owner.token }), 'catalogue');
     const keys = cat.categories.flatMap(c => c.reports.map(r => r.key));
-    assert.strictEqual(cat.categories.length, 14);
-    assert.strictEqual(keys.length, 76);
-    assert.strictEqual(new Set(keys).size, 76);
+    // the 76 of the CA's reports sheet, and the 14 of the Comprehensive Dashboard SRS (section 5) in their 4 categories
+    assert.strictEqual(cat.categories.length, 18);
+    assert.strictEqual(keys.length, 90);
+    assert.strictEqual(new Set(keys).size, 90);
     for (const key of keys) {
         for (const q of [RANGE, '', `${RANGE}&country=AE&clientId=${W.c1.id}`]) {
             const d = await ok(key, q);

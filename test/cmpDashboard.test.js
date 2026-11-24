@@ -72,7 +72,8 @@ run('a reminder marked "not sent" is one to send; sent again, it counts as sent 
 
 run('the ten figures, the tables, the stages, data collection and tasks', async () => {
     const d = await dash({ days: 30 });
-    assert.deepStrictEqual(d.kpis, { activeClients: 2, missingInfo: 1, open: 3, overdue: 1, upcoming: 1, remindersDue: 1, dataPending: 2, taskPending: 1 });
+    assert.deepStrictEqual(d.kpis, { activeClients: 2, newClients: 2, missingInfo: 1, open: 3, overdue: 1, upcoming: 1, remindersDue: 1, dataPending: 2, taskPending: 1 });
+    assert.strictEqual((await dash({ preset: 'lastyear' })).kpis.newClients, 0, 'new clients are those added in the dates chosen');
     assert.deepStrictEqual(d.upcoming.rows.map(r => r.obligation.name), ['VAT Return Q1']);
     assert.deepStrictEqual(d.upcoming.rows[0].reminders.map(x => x.button), ['SENT', 'WAIT']);
     assert.deepStrictEqual([d.overdue.rows[0].obligation.name, d.overdue.rows[0].daysOverdue, d.overdue.rows[0].lastReminder.status], ['VAT Return Q2', 5, 'NOT_SENT']);
@@ -93,6 +94,7 @@ run('the money per currency: advances received, adjusted, unallocated; invoiced,
     assert.deepStrictEqual([aed.receipts.total, aed.receipts.count, aed.receipts.methods.BANK], [300, 1, 300]);
     assert.deepStrictEqual(sar.invoices, { invoiced: 100, net: 100, outstanding: 100, unpaid: 1 });
     assert.deepStrictEqual(d.finance.counts, { DRAFT: 0, ISSUED: 1, SENT: 0, PARTIAL: 1, RECEIVED: 0, CANCELLED: 0 });
+    assert.deepStrictEqual(d.finance.created, { count: 2, drafts: 0 }, 'invoices created in the dates (8.3: by the day they were created)');
     assert.deepStrictEqual(d.finance.outstanding.rows.map(r => [r.currency, r.gross, r.advanceAdjusted, r.received, r.outstanding]).sort(), [['AED', 1000, 200, 300, 500], ['SAR', 100, 0, 0, 100]]);
     assert.deepStrictEqual(d.finance.advancesByClient.map(a => [a.client.name, a.received, a.adjusted, a.remaining]), [['Harbour Lane Trading', 300, 200, 100]]);
     // last year: nothing in the dates, the outstanding (as of now) still there
@@ -124,7 +126,15 @@ run('the money and the activity only for those who may see them; the activity ha
     assert.ok(d.money && d.logs && d.activity.rows.length);
     const labels = new Set(d.activity.rows.map(a => a.label));
     for (const l of ['Client created', 'Obligation created', 'Data collection updated', 'Task completed', 'Advance received', 'Invoice issued', 'Advance adjusted', 'Receipt booked', 'Reminder sent on WhatsApp', 'Message marked not sent']) assert.ok(labels.has(l) || [...labels].some(x => x.startsWith(l)), `${l} in ${[...labels].join(', ')}`);
+    // the communication log: both sends of the reminder, the first marked not sent
+    assert.deepStrictEqual(d.communication.rows.map(x => [x.kind, x.status, x.channel]).sort(), [['REMINDER', 'MARKED_NOT_SENT', 'WHATSAPP'], ['REMINDER', 'SENT', 'WHATSAPP']]);
+    assert.ok(d.communication.rows.every(x => /VAT Return Q1/.test(x.related) && x.link.period), JSON.stringify(d.communication.rows[0]));
+    // the Obligation filter applies to the activity too (FR-010)
+    const q2 = await dash({ obligation: 'VAT Return Q2' }), q2labels = q2.activity.rows.map(a => a.label);
+    assert.ok(q2labels.includes('Data collection updated') && !q2labels.includes('Task completed') && !q2labels.includes('Invoice issued') && !q2labels.some(l => l.startsWith('Reminder sent')), q2labels.join(', '));
+    assert.strictEqual(q2.communication.rows.length, 0);
     const m = await dash({}, A.manager.token);
+    assert.ok(!m.communication, 'the communication log needs the logs permission');
     assert.ok(!m.money && !m.finance && !m.logs && !m.activity);
     assert.strictEqual((await call('/api/cmp/overview', 'GET', undefined, A.cashier.token)).status, 403);
 });
@@ -144,6 +154,55 @@ run('the obligations list opens the dashboard\'s new figures: data collection pe
     assert.deepStrictEqual(dp.rows.map(r => r.obligation.name).sort(), ['VAT Return Q1', 'Zakat Return']);
     const tp = await ok(call('/api/cmp/occurrences?status=TASK_PENDING'));
     assert.deepStrictEqual(tp.rows.map(r => r.obligation.name), ['VAT Return Q2']);
+});
+
+run('the reports of the SRS section 5: data collection, tasks, staff, countries, annual compliance', async () => {
+    const rep = async (key, q = {}) => ok(call(`/api/cmp/catalog/${key}?` + new URLSearchParams(q)), key);
+    assert.deepStrictEqual((await rep('data-pending')).rows.map(r => r.obligation).sort(), ['VAT Return Q1', 'Zakat Return']);
+    assert.deepStrictEqual((await rep('tasks-pending')).rows.map(r => r.obligation), ['VAT Return Q2']);
+    assert.deepStrictEqual((await rep('tasks-overdue')).rows.map(r => [r.obligation, r.days]), [['VAT Return Q2', 5]]);
+    assert.deepStrictEqual((await rep('tasks-completed')).rows.map(r => r.obligation), ['Corporate Tax']);
+    assert.deepStrictEqual((await rep('data-completed', { from: day(-3), to: today })).rows.map(r => r.obligation).sort(), ['Corporate Tax', 'VAT Return Q2']);
+    const wl = (await rep('staff-workload')).rows, mgr = wl.find(r => r.person === 'manager'), none = wl.find(r => r.person === 'Nobody');
+    assert.deepStrictEqual([mgr.clients, mgr.open, mgr.overdue, mgr.data, mgr.tasks, mgr.reminders], [1, 2, 1, 1, 1, 1]);
+    assert.deepStrictEqual([none.clients, none.open], [1, 1]);
+    const so = (await rep('staff-obligations', { days: 30 })).rows.find(r => r.person === 'manager');
+    assert.deepStrictEqual([so.open, so.overdue, so.soon, so.completed], [2, 1, 1, 1]);
+    assert.deepStrictEqual((await rep('staff-tasks')).rows.find(r => r.person === 'manager').pending, 1);
+    assert.deepStrictEqual((await rep('clients-by-country')).rows.map(r => [r.country, r.active, r.open, r.overdue]), [['Saudi Arabia', 1, 1, 0], ['United Arab Emirates', 1, 2, 1]]);
+    assert.deepStrictEqual((await rep('clients-by-person')).rows.map(r => [r.person, r.active, r.open]).sort(), [['Nobody', 1, 1], ['manager', 1, 2]]);
+    assert.deepStrictEqual((await rep('staff-clients')).rows.map(r => [r.person, r.client.split(' (')[0], r.open]).sort(), [['Nobody', 'Oasis Point Supplies', 1], ['manager', 'Harbour Lane Trading', 2]]);
+    const dl = await rep('deadlines-by-country', { days: 60 });
+    assert.deepStrictEqual(dl.rows.map(r => [r.country, r.obligation]), [['Saudi Arabia', 'Zakat Return'], ['United Arab Emirates', 'VAT Return Q2'], ['United Arab Emirates', 'VAT Return Q1']]);
+    // the dates around today: Q1 open, Q2 overdue, Corporate Tax completed a day after its due date (late); compliance 0 of 2
+    const ac = (await rep('annual-compliance', { from: day(-30), to: day(30), group: 'client' })).rows.find(r => /Harbour Lane/.test(r.name));
+    assert.deepStrictEqual([ac.due, ac.onTime, ac.late, ac.open, ac.overdue, ac.rate], [3, 0, 1, 1, 1, '0%']);
+});
+
+run('acceptance: clients in other time zones (AT-003), a cancelled invoice (AT-006), an undone receipt (AT-007), no passwords (AT-012)', async () => {
+    // AT-003: a client far east (New Zealand) and one far west (the United States): each period's days are counted on its client's calendar
+    for (const [cc, name] of [['NZ', 'Kauri Bay Ltd'], ['US', 'Maple Row Inc']]) {
+        const c = (await ok(call('/api/cmp/clients', 'POST', { country: cc, name, contactNumber: cc === 'NZ' ? '+64211234567' : '+12025550123', noPortal: true }), name)).client;
+        await ok(call(`/api/cmp/clients/${c.id}/obligations`, 'POST', { name: 'Annual Return', periodStart: day(-60), periodEnd: day(-1), dueDate: day(1), autoNext: false }));
+    }
+    const d = await dash({ days: 30 });
+    for (const r of [...d.upcoming.rows, ...d.overdue.rows]) assert.strictEqual(r.daysLeft, R.daysBetween(R.dayIn(r.client.timeZone), r.dueDate), `${r.client.name}: ${r.daysLeft}`);
+    assert.ok(d.upcoming.rows.some(r => r.client.country === 'NZ') && d.upcoming.rows.some(r => r.client.country === 'US'));
+    // AT-006: the SAR invoice cancelled: out of the outstanding, shown as cancelled, not invoiced
+    const sarInv = (await ok(call('/api/cmp/invoices?currency=SAR'))).invoices.find(i => i.number);
+    await ok(call(`/api/cmp/invoices/${sarInv.id}/cancel`, 'POST', { reason: 'Issued by mistake' }));
+    let f = (await dash()).finance, sar = f.currencies.find(x => x.currency === 'SAR');
+    assert.deepStrictEqual([sar.invoices.outstanding, sar.invoices.invoiced, f.counts.CANCELLED, f.outstanding.rows.some(r => r.currency === 'SAR')], [0, 0, 1, false]);
+    // AT-007: the AED receipt undone: out of the receipts booked (shown as undone), and the invoice owes it again
+    const inv = await ok(call(`/api/cmp/invoices/${W.inv.id}`));
+    await ok(call(`/api/cmp/receipts/${inv.receipts[0].id}/void`, 'POST', { reason: 'Bounced cheque' }));
+    f = (await dash()).finance; const aed = f.currencies.find(x => x.currency === 'AED');
+    assert.deepStrictEqual([aed.receipts.total, aed.receipts.count, aed.receipts.undone, aed.receipts.undoneCount, aed.invoices.outstanding], [0, 0, 300, 1, 800]);
+    // AT-012: a client's portal password and PIN never appear in the dashboard, its calendar or the reports
+    const c = (await ok(call('/api/cmp/clients', 'POST', { country: 'AE', name: 'Cedar Crest Trading', contactNumber: '+971501115566', portalUsername: 'cedar', portalPassword: 'Zq9-Secret-Pass!', pinCode: '7319' }))).client;
+    await ok(call(`/api/cmp/clients/${c.id}/obligations`, 'POST', { name: 'VAT Return', periodStart: day(-60), periodEnd: day(-1), dueDate: day(3), autoNext: false }));
+    const texts = [(await call('/api/cmp/overview?days=30')).text, (await call(`/api/cmp/overview/calendar?from=${day(-10)}&to=${day(10)}`)).text, (await call('/api/cmp/catalog/staff-clients')).text, (await call('/api/cmp/catalog/client-register')).text];
+    for (const t of texts) { assert.ok(!t.includes('Zq9-Secret-Pass!') && !t.includes('7319') && !/portalPassword|pinCode/.test(t), t.slice(0, 200)); }
 });
 
 run('it writes nothing: every table of the firm and the activity log are the same before and after', async () => {
